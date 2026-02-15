@@ -56,6 +56,7 @@ function Tooltip({
 }) {
   const [open, setOpen] = useState(false);
   const tipRef = useRef<HTMLSpanElement | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
@@ -66,6 +67,31 @@ function Tooltip({
     }
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  // Prevent clipping on small screens by nudging tooltip inside viewport
+  useEffect(() => {
+    if (!open) return;
+    const box = boxRef.current;
+    if (!box) return;
+
+    // Reset to centered first
+    box.style.transform = "translateX(-50%)";
+
+    // Measure after paint
+    requestAnimationFrame(() => {
+      const r = box.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const pad = 12;
+
+      let dx = 0;
+      if (r.left < pad) dx = pad - r.left;
+      if (r.right > vw - pad) dx = (vw - pad) - r.right;
+
+      if (dx !== 0) {
+        box.style.transform = `translateX(calc(-50% + ${dx}px))`;
+      }
+    });
   }, [open]);
 
   return (
@@ -86,6 +112,7 @@ function Tooltip({
 
         {open && (
           <div
+            ref={boxRef}
             role="dialog"
             aria-label={`${label} help`}
             onClick={(e) => e.stopPropagation()}
