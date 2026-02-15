@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { useProStatus } from "@/hooks/useProStatus";
 
 function initialsFromEmail(email: string) {
   const local = email.split("@")[0] || "";
@@ -33,6 +34,8 @@ export default function TopNav() {
 
   const initials = useMemo(() => (email ? initialsFromEmail(email) : "OC"), [email]);
   const signedIn = !!email;
+
+  const { isPro } = useProStatus(signedIn);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -110,21 +113,40 @@ export default function TopNav() {
               {mobileOpen ? "Close" : "Menu"}
             </button>
 
+            {/* DESKTOP UPGRADE CTA (signed-in free only) */}
+            {signedIn && !isPro && (
+              <Link
+                href="/pricing"
+                className="hidden lg:inline-flex h-10 items-center rounded-xl border border-emerald-600/40 bg-emerald-600/10 px-4 text-sm font-semibold text-emerald-200 hover:bg-emerald-600/20"
+              >
+                Upgrade
+              </Link>
+            )}
+
             {/* ACCOUNT / LOGIN */}
             {signedIn ? (
               <div className="relative" ref={acctRef}>
-                <button
-                  onClick={() => setAcctOpen((v) => !v)}
-                  aria-expanded={acctOpen}
-                  aria-label="Account menu"
-                  className="h-10 w-10 rounded-xl border border-slate-800 bg-slate-900 text-sm font-semibold text-white hover:bg-slate-800"
-                >
-                  {initials}
-                </button>
+                <div className="flex items-center gap-2">
+                  {isPro && (
+                    <span className="hidden lg:inline-flex items-center rounded-full border border-emerald-600/40 bg-emerald-600/10 px-2 py-1 text-[10px] font-semibold tracking-wide text-emerald-200">
+                      PRO
+                    </span>
+                  )}
+
+                  <button
+                    onClick={() => setAcctOpen((v) => !v)}
+                    aria-expanded={acctOpen}
+                    aria-label="Account menu"
+                    className="h-10 w-10 rounded-xl border border-slate-800 bg-slate-900 text-sm font-semibold text-white hover:bg-slate-800"
+                  >
+                    {initials}
+                  </button>
+                </div>
 
                 {acctOpen && (
                   <div className="absolute right-0 mt-3 w-48 rounded-xl border border-slate-800 bg-slate-950 shadow-xl">
                     <MenuItem href="/account" label="Account" />
+                    <MenuItem href="/account/billing" label="Billing" />
                     <button
                       onClick={logout}
                       className="w-full px-4 py-2 text-left text-sm text-slate-300 hover:bg-slate-900"
@@ -163,10 +185,26 @@ export default function TopNav() {
                 <MobileItem href="/portfolio" label="Portfolio" onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/journal" label="Journal" onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/pricing" label="Pricing" onClick={() => setMobileOpen(false)} />
+
                 {signedIn && (
                   <>
                     <div className="my-2 h-px bg-slate-800" />
+
+                    {isPro && (
+                      <div className="px-3 pb-1">
+                        <span className="inline-flex items-center rounded-full border border-emerald-600/40 bg-emerald-600/10 px-2 py-1 text-[10px] font-semibold tracking-wide text-emerald-200">
+                          PRO
+                        </span>
+                      </div>
+                    )}
+
                     <MobileItem href="/account" label="Account" onClick={() => setMobileOpen(false)} />
+                    <MobileItem href="/account/billing" label="Billing" onClick={() => setMobileOpen(false)} />
+
+                    {!isPro && (
+                      <MobileItem href="/pricing" label="Upgrade" onClick={() => setMobileOpen(false)} />
+                    )}
+
                     <button
                       onClick={logout}
                       className="rounded-xl px-3 py-3 text-left text-sm text-slate-200 hover:bg-slate-900"
@@ -175,6 +213,7 @@ export default function TopNav() {
                     </button>
                   </>
                 )}
+
                 {!signedIn && (
                   <>
                     <div className="my-2 h-px bg-slate-800" />

@@ -29,7 +29,7 @@ export default function JournalPanel({
   snapshot,
   isPro,
 }: {
-  snapshot: any;
+  snapshot: any | null;
   isPro: boolean;
 }) {
   const [tag, setTag] = useState("");
@@ -70,6 +70,12 @@ export default function JournalPanel({
     try {
       setMsg("");
       setBusy("saving");
+
+      if (!snapshot) {
+        setMsg("No snapshot available to save yet. Create one in the Risk Engine or Simulator first.");
+        setBusy(null);
+        return;
+      }
 
       const res = await fetch("/api/journal/save", {
         method: "POST",
@@ -190,9 +196,7 @@ export default function JournalPanel({
           {busy === "saving" ? "Saving..." : "Save snapshot"}
         </button>
 
-        <div className="text-xs text-slate-500">
-          Snapshot includes account size, sizing mode, positions, and totals.
-        </div>
+        <div className="text-xs text-slate-500">Snapshot includes account size, sizing mode, positions, and totals.</div>
       </div>
 
       <div className="space-y-2">
@@ -201,18 +205,14 @@ export default function JournalPanel({
         {!isPro ? (
           <div className="text-sm text-slate-400">Upgrade to Pro to view saved snapshots.</div>
         ) : items.length === 0 ? (
-          <div className="text-sm text-slate-400">
-            No snapshots yet. Save one to start building your playbook.
-          </div>
+          <div className="text-sm text-slate-400">No snapshots yet. Save one to start building your playbook.</div>
         ) : (
           <div className="space-y-2">
             {items.map((it) => (
               <div key={it.id} className="rounded-lg border border-slate-800 bg-slate-950/30 p-4">
                 <div className="text-sm font-medium text-slate-200">
-                  {(it.tag || "Untagged")}{" "}
-                  <span className="text-xs text-slate-500">
-                    • {new Date(it.created_at).toLocaleString()}
-                  </span>
+                  {it.tag || "Untagged"}{" "}
+                  <span className="text-xs text-slate-500">• {new Date(it.created_at).toLocaleString()}</span>
                 </div>
 
                 {it.note && <div className="mt-2 text-sm text-slate-300">{it.note}</div>}

@@ -1,23 +1,37 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
-export function Tooltip({
-  label,
-  children,
-}: {
+type Props = {
   label: string;
   children: React.ReactNode;
-}) {
+};
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+export function Tooltip({ label, children }: Props) {
   const [open, setOpen] = useState(false);
   const id = useId();
-  const wrapRef = useRef<HTMLSpanElement | null>(null);
 
+  const wrapRef = useRef<HTMLSpanElement | null>(null);
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const tipRef = useRef<HTMLDivElement | null>(null);
+
+  const [pos, setPos] = useState<{ top: number; left: number; maxWidth: number } | null>(null);
+
+  // Close on outside click / ESC
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
-      const el = wrapRef.current;
-      if (!el) return;
-      if (el.contains(e.target as Node)) return;
+      const wrap = wrapRef.current;
+      const tip = tipRef.current;
+      const t = e.target as Node;
+
+      if (wrap?.contains(t)) return; // click on trigger/label area
+      if (tip?.contains(t)) return; // click inside tooltip
+
       setOpen(false);
     }
 
@@ -31,19 +45,76 @@ export function Tooltip({
     }
 
     return () => {
-      document.removeEventListener("pointerdown", onPointerDown, {
-        capture: true,
-      } as any);
+      document.removeEventListener("pointerdown", onPointerDown, { capture: true } as any);
       document.removeEventListener("keydown", onKeyDown);
     };
+  }, [open]);
+
+  // Positioning: portal + clamp into viewport
+  const computePosition = () => {
+    const btn = btnRef.current;
+    const tip = tipRef.current;
+    if (!btn || !tip) return;
+
+    const rect = btn.getBoundingClientRect();
+
+    // Tooltip width is now measurable (it’s rendered)
+    const tipRect = tip.getBoundingClientRect();
+
+    const padding = 12; // px
+    const offsetY = 10; // px below button
+
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+
+    // Preferred: center tooltip under button
+    const idealLeft = rect.left + rect.width / 2 - tipRect.width / 2;
+
+    // Clamp into viewport
+    const left = clamp(idealLeft, padding, viewportW - tipRect.width - padding);
+
+    // Default place below; if would go off bottom, place above
+    const belowTop = rect.bottom + offsetY;
+    const aboveTop = rect.top - offsetY - tipRect.height;
+
+    const top =
+      belowTop + tipRect.height <= viewportH - padding ? belowTop : clamp(aboveTop, padding, viewportH - tipRect.height - padding);
+
+    // Max width to avoid overflow on tiny screens
+    const maxWidth = viewportW - padding * 2;
+
+    setPos({ top: top + window.scrollY, left: left + window.scrollX, maxWidth });
+  };
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    // Wait a tick so the tooltip is in DOM and measurable
+    requestAnimationFrame(() => computePosition());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onReflow = () => computePosition();
+
+    window.addEventListener("resize", onReflow);
+    window.addEventListener("scroll", onReflow, true); // capture scroll from nested containers too
+
+    return () => {
+      window.removeEventListener("resize", onReflow);
+      window.removeEventListener("scroll", onReflow, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   return (
     <span ref={wrapRef} className="inline-flex items-center gap-2">
       <span>{label}</span>
 
-      <span className="relative inline-flex">
+      <span className="inline-flex">
         <button
+          ref={btnRef}
           type="button"
           aria-label={`Help: ${label}`}
           aria-expanded={open}
@@ -61,22 +132,11 @@ export function Tooltip({
           i
         </button>
 
-        {open && (
-          <div
-            id={id}
-            role="dialog"
-            aria-label={`${label} help`}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-            className="absolute left-1/2 top-[140%] z-50 w-[min(360px,85vw)] -translate-x-1/2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 shadow-lg"
-          >
-            {children}
-            <div className="mt-2 text-[11px] text-slate-400">
-              Tap outside or press Esc to close
-            </div>
-          </div>
-        )}
-      </span>
-    </span>
-  );
-}
+        {open && typeof document !== "undefined"
+          ? createPortal(
+              <div
+                ref={tipRef}
+                id={id}
+                role="dialog"
+                aria-label={`${label} help`}
+                onPointerDown={(e) =>
