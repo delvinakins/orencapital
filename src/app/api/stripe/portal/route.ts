@@ -12,8 +12,8 @@ function getSiteUrl() {
   return (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/+$/, "");
 }
 
-function getAccessTokenFromCookies(): string | null {
-  const store = cookies();
+async function getAccessTokenFromCookies(): Promise<string | null> {
+  const store = await cookies();
 
   const direct = store.get("sb-access-token")?.value;
   if (direct) return direct;
@@ -53,7 +53,7 @@ async function getEmailFromSupabase(token: string): Promise<string | null> {
 
 export async function POST() {
   try {
-    const token = getAccessTokenFromCookies();
+    const token = await getAccessTokenFromCookies();
     if (!token) return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
 
     const email = await getEmailFromSupabase(token);
