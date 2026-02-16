@@ -53,7 +53,6 @@ export default function TopNav() {
   useEffect(() => {
     function onClick(e: MouseEvent) {
       const t = e.target as Node;
-
       if (acctRef.current && !acctRef.current.contains(t)) setAcctOpen(false);
       if (moreRef.current && !moreRef.current.contains(t)) setMoreOpen(false);
     }
@@ -66,17 +65,21 @@ export default function TopNav() {
     window.location.href = "/";
   }
 
+  // Brand tokens (from globals.css)
+  const border = "border-[color:var(--border)]";
+  const card = "bg-[color:var(--card)]";
+  const glass = "bg-[color:var(--background)]/80";
+
   return (
-    <nav className="sticky top-0 z-50 w-full border-b border-slate-800/80 bg-slate-950/80 backdrop-blur supports-[backdrop-filter]:bg-slate-950/70">
+    <nav className={`sticky top-0 z-50 w-full border-b ${border} ${glass} backdrop-blur`}>
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <div className="flex h-16 items-center justify-between">
           {/* LEFT */}
           <div className="flex items-center gap-6">
             <Link href="/" className="group inline-flex items-center gap-3">
               <span className="relative grid place-items-center">
-                <BrandMark className="h-7 w-7" />
-                {/* subtle glow */}
-                <span className="pointer-events-none absolute -inset-2 rounded-full bg-emerald-400/10 blur-xl opacity-0 transition-opacity group-hover:opacity-100" />
+                <BrandMark className="h-8 w-8" />
+                <span className="pointer-events-none absolute -inset-2 rounded-full bg-emerald-600/10 blur-xl opacity-0 transition-opacity group-hover:opacity-100" />
               </span>
               <span className="text-base font-semibold tracking-tight text-white">
                 Oren <span className="text-slate-300">Capital</span>
@@ -91,19 +94,20 @@ export default function TopNav() {
               <div className="relative" ref={moreRef}>
                 <button
                   onClick={() => setMoreOpen((v) => !v)}
-                  className="inline-flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-slate-900/60 hover:text-white"
+                  className="inline-flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-white/5 hover:text-white"
                   aria-expanded={moreOpen}
                   aria-label="More menu"
                 >
-                  More
-                  <span className="text-slate-500">▾</span>
+                  More <span className="text-slate-500">▾</span>
                 </button>
 
                 {moreOpen && (
-                  <div className="absolute left-0 mt-3 w-52 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl shadow-black/40">
+                  <div
+                    className={`absolute left-0 mt-3 w-52 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}
+                  >
                     <MenuItem href="/portfolio" label="Portfolio" />
                     <MenuItem href="/journal" label="Journal" />
-                    <div className="my-1 h-px bg-slate-800" />
+                    <div className={`my-1 h-px ${border}`} />
                     <MenuItem href="/pricing" label="Pricing" />
                   </div>
                 )}
@@ -118,8 +122,8 @@ export default function TopNav() {
               <span
                 className={
                   isPro
-                    ? "hidden sm:inline-flex items-center rounded-full border border-emerald-600/40 bg-emerald-600/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-emerald-200"
-                    : "hidden sm:inline-flex items-center rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-slate-200"
+                    ? "hidden sm:inline-flex items-center rounded-full border border-emerald-700/40 bg-emerald-600/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-emerald-200"
+                    : "hidden sm:inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-slate-200"
                 }
               >
                 {isPro ? "PRO" : "FREE"}
@@ -132,7 +136,7 @@ export default function TopNav() {
               onClick={() => setMobileOpen((v) => !v)}
               aria-expanded={mobileOpen}
               aria-label="Open menu"
-              className="lg:hidden inline-flex h-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-900/70 px-3 text-sm font-semibold text-white hover:bg-slate-800"
+              className={`lg:hidden inline-flex h-10 items-center justify-center rounded-xl border ${border} bg-white/5 px-3 text-sm font-semibold text-white hover:bg-white/10`}
             >
               {mobileOpen ? "Close" : "Menu"}
             </button>
@@ -144,23 +148,24 @@ export default function TopNav() {
                   onClick={() => setAcctOpen((v) => !v)}
                   aria-expanded={acctOpen}
                   aria-label="Account menu"
-                  className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-900/70 text-sm font-semibold text-white hover:bg-slate-800"
+                  className={`relative inline-flex h-10 w-10 items-center justify-center rounded-xl border ${border} bg-white/5 text-sm font-semibold text-white hover:bg-white/10`}
                 >
                   {initials}
-                  {/* small pro dot */}
                   {isPro && (
-                    <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full border border-slate-950 bg-emerald-400" />
+                    <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full border border-black/60 bg-emerald-500" />
                   )}
                 </button>
 
                 {acctOpen && (
-                  <div className="absolute right-0 mt-3 w-52 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl shadow-black/40">
+                  <div
+                    className={`absolute right-0 mt-3 w-52 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}
+                  >
                     <MenuItem href="/account" label="Account" />
                     <MenuItem href="/account/billing" label="Billing" />
-                    <div className="my-1 h-px bg-slate-800" />
+                    <div className={`my-1 h-px ${border}`} />
                     <button
                       onClick={logout}
-                      className="w-full px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-slate-900"
+                      className="w-full px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-white/5 hover:text-white"
                     >
                       Logout
                     </button>
@@ -170,7 +175,7 @@ export default function TopNav() {
             ) : (
               <Link
                 href="/login"
-                className="rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-2 text-sm text-white hover:bg-slate-800"
+                className={`rounded-xl border ${border} bg-white/5 px-4 py-2 text-sm text-white hover:bg-white/10`}
               >
                 Login
               </Link>
@@ -183,17 +188,17 @@ export default function TopNav() {
       {mobileOpen && (
         <div className="lg:hidden">
           <button
-            className="fixed inset-0 z-40 bg-black/50"
+            className="fixed inset-0 z-40 bg-black/55"
             aria-label="Close menu overlay"
             onClick={() => setMobileOpen(false)}
           />
 
           <div className="fixed left-0 right-0 top-16 z-50 px-4 pb-4">
-            <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl shadow-black/40">
+            <div className={`overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
               <div className="p-2">
                 <div className="p-2">
                   <div className="flex items-center gap-3">
-                    <BrandMark className="h-7 w-7" />
+                    <BrandMark className="h-8 w-8" />
                     <div className="text-sm font-semibold text-white">
                       Oren <span className="text-slate-300">Capital</span>
                     </div>
@@ -201,8 +206,8 @@ export default function TopNav() {
                       <span
                         className={
                           isPro
-                            ? "ml-auto inline-flex items-center rounded-full border border-emerald-600/40 bg-emerald-600/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-emerald-200"
-                            : "ml-auto inline-flex items-center rounded-full border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-slate-200"
+                            ? "ml-auto inline-flex items-center rounded-full border border-emerald-700/40 bg-emerald-600/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-emerald-200"
+                            : "ml-auto inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-slate-200"
                         }
                       >
                         {isPro ? "PRO" : "FREE"}
@@ -211,7 +216,7 @@ export default function TopNav() {
                   </div>
                 </div>
 
-                <div className="h-px bg-slate-800" />
+                <div className={`h-px ${border}`} />
 
                 <div className="p-2 flex flex-col gap-1">
                   <MobileItem href="/risk-engine" label="Risk Engine" onClick={() => setMobileOpen(false)} />
@@ -221,12 +226,12 @@ export default function TopNav() {
                   <MobileItem href="/pricing" label="Pricing" onClick={() => setMobileOpen(false)} />
                   {signedIn && (
                     <>
-                      <div className="my-2 h-px bg-slate-800" />
+                      <div className={`my-2 h-px ${border}`} />
                       <MobileItem href="/account" label="Account" onClick={() => setMobileOpen(false)} />
                       <MobileItem href="/account/billing" label="Billing" onClick={() => setMobileOpen(false)} />
                       <button
                         onClick={logout}
-                        className="rounded-xl px-3 py-3 text-left text-sm text-slate-200 hover:bg-slate-900"
+                        className="rounded-xl px-3 py-3 text-left text-sm text-slate-200 hover:bg-white/5 hover:text-white"
                       >
                         Logout
                       </button>
@@ -234,7 +239,7 @@ export default function TopNav() {
                   )}
                   {!signedIn && (
                     <>
-                      <div className="my-2 h-px bg-slate-800" />
+                      <div className={`my-2 h-px ${border}`} />
                       <MobileItem href="/login" label="Login" onClick={() => setMobileOpen(false)} />
                     </>
                   )}
@@ -242,9 +247,7 @@ export default function TopNav() {
               </div>
             </div>
 
-            <div className="mt-3 text-center text-xs text-slate-500">
-              Tap outside to close
-            </div>
+            <div className="mt-3 text-center text-xs text-slate-500">Tap outside to close</div>
           </div>
         </div>
       )}
@@ -254,10 +257,7 @@ export default function TopNav() {
 
 function NavLink({ href, label }: { href: string; label: string }) {
   return (
-    <Link
-      href={href}
-      className="rounded-lg px-2 py-2 hover:bg-slate-900/60 hover:text-white"
-    >
+    <Link href={href} className="rounded-lg px-2 py-2 hover:bg-white/5 hover:text-white">
       {label}
     </Link>
   );
@@ -265,27 +265,15 @@ function NavLink({ href, label }: { href: string; label: string }) {
 
 function MenuItem({ href, label }: { href: string; label: string }) {
   return (
-    <Link href={href} className="block px-4 py-2.5 text-sm text-slate-300 hover:bg-slate-900 hover:text-white">
+    <Link href={href} className="block px-4 py-2.5 text-sm text-slate-300 hover:bg-white/5 hover:text-white">
       {label}
     </Link>
   );
 }
 
-function MobileItem({
-  href,
-  label,
-  onClick,
-}: {
-  href: string;
-  label: string;
-  onClick: () => void;
-}) {
+function MobileItem({ href, label, onClick }: { href: string; label: string; onClick: () => void }) {
   return (
-    <Link
-      href={href}
-      onClick={onClick}
-      className="rounded-xl px-3 py-3 text-sm text-slate-200 hover:bg-slate-900"
-    >
+    <Link href={href} onClick={onClick} className="rounded-xl px-3 py-3 text-sm text-slate-200 hover:bg-white/5">
       {label}
     </Link>
   );
