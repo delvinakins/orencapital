@@ -1,8 +1,10 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0b0f0d;
-  --foreground: #e7ebe8;
+  --background: #0b0f0d;      /* pine-black */
+  --foreground: #e7ebe8;      /* soft white */
+  --card: #111614;            /* subtle lifted panel */
+  --border: #1b2320;          /* muted pine-gray */
 }
 
 body {
