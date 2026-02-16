@@ -6,12 +6,13 @@ type BrandMarkProps = {
 };
 
 /**
- * Oren Capital — Strategic Mark
- * Geometric pine silhouette whose right edge forms
- * a rising stair-step price structure.
+ * Oren Capital — Final Strategic Mark
+ * - Slightly enlarged pine mass
+ * - Enlarged centered rising structure
+ * - Balanced proportions
  */
 export default function BrandMark({
-  className = "h-7 w-7",
+  className = "h-8 w-8",
   title = "Oren Capital",
 }: BrandMarkProps) {
   return (
@@ -24,46 +25,48 @@ export default function BrandMark({
     >
       <title>{title}</title>
 
-      {/* Base geometric mass */}
-      <path
-        d="
-          M24 6
-          L10 34
-          H19
-          L15 42
-          H33
-          L29 36
-          L38 20
-          L30 20
-          L33 14
-          L26 14
-          L28 10
-          Z
-        "
-        className="fill-slate-100"
-      />
-
-      {/* Ascending edge (structural, not decorative) */}
-      <path
-        d="
-          M20 32
-          L24 28
-          L27 30
-          L33 23
+      {/* Pine silhouette (less scaled down now) */}
+      <g transform="translate(1 1) scale(0.94)">
+        <path
+          d="
+            M24 6
+            L14 18
+            H19
+            L12 28
+            H18.5
+            L12.5 37
+            H22
+            V41
+            H26
+            V37
+            H35.5
+            L29.5 28
+            H36
+            L29 18
+            H34
+            L24 6
+            Z
           "
-        className="stroke-emerald-400"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+          className="fill-slate-100"
+          opacity="0.96"
+        />
+      </g>
 
-      {/* Arrow head */}
+      {/* Enlarged rising structure */}
       <path
-        d="M32.6 23.1 L35 22.9 L34.8 25.3"
-        className="stroke-emerald-400"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
+        d="
+          M14.5 33.5
+          L21.5 28.5
+          L26.5 30.8
+          L32 25.5
+          L35 27.5
+          L40 22.5
+        "
+        className="stroke-emerald-600"
+        strokeWidth="2.6"
+        strokeLinecap="butt"
+        strokeLinejoin="miter"
+        fill="none"
       />
     </svg>
   );
