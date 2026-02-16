@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import JournalPanel from "@/components/JournalPanel";
 import { Tooltip } from "@/components/Tooltip";
+import ProLock from "@/components/ProLock";
 
 type SizingMode = "constant-fraction" | "fixed-dollar";
 type Side = "long" | "short";
@@ -255,9 +256,7 @@ export default function RiskEnginePage() {
   }
 
   function updatePos(id: string, patch: Partial<Position>) {
-    setPositions((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, ...patch } : p))
-    );
+    setPositions((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   }
 
   function removePos(id: string) {
@@ -356,9 +355,7 @@ export default function RiskEnginePage() {
         return;
       }
 
-      const res = await fetch(
-        `/api/portfolios/get?id=${encodeURIComponent(selectedPortfolioId)}`
-      );
+      const res = await fetch(`/api/portfolios/get?id=${encodeURIComponent(selectedPortfolioId)}`);
       const json = await res.json().catch(() => ({}));
 
       if (res.status === 402) {
@@ -402,20 +399,13 @@ export default function RiskEnginePage() {
   }, [isPro]);
 
   function exportCsv() {
+    // Keep server-truth protection even though UI is overlaid.
     if (!isPro) {
       setMsg("CSV export is Pro. Upgrade to unlock.");
       return;
     }
 
-    const headers = [
-      "Label",
-      "Side",
-      "Entry",
-      "Stop",
-      "Qty",
-      "Multiplier",
-      "DollarRisk",
-    ];
+    const headers = ["Label", "Side", "Entry", "Stop", "Qty", "Multiplier", "DollarRisk"];
     const lines = [
       headers.join(","),
       ...positions.map((p) => {
@@ -507,12 +497,12 @@ export default function RiskEnginePage() {
             tip={
               <div className="space-y-2">
                 <div>
-                  <span className="font-semibold">Constant-fraction</span>: risk
-                  scales with equity (classic “risk 1% per trade”).
+                  <span className="font-semibold">Constant-fraction</span>: risk scales with equity (classic “risk 1% per
+                  trade”).
                 </div>
                 <div>
-                  <span className="font-semibold">Fixed-dollar</span>: risk a
-                  flat $ each trade (emotionally simpler early on).
+                  <span className="font-semibold">Fixed-dollar</span>: risk a flat $ each trade (emotionally simpler early
+                  on).
                 </div>
               </div>
             }
@@ -644,26 +634,18 @@ export default function RiskEnginePage() {
                       value={money(dr)}
                       tip="Computed as |entry - stop| × qty × multiplier."
                     />
-                    <Card
-                      label="Stop Distance"
-                      value={pct(distPct)}
-                      tip="Distance from entry to stop as a % of entry."
-                    />
+                    <Card label="Stop Distance" value={pct(distPct)} tip="Distance from entry to stop as a % of entry." />
                     <Card
                       label="Target Alignment"
                       value={
-                        targetDollarRisk > 0
-                          ? `${Math.round((dr / targetDollarRisk) * 100)}% of target`
-                          : "—"
+                        targetDollarRisk > 0 ? `${Math.round((dr / targetDollarRisk) * 100)}% of target` : "—"
                       }
                       tip="How much this single position consumes of your intended trade risk."
                     />
                   </div>
 
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <div className="text-xs text-slate-500">
-                      Tip: Over target? Reduce size first (fastest fix).
-                    </div>
+                    <div className="text-xs text-slate-500">Tip: Over target? Reduce size first (fastest fix).</div>
                     <button
                       onClick={() => removePos(p.id)}
                       className="text-sm text-red-300 hover:text-red-200 self-start sm:self-auto"
@@ -676,93 +658,104 @@ export default function RiskEnginePage() {
             })}
           </div>
 
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <button
-              onClick={exportCsv}
-              className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/30 px-4 text-sm font-medium text-slate-200 hover:bg-slate-900"
-            >
-              Export CSV (Pro)
-            </button>
-            <div className="text-xs text-slate-500">
-              CSV export is Pro because it’s an “operational workflow” feature.
-            </div>
-          </div>
-        </section>
-
-        {/* Pro: Save / Load */}
-        <section className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 sm:p-6 space-y-4 overflow-visible">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="text-lg font-semibold">Save / Load Portfolios (Pro)</div>
-            <button
-              onClick={refreshPortfolios}
-              disabled={busy === "list"}
-              className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/30 px-4 text-sm font-medium text-slate-200 hover:bg-slate-900 disabled:opacity-60"
-            >
-              {busy === "list" ? "Refreshing..." : "Refresh list"}
-            </button>
-          </div>
-
-          {!!msg && (
-            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-sm text-slate-200">
-              {msg}
-            </div>
-          )}
-
-          <div className="grid gap-4 md:grid-cols-3">
-            <Input
-              label="Portfolio name"
-              value={portfolioName}
-              onChange={setPortfolioName}
-              placeholder="My swing watchlist"
-              tip="Name to save this current state (account + sizing + positions)."
-            />
-
-            <div className="flex flex-col gap-2 md:col-span-2">
-              <label className="text-sm text-slate-400">
-                <Tooltip label="Saved portfolios">
-                  Your saved configurations. Loading replaces the current editor state.
-                </Tooltip>
-              </label>
-
-              <div className="flex flex-col sm:flex-row gap-2">
-                <select
-                  value={selectedPortfolioId}
-                  onChange={(e) => setSelectedPortfolioId(e.target.value)}
-                  className="h-12 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-4 text-slate-100 outline-none focus:ring-2 focus:ring-slate-600"
-                >
-                  <option value="">Select…</option>
-                  {portfolios.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-
-                <button
-                  onClick={savePortfolio}
-                  disabled={busy === "save"}
-                  className="inline-flex h-12 items-center justify-center rounded-lg bg-slate-100 px-4 text-sm font-medium text-slate-950 hover:bg-white disabled:opacity-60"
-                >
-                  {busy === "save" ? "Saving..." : "Save"}
-                </button>
-
-                <button
-                  onClick={loadPortfolio}
-                  disabled={busy === "load"}
-                  className="inline-flex h-12 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/30 px-4 text-sm font-medium text-slate-200 hover:bg-slate-900 disabled:opacity-60"
-                >
-                  {busy === "load" ? "Loading..." : "Load"}
-                </button>
+          {/* Pro: CSV Export overlay */}
+          <ProLock
+            feature="CSV Export"
+            description="Export your positions + risk metrics to CSV for tracking, journaling, or analysis."
+            mode="overlay"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <button
+                onClick={exportCsv}
+                className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/30 px-4 text-sm font-medium text-slate-200 hover:bg-slate-900"
+              >
+                Export CSV (Pro)
+              </button>
+              <div className="text-xs text-slate-500">
+                CSV export is Pro because it’s an “operational workflow” feature.
               </div>
-
-              {!isPro && (
-                <div className="text-xs text-amber-200">
-                  Pro required. This is a “workflow” feature (people pay for saving time).
-                </div>
-              )}
             </div>
-          </div>
+          </ProLock>
         </section>
+
+        {/* Pro: Save / Load overlay */}
+        <ProLock
+          feature="Portfolio Save/Load"
+          description="Save setups (account + sizing + positions) and reload them instantly."
+          mode="overlay"
+        >
+          <section className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 sm:p-6 space-y-4 overflow-visible">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-lg font-semibold">Save / Load Portfolios (Pro)</div>
+              <button
+                onClick={refreshPortfolios}
+                disabled={busy === "list"}
+                className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/30 px-4 text-sm font-medium text-slate-200 hover:bg-slate-900 disabled:opacity-60"
+              >
+                {busy === "list" ? "Refreshing..." : "Refresh list"}
+              </button>
+            </div>
+
+            {!!msg && (
+              <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-sm text-slate-200">{msg}</div>
+            )}
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <Input
+                label="Portfolio name"
+                value={portfolioName}
+                onChange={setPortfolioName}
+                placeholder="My swing watchlist"
+                tip="Name to save this current state (account + sizing + positions)."
+              />
+
+              <div className="flex flex-col gap-2 md:col-span-2">
+                <label className="text-sm text-slate-400">
+                  <Tooltip label="Saved portfolios">
+                    Your saved configurations. Loading replaces the current editor state.
+                  </Tooltip>
+                </label>
+
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <select
+                    value={selectedPortfolioId}
+                    onChange={(e) => setSelectedPortfolioId(e.target.value)}
+                    className="h-12 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-4 text-slate-100 outline-none focus:ring-2 focus:ring-slate-600"
+                  >
+                    <option value="">Select…</option>
+                    {portfolios.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    onClick={savePortfolio}
+                    disabled={busy === "save"}
+                    className="inline-flex h-12 items-center justify-center rounded-lg bg-slate-100 px-4 text-sm font-medium text-slate-950 hover:bg-white disabled:opacity-60"
+                  >
+                    {busy === "save" ? "Saving..." : "Save"}
+                  </button>
+
+                  <button
+                    onClick={loadPortfolio}
+                    disabled={busy === "load"}
+                    className="inline-flex h-12 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/30 px-4 text-sm font-medium text-slate-200 hover:bg-slate-900 disabled:opacity-60"
+                  >
+                    {busy === "load" ? "Loading..." : "Load"}
+                  </button>
+                </div>
+
+                {!isPro && (
+                  <div className="text-xs text-amber-200">
+                    Pro required. This is a “workflow” feature (people pay for saving time).
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        </ProLock>
 
         {/* Pro: Trade Journal (snapshots + notes) */}
         <JournalPanel
