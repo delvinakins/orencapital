@@ -6,73 +6,64 @@ type BrandMarkProps = {
 };
 
 /**
- * Oren Capital mark:
- * Pine tree silhouette whose right edge reads like an ascending price chart.
- * Pure SVG (no deps), safe for Next/App Router.
+ * Oren Capital — Strategic Mark
+ * Geometric pine silhouette whose right edge forms
+ * a rising stair-step price structure.
  */
-export default function BrandMark({ className = "h-6 w-6", title = "Oren Capital" }: BrandMarkProps) {
+export default function BrandMark({
+  className = "h-7 w-7",
+  title = "Oren Capital",
+}: BrandMarkProps) {
   return (
     <svg
-      className={className}
       viewBox="0 0 48 48"
-      fill="none"
+      className={className}
       role="img"
       aria-label={title}
       xmlns="http://www.w3.org/2000/svg"
     >
       <title>{title}</title>
 
-      {/* Subtle background badge */}
+      {/* Base geometric mass */}
       <path
-        d="M10.5 6.5h27c2.2 0 4 1.8 4 4v27c0 2.2-1.8 4-4 4h-27c-2.2 0-4-1.8-4-4v-27c0-2.2 1.8-4 4-4Z"
-        className="fill-slate-900/40"
-      />
-
-      {/* Pine/tree mass */}
-      <path
-        d="M24 8
-           L14 20
-           H19
-           L12 28
-           H18.5
-           L13 36
-           H22
-           V40
-           H26
-           V36
-           H35
-           L31 30.5
-           L34.5 26
-           L29 26
-           L31.5 20
-           H34
-           L24 8Z"
+        d="
+          M24 6
+          L10 34
+          H19
+          L15 42
+          H33
+          L29 36
+          L38 20
+          L30 20
+          L33 14
+          L26 14
+          L28 10
+          Z
+        "
         className="fill-slate-100"
-        opacity="0.92"
       />
 
-      {/* Rising chart edge (cuts/overlays the right side to imply ascent) */}
+      {/* Ascending edge (structural, not decorative) */}
       <path
-        d="M22.5 33.5
-           L26.5 29.5
-           L29 31.5
-           L35.5 25
-           "
-        className="stroke-emerald-300"
-        strokeWidth="2.2"
+        d="
+          M20 32
+          L24 28
+          L27 30
+          L33 23
+          "
+        className="stroke-emerald-400"
+        strokeWidth="2.4"
         strokeLinecap="round"
         strokeLinejoin="round"
-        opacity="0.95"
       />
 
       {/* Arrow head */}
       <path
-        d="M34.7 25.1 L36.6 25.0 L36.5 26.9"
-        className="stroke-emerald-300"
-        strokeWidth="2.2"
+        d="M32.6 23.1 L35 22.9 L34.8 25.3"
+        className="stroke-emerald-400"
+        strokeWidth="2.4"
         strokeLinecap="round"
         strokeLinejoin="round"
-        opacity="0.95"
       />
     </svg>
   );
