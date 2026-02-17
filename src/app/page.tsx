@@ -1,7 +1,6 @@
 import type { CSSProperties } from "react";
 
 export default function Home() {
-  // Use the same emerald family as the logo arrow (emerald-600 vibe).
   const accentStyle = { "--accent": "#2BCB77" } as CSSProperties;
 
   return (
@@ -14,20 +13,24 @@ export default function Home() {
 
           <h1 className="text-4xl font-semibold tracking-tight sm:text-6xl">
             Turn{" "}
-            <span className="relative inline-block align-baseline">
-              {/* crisp text */}
+            <span className="group relative inline-block align-baseline">
               <span className="relative z-10 text-[color:var(--accent)]">variance</span>
 
-              {/* crisp underline */}
+              {/* underline reveal */}
               <span
                 aria-hidden
-                className="pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.9]"
+                className={[
+                  "pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.9]",
+                  // start hidden, then draw in (only if motion is allowed)
+                  "origin-left scale-x-0",
+                  "motion-safe:animate-[oren_underline_700ms_ease-out_120ms_forwards]",
+                ].join(" ")}
               />
 
-              {/* tiny, non-blurry glow (optional but tasteful) */}
+              {/* tiny, non-blurry glow to lift underline (kept subtle) */}
               <span
                 aria-hidden
-                className="pointer-events-none absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-[0.12]"
+                className="pointer-events-none absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-[0.10]"
               />
             </span>{" "}
             into structured growth.
@@ -71,6 +74,14 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {/* local keyframes (no globals needed) */}
+      <style>{`
+        @keyframes oren_underline {
+          from { transform: scaleX(0); }
+          to   { transform: scaleX(1); }
+        }
+      `}</style>
     </main>
   );
 }
