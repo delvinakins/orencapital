@@ -1,10 +1,13 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0b0f0d;      /* pine-black */
-  --foreground: #e7ebe8;      /* soft white */
-  --card: #111614;            /* subtle lifted panel */
-  --border: #1b2320;          /* muted pine-gray */
+  --background: #0b0f0d; /* pine-black */
+  --foreground: #e7ebe8; /* soft white */
+  --card: #111614;       /* subtle lifted panel */
+  --border: #1b2320;     /* muted pine-gray */
+
+  /* pine accent (match logo arrow family) */
+  --accent: #2BCB77;
 }
 
 body {
@@ -13,4 +16,30 @@ body {
   font-family: var(--font-sans), system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* -------------------------------
+   Accent focus system (global)
+   - Accessible keyboard focus
+   - Subtle institutional halo
+-------------------------------- */
+
+/* remove default outline; we replace with focus-visible */
+:focus {
+  outline: none;
+}
+
+/* keyboard-only focus ring */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* softer halo for common interactive controls */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  box-shadow: 0 0 0 3px rgba(43, 203, 119, 0.22);
 }
