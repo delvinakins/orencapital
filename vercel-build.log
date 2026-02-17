@@ -1,0 +1,19 @@
+Vercel CLI 50.17.1
+WARN! Build not running on Vercel. System environment variables will not be available.
+> Installing Builder: @vercel/next@4.15.28
+Error: npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: '@renovatebot/pep440@4.2.1',
+npm warn EBADENGINE   required: { node: '^20.9.0 || ^22.11.0 || ^24', pnpm: '^10.0.0' },
+npm warn EBADENGINE   current: { node: 'v25.6.1', npm: '11.9.0' }
+npm warn EBADENGINE }
+npm error code ETIMEDOUT
+npm error syscall read
+npm error errno -60
+npm error network read ETIMEDOUT
+npm error network This is a problem related to network connectivity.
+npm error network In most cases you are behind a proxy or have bad network settings.
+npm error network
+npm error network If you are behind a proxy, please make sure that the
+npm error network 'proxy' config is set properly.  See: 'npm help config'
+npm error A complete log of this run can be found in: /Users/delvinakins/.npm/_logs/2026-02-16T00_28_40_178Z-debug-0.log
+Learn More: https://vercel.link/builder-dependencies-install-failed

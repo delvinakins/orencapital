@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 export default function PricingPage() {
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
+    <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-4xl px-4 sm:px-6 py-12 sm:py-16 space-y-8">
         <header className="space-y-3">
           <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">

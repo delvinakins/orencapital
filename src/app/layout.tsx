@@ -17,8 +17,8 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${interTight.variable} antialiased`}>
-      <body className="min-h-screen bg-slate-950 font-sans text-slate-100">
-        <div className="min-h-screen">
+      <body className="min-h-screen font-sans bg-background text-foreground">
+        <div className="min-h-screen bg-background text-foreground">
           <TopNav />
           <div className="mx-auto w-full">{children}</div>
         </div>
