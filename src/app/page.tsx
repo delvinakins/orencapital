@@ -5,9 +5,6 @@ import { usePathname } from "next/navigation";
 
 export default function Home() {
   const accentStyle = { "--accent": "#2BCB77" } as CSSProperties;
-
-  // This changes whenever you navigate to "/" via client-side routing (e.g., clicking the logo)
-  // Using it as a key remounts the underline element and retriggers the animation.
   const pathname = usePathname();
 
   return (
@@ -23,14 +20,12 @@ export default function Home() {
             <span className="oren-accent relative inline-block align-baseline">
               <span className="relative z-10 text-[color:var(--accent)]">variance</span>
 
-              {/* underline (keyed to retrigger on client-side nav back to "/") */}
               <span
                 key={`underline-${pathname}`}
                 aria-hidden
                 className="oren-underline pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.9]"
               />
 
-              {/* tiny, non-blurry glow */}
               <span
                 aria-hidden
                 className="pointer-events-none absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-[0.10]"
@@ -40,21 +35,21 @@ export default function Home() {
           </h1>
 
           <p className="max-w-2xl text-lg leading-relaxed text-foreground/75">
-            Institutional risk tools built for serious retail swing and options traders: position sizing,
-            drawdown tracking, expectancy, and portfolio heat — without hype.
+            Institutional risk tools built for serious retail swing and options traders: position sizing, drawdown
+            tracking, expectancy, and portfolio heat — without hype.
           </p>
 
           <div className="flex flex-col gap-3 sm:flex-row">
             <a
               href="/risk-engine"
-              className="inline-flex items-center justify-center rounded-lg bg-white px-5 py-3 text-sm font-medium text-black hover:bg-black/5"
+              className="oc-home-primary inline-flex items-center justify-center rounded-lg bg-white px-5 py-3 text-sm font-medium text-black active:scale-[0.98]"
             >
               Open the Risk Engine
             </a>
 
             <a
               href="/pricing"
-              className="inline-flex items-center justify-center rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-5 py-3 text-sm font-medium text-foreground/90 hover:bg-white/5"
+              className="inline-flex items-center justify-center rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-5 py-3 text-sm font-medium text-foreground/90 hover:bg-white/5 active:scale-[0.98]"
             >
               View Pricing
             </a>
@@ -79,6 +74,16 @@ export default function Home() {
       </div>
 
       <style>{`
+        /* Fix: prevent any global link hover rule from "darkening" this CTA */
+        .oc-home-primary {
+          background: #ffffff;
+          transition: opacity 150ms ease, transform 150ms ease;
+        }
+        .oc-home-primary:hover {
+          background: #ffffff; /* hard lock */
+          opacity: 0.92;       /* subtle hover without blackout */
+        }
+
         @media (prefers-reduced-motion: no-preference) {
           .oren-underline {
             transform-origin: left;
