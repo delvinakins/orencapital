@@ -1,8 +1,7 @@
 import type { CSSProperties } from "react";
 
 export default function Home() {
-  // TODO: Replace with the exact hex used for the logo arrow green.
-  // Keep it rich, not neon.
+  // Use the same emerald family as the logo arrow (emerald-600 vibe).
   const accentStyle = { "--accent": "#2BCB77" } as CSSProperties;
 
   return (
@@ -15,30 +14,20 @@ export default function Home() {
 
           <h1 className="text-4xl font-semibold tracking-tight sm:text-6xl">
             Turn{" "}
-            <span className="relative inline-block">
-              {/* Gradient ink (very visible) */}
-              <span
-                className={[
-                  "relative z-10 inline-block",
-                  "bg-[linear-gradient(90deg,color:var(--accent),rgba(231,235,232,0.9),color:var(--accent))]",
-                  "bg-[length:200%_100%] bg-clip-text text-transparent",
-                  // subtle lift without looking "neon"
-                  "drop-shadow-[0_0_14px_rgba(43,203,119,0.25)]",
-                ].join(" ")}
-              >
-                variance
-              </span>
+            <span className="relative inline-block align-baseline">
+              {/* crisp text */}
+              <span className="relative z-10 text-[color:var(--accent)]">variance</span>
 
-              {/* soft wash behind word */}
+              {/* crisp underline */}
               <span
                 aria-hidden
-                className="pointer-events-none absolute inset-0 -z-0 rounded-md bg-[color:var(--accent)] opacity-[0.10] blur-xl"
+                className="pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.9]"
               />
 
-              {/* thin underline */}
+              {/* tiny, non-blurry glow (optional but tasteful) */}
               <span
                 aria-hidden
-                className="pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.85]"
+                className="pointer-events-none absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-[0.12]"
               />
             </span>{" "}
             into structured growth.
