@@ -86,7 +86,7 @@ function Tooltip({
 
       let dx = 0;
       if (r.left < pad) dx = pad - r.left;
-      if (r.right > vw - pad) dx = (vw - pad) - r.right;
+      if (r.right > vw - pad) dx = vw - pad - r.right;
 
       if (dx !== 0) {
         box.style.transform = `translateX(calc(-50% + ${dx}px))`;
@@ -119,7 +119,9 @@ function Tooltip({
             className="absolute left-1/2 top-[140%] z-20 w-[min(360px,85vw)] -translate-x-1/2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 shadow-lg"
           >
             {children}
-            <div className="mt-2 text-[11px] text-slate-400">Tap outside to close</div>
+            <div className="mt-2 text-[11px] text-slate-400">
+              Tap outside to close
+            </div>
           </div>
         )}
       </span>
@@ -195,7 +197,8 @@ export default function VarianceClient() {
 
     if (acc0 <= 0 || rPct <= 0 || w <= 0 || w >= 1) return null;
 
-    const results: { finalEquity: number; maxDD: number; longestL: number }[] = [];
+    const results: { finalEquity: number; maxDD: number; longestL: number }[] =
+      [];
 
     for (let s = 0; s < nSims; s++) {
       let equity = acc0;
@@ -239,11 +242,13 @@ export default function VarianceClient() {
   }, [accountSize, riskPct, winRate, avgR, trades, sims]);
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
+    <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-4xl px-4 sm:px-6 py-10 sm:py-16 space-y-8 sm:space-y-10">
         <header className="space-y-4">
           <h1 className="text-3xl font-semibold">Variance Simulator</h1>
-          <p className="text-sm text-slate-400">See drawdowns and losing streaks before they happen.</p>
+          <p className="text-sm text-slate-400">
+            See drawdowns and losing streaks before they happen.
+          </p>
 
           <div className="flex flex-wrap gap-3">
             <Link
@@ -259,7 +264,9 @@ export default function VarianceClient() {
               type="button"
               onClick={() => setView("simple")}
               className={`px-4 py-2 text-sm rounded-md ${
-                view === "simple" ? "bg-slate-100 text-slate-950" : "text-slate-200"
+                view === "simple"
+                  ? "bg-slate-100 text-slate-950"
+                  : "text-slate-200"
               }`}
             >
               Simple
@@ -268,7 +275,9 @@ export default function VarianceClient() {
               type="button"
               onClick={() => setView("advanced")}
               className={`px-4 py-2 text-sm rounded-md ${
-                view === "advanced" ? "bg-slate-100 text-slate-950" : "text-slate-200"
+                view === "advanced"
+                  ? "bg-slate-100 text-slate-950"
+                  : "text-slate-200"
               }`}
             >
               Advanced
@@ -291,7 +300,9 @@ export default function VarianceClient() {
             tip={
               <div className="space-y-2">
                 <div>
-                  Percent of <span className="font-semibold">current equity</span> you risk if the trade hits your stop.
+                  Percent of{" "}
+                  <span className="font-semibold">current equity</span> you risk
+                  if the trade hits your stop.
                 </div>
                 <div>Typical: 0.25%–1% for many retail traders.</div>
               </div>
@@ -314,14 +325,20 @@ export default function VarianceClient() {
                 tip={
                   <div className="space-y-2">
                     <div>
-                      “R” is your risk unit. If you risk $100 per trade, a +1.2R win averages +$120.
+                      “R” is your risk unit. If you risk $100 per trade, a +1.2R
+                      win averages +$120.
                     </div>
                     <div>Lower win-rate strategies often rely on higher R.</div>
                   </div>
                 }
               />
 
-              <Input label="# Trades" value={trades} onChange={setTrades} tip="How many trades to simulate per run (e.g., 50–200)." />
+              <Input
+                label="# Trades"
+                value={trades}
+                onChange={setTrades}
+                tip="How many trades to simulate per run (e.g., 50–200)."
+              />
 
               <Input
                 label="# Simulations"
@@ -336,26 +353,48 @@ export default function VarianceClient() {
         {computed && (
           <>
             <section className="grid gap-4 sm:grid-cols-3">
-              <Card label="Median Final Equity" value={formatCurrency(computed.medianFinal)} />
+              <Card
+                label="Median Final Equity"
+                value={formatCurrency(computed.medianFinal)}
+              />
               <Card
                 label="Realistic Range (P10–P90)"
-                value={`${formatCurrency(computed.p10Final)} – ${formatCurrency(computed.p90Final)}`}
+                value={`${formatCurrency(computed.p10Final)} – ${formatCurrency(
+                  computed.p90Final
+                )}`}
               />
-              <Card label="Blow-ups" value={`${computed.blowups} / ${computed.sims}`} />
+              <Card
+                label="Blow-ups"
+                value={`${computed.blowups} / ${computed.sims}`}
+              />
             </section>
 
             <section className="grid gap-4 sm:grid-cols-3">
-              <Card label="Median Drawdown" value={`${(computed.medianDD * 100).toFixed(1)}%`} />
-              <Card label="Worst Likely Drawdown (P90)" value={`${(computed.p90DD * 100).toFixed(1)}%`} />
+              <Card
+                label="Median Drawdown"
+                value={`${(computed.medianDD * 100).toFixed(1)}%`}
+              />
+              <Card
+                label="Worst Likely Drawdown (P90)"
+                value={`${(computed.p90DD * 100).toFixed(1)}%`}
+              />
               <Card
                 label="Interpretation"
-                value={`If you can't tolerate ~${Math.round(computed.p90DD * 100)}% drawdowns, lower risk %.`}
+                value={`If you can't tolerate ~${Math.round(
+                  computed.p90DD * 100
+                )}% drawdowns, lower risk %.`}
               />
             </section>
 
             <section className="grid gap-4 sm:grid-cols-3">
-              <Card label="Median Losing Streak" value={`${Math.round(computed.medianStreak)} trades`} />
-              <Card label="Worst Likely Streak (P90)" value={`${Math.round(computed.p90Streak)} trades`} />
+              <Card
+                label="Median Losing Streak"
+                value={`${Math.round(computed.medianStreak)} trades`}
+              />
+              <Card
+                label="Worst Likely Streak (P90)"
+                value={`${Math.round(computed.p90Streak)} trades`}
+              />
               <Card label="Reality Check" value="Losing streaks are normal." />
             </section>
           </>
