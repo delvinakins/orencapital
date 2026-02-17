@@ -1,7 +1,14 @@
+"use client";
+
 import type { CSSProperties } from "react";
+import { usePathname } from "next/navigation";
 
 export default function Home() {
   const accentStyle = { "--accent": "#2BCB77" } as CSSProperties;
+
+  // This changes whenever you navigate to "/" via client-side routing (e.g., clicking the logo)
+  // Using it as a key remounts the underline element and retriggers the animation.
+  const pathname = usePathname();
 
   return (
     <main className="min-h-screen bg-background text-foreground" style={accentStyle}>
@@ -16,8 +23,12 @@ export default function Home() {
             <span className="oren-accent relative inline-block align-baseline">
               <span className="relative z-10 text-[color:var(--accent)]">variance</span>
 
-              {/* underline (animated via CSS keyframes below) */}
-              <span aria-hidden className="oren-underline pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.9]" />
+              {/* underline (keyed to retrigger on client-side nav back to "/") */}
+              <span
+                key={`underline-${pathname}`}
+                aria-hidden
+                className="oren-underline pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.9]"
+              />
 
               {/* tiny, non-blurry glow */}
               <span
@@ -67,7 +78,6 @@ export default function Home() {
         </div>
       </div>
 
-      {/* CSS animation: no Tailwind arbitrary classes required */}
       <style>{`
         @media (prefers-reduced-motion: no-preference) {
           .oren-underline {
