@@ -13,21 +13,13 @@ export default function Home() {
 
           <h1 className="text-4xl font-semibold tracking-tight sm:text-6xl">
             Turn{" "}
-            <span className="group relative inline-block align-baseline">
+            <span className="oren-accent relative inline-block align-baseline">
               <span className="relative z-10 text-[color:var(--accent)]">variance</span>
 
-              {/* underline reveal */}
-              <span
-                aria-hidden
-                className={[
-                  "pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.9]",
-                  // start hidden, then draw in (only if motion is allowed)
-                  "origin-left scale-x-0",
-                  "motion-safe:animate-[oren_underline_700ms_ease-out_120ms_forwards]",
-                ].join(" ")}
-              />
+              {/* underline (animated via CSS keyframes below) */}
+              <span aria-hidden className="oren-underline pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.9]" />
 
-              {/* tiny, non-blurry glow to lift underline (kept subtle) */}
+              {/* tiny, non-blurry glow */}
               <span
                 aria-hidden
                 className="pointer-events-none absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-[0.10]"
@@ -75,11 +67,18 @@ export default function Home() {
         </div>
       </div>
 
-      {/* local keyframes (no globals needed) */}
+      {/* CSS animation: no Tailwind arbitrary classes required */}
       <style>{`
+        @media (prefers-reduced-motion: no-preference) {
+          .oren-underline {
+            transform-origin: left;
+            transform: scaleX(0);
+            animation: oren_underline 700ms cubic-bezier(0.2, 0.8, 0.2, 1) 120ms forwards;
+          }
+        }
         @keyframes oren_underline {
           from { transform: scaleX(0); }
-          to   { transform: scaleX(1); }
+          to { transform: scaleX(1); }
         }
       `}</style>
     </main>
