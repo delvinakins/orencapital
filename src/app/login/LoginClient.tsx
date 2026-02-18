@@ -29,7 +29,6 @@ export default function LoginClient() {
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
-          // After the user clicks the email link, Supabase redirects here
           emailRedirectTo: `${window.location.origin}/auth/callback`,
         },
       });
@@ -48,47 +47,51 @@ export default function LoginClient() {
     }
   }
 
+  const disabled = status === "sending" || !email;
+
   return (
-    <div className="space-y-6 rounded-xl border border-slate-800 bg-slate-900/40 p-6">
+    <div className="space-y-6 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-6 shadow-sm">
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold">Log in</h1>
-        <p className="text-sm text-slate-400">
-          We’ll email you a magic link.
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">Log in</h1>
+        <p className="text-sm text-foreground/70">We’ll email you a magic link.</p>
       </div>
 
       {errorMsg && (
-        <div className="rounded-lg border border-red-900/60 bg-red-950/40 p-3 text-sm text-red-200">
+        <div className="rounded-xl border border-amber-800/60 bg-amber-950/20 p-3 text-sm text-amber-100">
           Login error: {errorMsg}
         </div>
       )}
 
       <div className="space-y-2">
-        <label className="text-sm text-slate-400">Email</label>
+        <label className="text-sm text-foreground/70">Email</label>
         <input
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           type="email"
           placeholder="you@example.com"
-          className="w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-600"
+          className={[
+            "w-full h-12 rounded-lg px-4",
+            "border border-[color:var(--border)] bg-background text-foreground",
+            "outline-none",
+            "focus:border-[color:var(--accent)]/60 focus:ring-2 focus:ring-[color:var(--accent)]/15",
+            "placeholder:text-foreground/30",
+          ].join(" ")}
         />
       </div>
 
       <button
         onClick={sendMagicLink}
-        disabled={status === "sending" || !email}
-        className="w-full rounded-lg bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-950 disabled:opacity-50"
+        disabled={disabled}
+        className={`w-full oc-btn oc-btn-primary ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}
       >
-        {status === "sending" ? "Sending…" : "Send magic link"}
+        {status === "sending" ? "Sending…" : status === "sent" ? "Resend magic link" : "Send magic link"}
       </button>
 
       {message && (
-        <div className="text-sm text-slate-300">{message}</div>
+        <div className={`text-sm ${status === "error" ? "text-amber-100" : "text-foreground/80"}`}>{message}</div>
       )}
 
-      <div className="text-xs text-slate-500">
-        By continuing, you agree to our terms.
-      </div>
+      <div className="text-xs text-foreground/60">By continuing, you agree to our terms.</div>
     </div>
   );
 }
