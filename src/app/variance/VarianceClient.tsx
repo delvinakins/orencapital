@@ -354,9 +354,7 @@ export default function VarianceClient() {
         Model: <span className="font-semibold">Loss = −1R</span>,{" "}
         <span className="font-semibold">Win = +Avg R</span>.
       </div>
-      <div className="text-foreground/70">
-        EV = (Win Rate × Avg R) − (Loss Rate × 1R)
-      </div>
+      <div className="text-foreground/70">EV = (Win Rate × Avg R) − (Loss Rate × 1R)</div>
     </div>
   );
 
@@ -455,9 +453,74 @@ export default function VarianceClient() {
           )}
         </section>
 
-        {computed && (
+        {computed && view === "simple" && (
           <>
-            {/* Primary outcomes */}
+            {/* SIMPLE: concise but includes Edge Read + Survival Read */}
+            <section className="grid gap-4 sm:grid-cols-3">
+              <Card
+                label={
+                  <span className="inline-flex items-center gap-2">
+                    Realistic Range (P10–P90)
+                    <span className="text-foreground/40">•</span>
+                    <span className="text-foreground/70">
+                      <Tooltip label="P90">{p90Tip}</Tooltip>
+                    </span>
+                  </span>
+                }
+                value={`${formatCurrency(computed.p10Final)} – ${formatCurrency(computed.p90Final)}`}
+                sub={`Median: ${formatCurrency(computed.medianFinal)}`}
+              />
+
+              <Card
+                label={
+                  <span className="inline-flex items-center gap-2">
+                    Worst Likely Drawdown (P90)
+                    <span className="text-foreground/70">
+                      <Tooltip label="P90">{p90Tip}</Tooltip>
+                    </span>
+                  </span>
+                }
+                value={`${(computed.p90DD * 100).toFixed(1)}%`}
+                tone="accent"
+                sub="Plan around this."
+              />
+
+              <Card
+                label="Practical Ruin (70% Drawdown)"
+                value={formatPct01(computed.ruinPsychProb, 2)}
+                tone={toneFromProbability(computed.ruinPsychProb)}
+                sub={`Within ${computed.nTrades} trades.`}
+              />
+            </section>
+
+            <section className="grid gap-4 sm:grid-cols-3">
+              <Card
+                label={`Practical Ruin (Stress @ ${(computed.stressWinRate * 100).toFixed(0)}% WR)`}
+                value={formatPct01(computed.stressRuinPsychProb, 2)}
+                tone={toneFromProbability(computed.stressRuinPsychProb)}
+                sub="Win rate reduced by 5 pts."
+              />
+
+              <Card
+                label="Edge Read"
+                value={computed.evBase > 0 ? "Positive expectancy" : "Negative expectancy"}
+                tone={toneFromEV(computed.evBase)}
+                sub={`EV: ${formatR(computed.evBase, 3)} per trade`}
+              />
+
+              <Card
+                label="Survival Read"
+                value="Position sizing drives survival."
+                tone={toneFromProbability(Math.max(computed.ruinPsychProb, computed.ruinZeroProb))}
+                sub={survivalMessage(computed.ruinPsychProb, computed.ruinZeroProb)}
+              />
+            </section>
+          </>
+        )}
+
+        {computed && view === "advanced" && (
+          <>
+            {/* ADVANCED: full dashboard */}
             <section className="grid gap-4 sm:grid-cols-3">
               <Card label="Median Final Equity" value={formatCurrency(computed.medianFinal)} />
               <Card
@@ -475,7 +538,6 @@ export default function VarianceClient() {
               <Card label="Blow-ups (Zero)" value={`${computed.blowups} / ${computed.sims}`} />
             </section>
 
-            {/* Drawdowns */}
             <section className="grid gap-4 sm:grid-cols-3">
               <Card label="Median Drawdown" value={`${(computed.medianDD * 100).toFixed(1)}%`} />
               <Card
@@ -498,7 +560,6 @@ export default function VarianceClient() {
               />
             </section>
 
-            {/* Streaks */}
             <section className="grid gap-4 sm:grid-cols-3">
               <Card label="Median Losing Streak" value={`${Math.round(computed.medianStreak)} trades`} />
               <Card
@@ -515,7 +576,6 @@ export default function VarianceClient() {
               <Card label="Reality Check" value="Losing streaks are normal." />
             </section>
 
-            {/* EV Panel */}
             <section className="space-y-3 pt-2">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-semibold tracking-tight">Expectancy</div>
@@ -552,7 +612,6 @@ export default function VarianceClient() {
               </div>
             </section>
 
-            {/* Survival Dashboard */}
             <section className="space-y-3 pt-2">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-semibold tracking-tight">Survival Outlook</div>
@@ -585,7 +644,6 @@ export default function VarianceClient() {
               </div>
             </section>
 
-            {/* Confidence Stress Test */}
             <section className="space-y-3 pt-2">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-semibold tracking-tight">Confidence Stress Test</div>
