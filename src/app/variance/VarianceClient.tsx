@@ -47,13 +47,7 @@ function longestLosingStreak(outcomes: boolean[]) {
   return best;
 }
 
-function Tooltip({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Tooltip({ label, children }: { label: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const tipRef = useRef<HTMLSpanElement | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -69,16 +63,12 @@ function Tooltip({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
 
-  // Prevent clipping on small screens by nudging tooltip inside viewport
   useEffect(() => {
     if (!open) return;
     const box = boxRef.current;
     if (!box) return;
 
-    // Reset to centered first
     box.style.transform = "translateX(-50%)";
-
-    // Measure after paint
     requestAnimationFrame(() => {
       const r = box.getBoundingClientRect();
       const vw = window.innerWidth;
@@ -88,15 +78,14 @@ function Tooltip({
       if (r.left < pad) dx = pad - r.left;
       if (r.right > vw - pad) dx = vw - pad - r.right;
 
-      if (dx !== 0) {
-        box.style.transform = `translateX(calc(-50% + ${dx}px))`;
-      }
+      if (dx !== 0) box.style.transform = `translateX(calc(-50% + ${dx}px))`;
     });
   }, [open]);
 
   return (
     <span className="inline-flex items-center gap-2" ref={tipRef}>
       <span>{label}</span>
+
       <span className="relative inline-flex">
         <button
           type="button"
@@ -105,7 +94,7 @@ function Tooltip({
             e.stopPropagation();
             setOpen((v) => !v);
           }}
-          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-[11px] text-slate-200 active:scale-[0.98]"
+          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] text-[11px] text-foreground/90 active:scale-[0.98]"
         >
           i
         </button>
@@ -116,12 +105,10 @@ function Tooltip({
             role="dialog"
             aria-label={`${label} help`}
             onClick={(e) => e.stopPropagation()}
-            className="absolute left-1/2 top-[140%] z-20 w-[min(360px,85vw)] -translate-x-1/2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 shadow-lg"
+            className="absolute left-1/2 top-[140%] z-20 w-[min(360px,85vw)] -translate-x-1/2 rounded-xl border border-[color:var(--border)] bg-[color:var(--background)] px-3 py-2 text-xs text-foreground/90 shadow-2xl shadow-black/40"
           >
             {children}
-            <div className="mt-2 text-[11px] text-slate-400">
-              Tap outside to close
-            </div>
+            <div className="mt-2 text-[11px] text-foreground/60">Tap outside to close</div>
           </div>
         )}
       </span>
@@ -142,15 +129,13 @@ function Input({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-slate-400">
-        {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
-      </label>
+      <label className="text-sm text-foreground/70">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</label>
       <input
         type="number"
         inputMode="decimal"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-3 text-slate-100 outline-none focus:ring-2 focus:ring-slate-600"
+        className="h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none"
       />
     </div>
   );
@@ -158,16 +143,15 @@ function Input({
 
 function Card({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 sm:p-6">
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className="mt-2 text-xl font-semibold">{value}</div>
+    <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
+      <div className="text-xs text-foreground/60">{label}</div>
+      <div className="mt-2 text-xl font-semibold text-foreground">{value}</div>
     </div>
   );
 }
 
 export default function VarianceClient() {
   const searchParams = useSearchParams();
-
   const [view, setView] = useState<"simple" | "advanced">("simple");
 
   const [accountSize, setAccountSize] = useState("10000");
@@ -178,7 +162,6 @@ export default function VarianceClient() {
   const [trades, setTrades] = useState("120");
   const [sims, setSims] = useState("300");
 
-  // Prefill from Risk Engine (optional)
   useEffect(() => {
     const acc = searchParams.get("account");
     const risk = searchParams.get("risk");
@@ -197,8 +180,7 @@ export default function VarianceClient() {
 
     if (acc0 <= 0 || rPct <= 0 || w <= 0 || w >= 1) return null;
 
-    const results: { finalEquity: number; maxDD: number; longestL: number }[] =
-      [];
+    const results: { finalEquity: number; maxDD: number; longestL: number }[] = [];
 
     for (let s = 0; s < nSims; s++) {
       let equity = acc0;
@@ -246,27 +228,20 @@ export default function VarianceClient() {
       <div className="mx-auto max-w-4xl px-4 sm:px-6 py-10 sm:py-16 space-y-8 sm:space-y-10">
         <header className="space-y-4">
           <h1 className="text-3xl font-semibold">Variance Simulator</h1>
-          <p className="text-sm text-slate-400">
-            See drawdowns and losing streaks before they happen.
-          </p>
+          <p className="text-sm text-foreground/70">See drawdowns and losing streaks before they happen.</p>
 
           <div className="flex flex-wrap gap-3">
-            <Link
-              href="/risk-engine"
-              className="inline-flex items-center rounded-lg border border-slate-800 px-4 py-2 text-sm hover:bg-slate-900"
-            >
+            <Link href="/risk-engine" className="oc-btn oc-btn-secondary">
               ← Risk Engine
             </Link>
           </div>
 
-          <div className="inline-flex rounded-lg border border-slate-800 bg-slate-900/40 p-1">
+          <div className="inline-flex rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-1">
             <button
               type="button"
               onClick={() => setView("simple")}
-              className={`px-4 py-2 text-sm rounded-md ${
-                view === "simple"
-                  ? "bg-slate-100 text-slate-950"
-                  : "text-slate-200"
+              className={`px-4 py-2 text-sm rounded-lg ${
+                view === "simple" ? "bg-white text-black" : "text-foreground/85 hover:bg-white/5"
               }`}
             >
               Simple
@@ -274,10 +249,8 @@ export default function VarianceClient() {
             <button
               type="button"
               onClick={() => setView("advanced")}
-              className={`px-4 py-2 text-sm rounded-md ${
-                view === "advanced"
-                  ? "bg-slate-100 text-slate-950"
-                  : "text-slate-200"
+              className={`px-4 py-2 text-sm rounded-lg ${
+                view === "advanced" ? "bg-white text-black" : "text-foreground/85 hover:bg-white/5"
               }`}
             >
               Advanced
@@ -286,13 +259,7 @@ export default function VarianceClient() {
         </header>
 
         <section className="grid gap-4 sm:grid-cols-3">
-          <Input
-            label="Account Size ($)"
-            value={accountSize}
-            onChange={setAccountSize}
-            tip="Your starting account value for the simulation."
-          />
-
+          <Input label="Account Size ($)" value={accountSize} onChange={setAccountSize} tip="Your starting account value for the simulation." />
           <Input
             label="Risk % per trade"
             value={riskPct}
@@ -300,21 +267,13 @@ export default function VarianceClient() {
             tip={
               <div className="space-y-2">
                 <div>
-                  Percent of{" "}
-                  <span className="font-semibold">current equity</span> you risk
-                  if the trade hits your stop.
+                  Percent of <span className="font-semibold">current equity</span> you risk if the trade hits your stop.
                 </div>
                 <div>Typical: 0.25%–1% for many retail traders.</div>
               </div>
             }
           />
-
-          <Input
-            label="Win Rate (%)"
-            value={winRate}
-            onChange={setWinRate}
-            tip="Estimated probability of a winning trade. If unsure, test 45–55%."
-          />
+          <Input label="Win Rate (%)" value={winRate} onChange={setWinRate} tip="Estimated probability of a winning trade. If unsure, test 45–55%." />
 
           {view === "advanced" && (
             <>
@@ -325,27 +284,14 @@ export default function VarianceClient() {
                 tip={
                   <div className="space-y-2">
                     <div>
-                      “R” is your risk unit. If you risk $100 per trade, a +1.2R
-                      win averages +$120.
+                      “R” is your risk unit. If you risk $100 per trade, a +1.2R win averages +$120.
                     </div>
                     <div>Lower win-rate strategies often rely on higher R.</div>
                   </div>
                 }
               />
-
-              <Input
-                label="# Trades"
-                value={trades}
-                onChange={setTrades}
-                tip="How many trades to simulate per run (e.g., 50–200)."
-              />
-
-              <Input
-                label="# Simulations"
-                value={sims}
-                onChange={setSims}
-                tip="Number of Monte Carlo runs. Higher is smoother but slower (300–1000 is solid)."
-              />
+              <Input label="# Trades" value={trades} onChange={setTrades} tip="How many trades to simulate per run (e.g., 50–200)." />
+              <Input label="# Simulations" value={sims} onChange={setSims} tip="Number of Monte Carlo runs. Higher is smoother but slower (300–1000 is solid)." />
             </>
           )}
         </section>
@@ -353,48 +299,20 @@ export default function VarianceClient() {
         {computed && (
           <>
             <section className="grid gap-4 sm:grid-cols-3">
-              <Card
-                label="Median Final Equity"
-                value={formatCurrency(computed.medianFinal)}
-              />
-              <Card
-                label="Realistic Range (P10–P90)"
-                value={`${formatCurrency(computed.p10Final)} – ${formatCurrency(
-                  computed.p90Final
-                )}`}
-              />
-              <Card
-                label="Blow-ups"
-                value={`${computed.blowups} / ${computed.sims}`}
-              />
+              <Card label="Median Final Equity" value={formatCurrency(computed.medianFinal)} />
+              <Card label="Realistic Range (P10–P90)" value={`${formatCurrency(computed.p10Final)} – ${formatCurrency(computed.p90Final)}`} />
+              <Card label="Blow-ups" value={`${computed.blowups} / ${computed.sims}`} />
             </section>
 
             <section className="grid gap-4 sm:grid-cols-3">
-              <Card
-                label="Median Drawdown"
-                value={`${(computed.medianDD * 100).toFixed(1)}%`}
-              />
-              <Card
-                label="Worst Likely Drawdown (P90)"
-                value={`${(computed.p90DD * 100).toFixed(1)}%`}
-              />
-              <Card
-                label="Interpretation"
-                value={`If you can't tolerate ~${Math.round(
-                  computed.p90DD * 100
-                )}% drawdowns, lower risk %.`}
-              />
+              <Card label="Median Drawdown" value={`${(computed.medianDD * 100).toFixed(1)}%`} />
+              <Card label="Worst Likely Drawdown (P90)" value={`${(computed.p90DD * 100).toFixed(1)}%`} />
+              <Card label="Interpretation" value={`If you can't tolerate ~${Math.round(computed.p90DD * 100)}% drawdowns, lower risk %.`} />
             </section>
 
             <section className="grid gap-4 sm:grid-cols-3">
-              <Card
-                label="Median Losing Streak"
-                value={`${Math.round(computed.medianStreak)} trades`}
-              />
-              <Card
-                label="Worst Likely Streak (P90)"
-                value={`${Math.round(computed.p90Streak)} trades`}
-              />
+              <Card label="Median Losing Streak" value={`${Math.round(computed.medianStreak)} trades`} />
+              <Card label="Worst Likely Streak (P90)" value={`${Math.round(computed.p90Streak)} trades`} />
               <Card label="Reality Check" value="Losing streaks are normal." />
             </section>
           </>
