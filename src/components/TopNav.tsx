@@ -69,11 +69,16 @@ export default function TopNav() {
   const card = "bg-[color:var(--card)]";
   const glass = "bg-[color:var(--background)]/80";
 
+  // Labs target + gating:
+  // - PRO users go to /labs/nba
+  // - FREE users go to /pricing and see "Labs (PRO)"
+  const labsHref = isPro ? "/labs/nba" : "/pricing";
+  const labsLabel = isPro ? "Labs" : "Labs (PRO)";
+
   return (
     <nav className={`sticky top-0 z-50 w-full border-b ${border} ${glass} backdrop-blur`}>
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <div className="flex h-16 items-center justify-between">
-          
           {/* LEFT */}
           <div className="flex items-center gap-6">
             <Link href="/" className="group inline-flex items-center gap-3">
@@ -96,15 +101,18 @@ export default function TopNav() {
                   onClick={() => setMoreOpen((v) => !v)}
                   className="inline-flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-white/5 hover:text-white"
                   aria-expanded={moreOpen}
+                  aria-label="More menu"
                 >
                   More <span className="text-slate-500">▾</span>
                 </button>
 
                 {moreOpen && (
-                  <div className={`absolute left-0 mt-3 w-52 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
+                  <div
+                    className={`absolute left-0 mt-3 w-52 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}
+                  >
                     <MenuItem href="/portfolio" label="Portfolio" />
                     <MenuItem href="/journal" label="Journal" />
-                    <MenuItem href="/labs" label="Labs" />
+                    <MenuItem href={labsHref} label={labsLabel} />
                     <div className={`my-1 h-px ${border}`} />
                     <MenuItem href="/pricing" label="Pricing" />
                   </div>
@@ -115,13 +123,14 @@ export default function TopNav() {
 
           {/* RIGHT */}
           <div className="flex items-center gap-2">
-
             {signedIn && (
-              <span className={
-                isPro
-                  ? "hidden sm:inline-flex items-center rounded-full border border-emerald-700/40 bg-emerald-600/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-emerald-200"
-                  : "hidden sm:inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-slate-200"
-              }>
+              <span
+                className={
+                  isPro
+                    ? "hidden sm:inline-flex items-center rounded-full border border-emerald-700/40 bg-emerald-600/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-emerald-200"
+                    : "hidden sm:inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-slate-200"
+                }
+              >
                 {isPro ? "PRO" : "FREE"}
               </span>
             )}
@@ -129,6 +138,8 @@ export default function TopNav() {
             <button
               type="button"
               onClick={() => setMobileOpen((v) => !v)}
+              aria-expanded={mobileOpen}
+              aria-label="Open menu"
               className={`lg:hidden inline-flex h-10 items-center justify-center rounded-xl border ${border} bg-white/5 px-3 text-sm font-semibold text-white hover:bg-white/10`}
             >
               {mobileOpen ? "Close" : "Menu"}
@@ -138,13 +149,17 @@ export default function TopNav() {
               <div className="relative" ref={acctRef}>
                 <button
                   onClick={() => setAcctOpen((v) => !v)}
+                  aria-expanded={acctOpen}
+                  aria-label="Account menu"
                   className={`relative inline-flex h-10 w-10 items-center justify-center rounded-xl border ${border} bg-white/5 text-sm font-semibold text-white hover:bg-white/10`}
                 >
                   {initials}
                 </button>
 
                 {acctOpen && (
-                  <div className={`absolute right-0 mt-3 w-52 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
+                  <div
+                    className={`absolute right-0 mt-3 w-52 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}
+                  >
                     <MenuItem href="/account" label="Account" />
                     <MenuItem href="/account/billing" label="Billing" />
                     <div className={`my-1 h-px ${border}`} />
@@ -172,6 +187,12 @@ export default function TopNav() {
       {/* MOBILE MENU */}
       {mobileOpen && (
         <div className="lg:hidden">
+          <button
+            className="fixed inset-0 z-40 bg-black/55"
+            aria-label="Close menu overlay"
+            onClick={() => setMobileOpen(false)}
+          />
+
           <div className="fixed left-0 right-0 top-16 z-50 px-4 pb-4">
             <div className={`overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
               <div className="p-2 flex flex-col gap-1">
@@ -179,7 +200,7 @@ export default function TopNav() {
                 <MobileItem href="/variance" label="Simulator" onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/portfolio" label="Portfolio" onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/journal" label="Journal" onClick={() => setMobileOpen(false)} />
-                <MobileItem href="/labs" label="Labs" onClick={() => setMobileOpen(false)} />
+                <MobileItem href={labsHref} label={labsLabel} onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/pricing" label="Pricing" onClick={() => setMobileOpen(false)} />
               </div>
             </div>

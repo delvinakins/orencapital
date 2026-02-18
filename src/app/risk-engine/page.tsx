@@ -2,9 +2,8 @@
 
 import type React from "react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import JournalPanel from "@/components/JournalPanel";
-import { Tooltip } from "@/components/Tooltip";
 import ProLock from "@/components/ProLock";
 
 type SizingMode = "constant-fraction" | "fixed-dollar";
@@ -46,6 +45,102 @@ function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+/* =========================================================
+   Tooltip (local) — matches pine tokens + accent hover
+========================================================= */
+function Tooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const tipRef = useRef<HTMLSpanElement | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      if (!open) return;
+      const el = tipRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && !el.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  // Keep tooltip inside viewport
+  useEffect(() => {
+    if (!open) return;
+    const box = boxRef.current;
+    if (!box) return;
+
+    box.style.transform = "translateX(-50%)";
+    requestAnimationFrame(() => {
+      const r = box.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const pad = 12;
+
+      let dx = 0;
+      if (r.left < pad) dx = pad - r.left;
+      if (r.right > vw - pad) dx = vw - pad - r.right;
+
+      if (dx !== 0) box.style.transform = `translateX(calc(-50% + ${dx}px))`;
+    });
+  }, [open]);
+
+  return (
+    <span className="inline-flex items-center gap-2" ref={tipRef}>
+      <span>{label}</span>
+
+      <span className="relative inline-flex">
+        <button
+          type="button"
+          aria-label={`Help: ${label}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen((v) => !v);
+          }}
+          className="
+            inline-flex h-5 w-5 items-center justify-center
+            rounded-full
+            border border-[color:var(--border)]
+            bg-[color:var(--card)]
+            text-[11px] text-foreground/80
+            hover:border-[color:var(--accent)]
+            hover:text-[color:var(--accent)]
+            active:scale-[0.98]
+            transition-colors
+          "
+        >
+          i
+        </button>
+
+        {open && (
+          <div
+            ref={boxRef}
+            role="dialog"
+            aria-label={`${label} help`}
+            onClick={(e) => e.stopPropagation()}
+            className="
+              absolute left-1/2 top-[140%] z-50
+              w-[min(360px,85vw)]
+              -translate-x-1/2
+              rounded-xl
+              border border-[color:var(--border)]
+              bg-[color:var(--background)]
+              px-3 py-2
+              text-xs text-foreground/90
+              shadow-2xl shadow-black/40
+            "
+          >
+            {children}
+            <div className="mt-2 text-[11px] text-foreground/60">Tap outside to close</div>
+          </div>
+        )}
+      </span>
+    </span>
+  );
+}
+
+/* =========================================================
+   UI Atoms
+========================================================= */
 function Input({
   label,
   value,
@@ -135,15 +230,16 @@ function Card({
 
   return (
     <div className={`rounded-xl border ${toneClass} bg-[color:var(--card)] p-5 sm:p-6`}>
-      <div className="text-xs text-foreground/60">
-        {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
-      </div>
+      <div className="text-xs text-foreground/60">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</div>
       <div className="mt-2 text-xl font-semibold text-foreground">{value}</div>
       {sub && <div className="mt-2 text-xs text-foreground/60">{sub}</div>}
     </div>
   );
 }
 
+/* =========================================================
+   Math
+========================================================= */
 function toNumber(s: string) {
   const n = Number(s);
   return Number.isFinite(n) ? n : 0;
@@ -176,6 +272,9 @@ function downloadText(filename: string, text: string) {
   URL.revokeObjectURL(url);
 }
 
+/* =========================================================
+   Page
+========================================================= */
 export default function RiskEnginePage() {
   // Pro status (server truth)
   const [isPro, setIsPro] = useState(false);
@@ -251,10 +350,7 @@ export default function RiskEnginePage() {
   }, [totals.totalRisk, targetDollarRisk]);
 
   function addPosition() {
-    setPositions((prev) => [
-      ...prev,
-      { id: uid(), label: "", side: "long", entry: "", stop: "", qty: "", multiplier: "1" },
-    ]);
+    setPositions((prev) => [...prev, { id: uid(), label: "", side: "long", entry: "", stop: "", qty: "", multiplier: "1" }]);
   }
 
   function updatePos(id: string, patch: Partial<Position>) {
@@ -411,15 +507,7 @@ export default function RiskEnginePage() {
       headers.join(","),
       ...positions.map((p) => {
         const dr = calcDollarRisk(p);
-        return [
-          (p.label || "").replaceAll(",", " "),
-          p.side,
-          p.entry,
-          p.stop,
-          p.qty,
-          p.multiplier,
-          dr.toFixed(2),
-        ].join(",");
+        return [(p.label || "").replaceAll(",", " "), p.side, p.entry, p.stop, p.qty, p.multiplier, dr.toFixed(2)].join(",");
       }),
     ];
 
@@ -525,11 +613,7 @@ export default function RiskEnginePage() {
 
         {/* Summary */}
         <section className="grid gap-4 sm:grid-cols-3">
-          <Card
-            label="Target Dollar Risk"
-            value={money(targetDollarRisk)}
-            tip="How much you intend to risk on this trade idea (based on sizing mode)."
-          />
+          <Card label="Target Dollar Risk" value={money(targetDollarRisk)} tip="How much you intend to risk on this trade idea (based on sizing mode)." />
           <Card
             label="Current Total Risk"
             value={money(totals.totalRisk)}
@@ -562,14 +646,7 @@ export default function RiskEnginePage() {
               return (
                 <div key={p.id} className={`rounded-lg border ${border} bg-black/20 p-4 space-y-3 overflow-visible`}>
                   <div className="grid gap-3 md:grid-cols-6">
-                    <Input
-                      label="Label"
-                      value={p.label}
-                      onChange={(v) => updatePos(p.id, { label: v })}
-                      placeholder="AAPL"
-                      type="text"
-                      tip='Ticker or nickname. Letters + numbers allowed (e.g., "AAPL", "SPY-1").'
-                    />
+                    <Input label="Label" value={p.label} onChange={(v) => updatePos(p.id, { label: v })} placeholder="AAPL" type="text" tip='Ticker or nickname. Letters + numbers allowed (e.g., "AAPL", "SPY-1").' />
 
                     <Select
                       label="Side"
@@ -582,41 +659,13 @@ export default function RiskEnginePage() {
                       tip="Side changes your trade logic, but risk magnitude is still entry-to-stop distance."
                     />
 
-                    <Input
-                      label="Entry Price"
-                      value={p.entry}
-                      onChange={(v) => updatePos(p.id, { entry: v })}
-                      type="number"
-                      placeholder="190"
-                      tip="Your planned entry. Risk is measured from entry to stop."
-                    />
+                    <Input label="Entry Price" value={p.entry} onChange={(v) => updatePos(p.id, { entry: v })} type="number" placeholder="190" tip="Your planned entry. Risk is measured from entry to stop." />
 
-                    <Input
-                      label="Stop Price"
-                      value={p.stop}
-                      onChange={(v) => updatePos(p.id, { stop: v })}
-                      type="number"
-                      placeholder="185"
-                      tip="Your invalidation level. If the stop is vague, the risk math is fake."
-                    />
+                    <Input label="Stop Price" value={p.stop} onChange={(v) => updatePos(p.id, { stop: v })} type="number" placeholder="185" tip="Your invalidation level. If the stop is vague, the risk math is fake." />
 
-                    <Input
-                      label="Qty"
-                      value={p.qty}
-                      onChange={(v) => updatePos(p.id, { qty: v })}
-                      type="number"
-                      placeholder="10"
-                      tip="Shares or contracts. Risk scales linearly with size."
-                    />
+                    <Input label="Qty" value={p.qty} onChange={(v) => updatePos(p.id, { qty: v })} type="number" placeholder="10" tip="Shares or contracts. Risk scales linearly with size." />
 
-                    <Input
-                      label="Multiplier"
-                      value={p.multiplier}
-                      onChange={(v) => updatePos(p.id, { multiplier: v })}
-                      type="number"
-                      placeholder="1"
-                      tip="Stocks: 1. Options: typically 100."
-                    />
+                    <Input label="Multiplier" value={p.multiplier} onChange={(v) => updatePos(p.id, { multiplier: v })} type="number" placeholder="1" tip="Stocks: 1. Options: typically 100." />
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-3">
@@ -656,11 +705,7 @@ export default function RiskEnginePage() {
         </section>
 
         {/* Pro: Save / Load overlay */}
-        <ProLock
-          feature="Portfolio Save/Load"
-          description="Save setups (account + sizing + positions) and reload them instantly."
-          mode="overlay"
-        >
+        <ProLock feature="Portfolio Save/Load" description="Save setups (account + sizing + positions) and reload them instantly." mode="overlay">
           <section className={`rounded-xl border ${border} ${card} p-4 sm:p-6 space-y-4 overflow-visible`}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-lg font-semibold">Save / Load Portfolios (Pro)</div>
@@ -669,18 +714,10 @@ export default function RiskEnginePage() {
               </button>
             </div>
 
-            {!!msg && (
-              <div className={`rounded-lg border ${border} bg-black/20 p-3 text-sm text-foreground`}>{msg}</div>
-            )}
+            {!!msg && <div className={`rounded-lg border ${border} bg-black/20 p-3 text-sm text-foreground`}>{msg}</div>}
 
             <div className="grid gap-4 md:grid-cols-3">
-              <Input
-                label="Portfolio name"
-                value={portfolioName}
-                onChange={setPortfolioName}
-                placeholder="My swing watchlist"
-                tip="Name to save this current state (account + sizing + positions)."
-              />
+              <Input label="Portfolio name" value={portfolioName} onChange={setPortfolioName} placeholder="My swing watchlist" tip="Name to save this current state (account + sizing + positions)." />
 
               <div className="flex flex-col gap-2 md:col-span-2">
                 <label className="text-sm text-foreground/70">
@@ -716,7 +753,6 @@ export default function RiskEnginePage() {
           </section>
         </ProLock>
 
-        {/* Pro: Trade Journal (snapshots + notes) */}
         <JournalPanel
           isPro={isPro}
           snapshot={{

@@ -11,6 +11,7 @@ export function Tooltip({ label, children }: TooltipProps) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const wrapRef = useRef<HTMLSpanElement | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
@@ -30,11 +31,29 @@ export function Tooltip({ label, children }: TooltipProps) {
     }
 
     return () => {
-      document.removeEventListener("pointerdown", onPointerDown, {
-        capture: true,
-      } as any);
+      document.removeEventListener("pointerdown", onPointerDown, { capture: true } as any);
       document.removeEventListener("keydown", onKeyDown);
     };
+  }, [open]);
+
+  // Nudge inside viewport so it doesn't clip on small screens
+  useEffect(() => {
+    if (!open) return;
+    const box = boxRef.current;
+    if (!box) return;
+
+    box.style.transform = "translateX(-50%)";
+    requestAnimationFrame(() => {
+      const r = box.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const pad = 12;
+
+      let dx = 0;
+      if (r.left < pad) dx = pad - r.left;
+      if (r.right > vw - pad) dx = vw - pad - r.right;
+
+      if (dx !== 0) box.style.transform = `translateX(calc(-50% + ${dx}px))`;
+    });
   }, [open]);
 
   return (
@@ -55,22 +74,44 @@ export function Tooltip({ label, children }: TooltipProps) {
             e.stopPropagation();
             setOpen((v) => !v);
           }}
-          className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-[11px] font-semibold text-slate-200 active:scale-[0.98]"
+          className="
+            inline-flex h-5 w-5 items-center justify-center
+            rounded-full
+            border border-[color:var(--border)]
+            bg-[color:var(--card)]
+            text-[11px] font-semibold
+            text-foreground/80
+            hover:border-[color:var(--accent)]
+            hover:text-[color:var(--accent)]
+            active:scale-[0.98]
+            transition-colors
+          "
         >
           i
         </button>
 
         {open && (
           <div
+            ref={boxRef}
             id={id}
             role="dialog"
             aria-label={`${label} help`}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
-            className="absolute left-1/2 top-[140%] z-50 w-[min(360px,85vw)] -translate-x-1/2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 shadow-lg"
+            className="
+              absolute left-1/2 top-[140%] z-50
+              w-[min(360px,85vw)]
+              -translate-x-1/2
+              rounded-xl
+              border border-[color:var(--border)]
+              bg-[color:var(--background)]
+              px-3 py-2
+              text-xs text-foreground/90
+              shadow-2xl shadow-black/40
+            "
           >
             {children}
-            <div className="mt-2 text-[11px] text-slate-400">
+            <div className="mt-2 text-[11px] text-foreground/60">
               Tap outside or press Esc to close
             </div>
           </div>
@@ -80,5 +121,4 @@ export function Tooltip({ label, children }: TooltipProps) {
   );
 }
 
-// Optional default export for convenience if any files import default
 export default Tooltip;
