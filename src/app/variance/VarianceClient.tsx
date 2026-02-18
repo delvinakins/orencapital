@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Tooltip } from "@/components/Tooltip";
-import { calculateRiskOfRuin } from "./utils/riskofruin";
 
 function formatCurrency(value: number) {
   return value.toLocaleString(undefined, {
@@ -12,6 +11,17 @@ function formatCurrency(value: number) {
     currency: "USD",
     maximumFractionDigits: 0,
   });
+}
+
+function formatPct01(x: number, digits = 1) {
+  if (!Number.isFinite(x)) return "—";
+  return `${(x * 100).toFixed(digits)}%`;
+}
+
+function formatPctSigned01(x: number, digits = 1) {
+  if (!Number.isFinite(x)) return "—";
+  const sign = x > 0 ? "+" : "";
+  return `${sign}${(x * 100).toFixed(digits)}%`;
 }
 
 function percentile(sorted: number[], p: number) {
@@ -47,6 +57,11 @@ function longestLosingStreak(outcomes: boolean[]) {
     }
   }
   return best;
+}
+
+function clamp01(x: number) {
+  if (!Number.isFinite(x)) return 0;
+  return Math.min(1, Math.max(0, x));
 }
 
 function Input({
@@ -87,6 +102,7 @@ function Card({
   sub?: string;
   tone?: "neutral" | "accent" | "warn";
 }) {
+  // Institutional feel: no big red blocks. "warn" uses amber border/text only.
   const toneClass =
     tone === "accent"
       ? "border-[color:var(--accent)]/55 shadow-[0_0_0_1px_rgba(43,203,119,0.10)]"
@@ -108,6 +124,37 @@ function Card({
       {sub && <div className="mt-2 text-xs text-foreground/60">{sub}</div>}
     </div>
   );
+}
+
+function toneFromProbability(p: number): "accent" | "neutral" | "warn" {
+  // Keep it calm/institutional:
+  // - warn only when it is meaningfully high
+  // - accent when comfortably low
+  if (!Number.isFinite(p)) return "neutral";
+  if (p >= 0.30) return "warn";
+  if (p <= 0.10) return "accent";
+  return "neutral";
+}
+
+function toneFromDelta(delta: number): "accent" | "neutral" | "warn" {
+  // Delta is "worse by X" (positive means increased risk). Keep it subtle.
+  if (!Number.isFinite(delta)) return "neutral";
+  if (delta >= 0.15) return "warn";
+  if (delta <= -0.05) return "accent";
+  return "neutral";
+}
+
+function survivalMessage(psychRuin: number, zeroRuin: number) {
+  const pr = Number.isFinite(psychRuin) ? psychRuin : 0;
+  const zr = Number.isFinite(zeroRuin) ? zeroRuin : 0;
+
+  if (pr >= 0.45 || zr >= 0.20) {
+    return "Sizing risk is elevated. Consider reducing risk per trade and re-running the distribution.";
+  }
+  if (pr >= 0.25 || zr >= 0.10) {
+    return "Survival risk is material. This profile may be hard to maintain through expected variance.";
+  }
+  return "Survival profile looks structurally reasonable—assuming your win rate and average R are realistic.";
 }
 
 export default function VarianceClient() {
@@ -141,49 +188,96 @@ export default function VarianceClient() {
 
     if (acc0 <= 0 || rPct <= 0 || w <= 0 || w >= 1) return null;
 
-    const results: { finalEquity: number; maxDD: number; longestL: number }[] = [];
+    const startEquity = acc0;
+    const psychologicalRuinThreshold = startEquity * 0.3; // 70% drawdown (30% remaining)
 
-    for (let s = 0; s < nSims; s++) {
-      let equity = acc0;
-      const outcomes: boolean[] = [];
-      const path = [equity];
+    type SimRun = { finalEquity: number; maxDD: number; longestL: number };
 
-      for (let i = 0; i < nTrades; i++) {
-        const isWin = Math.random() < w;
-        outcomes.push(isWin);
+    function runMonteCarlo(winProb01: number) {
+      const wp = clamp01(winProb01);
+      const results: SimRun[] = [];
 
-        const riskDollars = equity * rPct;
-        if (isWin) equity += riskDollars * r;
-        else equity -= riskDollars;
+      for (let s = 0; s < nSims; s++) {
+        let equity = startEquity;
+        const outcomes: boolean[] = [];
+        const path = [equity];
 
-        equity = Math.max(0, equity);
-        path.push(equity);
+        for (let i = 0; i < nTrades; i++) {
+          const isWin = Math.random() < wp;
+          outcomes.push(isWin);
+
+          const riskDollars = equity * rPct;
+          if (isWin) equity += riskDollars * r;
+          else equity -= riskDollars;
+
+          equity = Math.max(0, equity);
+          path.push(equity);
+
+          if (equity <= 0) break;
+        }
+
+        results.push({
+          finalEquity: equity,
+          maxDD: maxDrawdownFromEquity(path),
+          longestL: longestLosingStreak(outcomes),
+        });
       }
 
-      results.push({
-        finalEquity: equity,
-        maxDD: maxDrawdownFromEquity(path),
-        longestL: longestLosingStreak(outcomes),
-      });
+      const finals = results.map((rr) => rr.finalEquity).sort((a, b) => a - b);
+      const dds = results.map((rr) => rr.maxDD).sort((a, b) => a - b);
+      const streaks = results.map((rr) => rr.longestL).sort((a, b) => a - b);
+
+      const blowups = results.filter((rr) => rr.finalEquity <= 0).length;
+      const psychRuins = results.filter((rr) => rr.finalEquity <= psychologicalRuinThreshold).length;
+
+      return {
+        results,
+        finals,
+        dds,
+        streaks,
+        blowups,
+        psychRuins,
+        ruinZeroProb: blowups / nSims,
+        ruinPsychProb: psychRuins / nSims,
+      };
     }
 
-    const finals = results.map((rr) => rr.finalEquity).sort((a, b) => a - b);
-    const dds = results.map((rr) => rr.maxDD).sort((a, b) => a - b);
-    const streaks = results.map((rr) => rr.longestL).sort((a, b) => a - b);
+    // Base run (full detail)
+    const base = runMonteCarlo(w);
 
-    const riskOfRuin = calculateRiskOfRuin(w, rPct, r);
+    // Confidence stress test: assume win rate is overstated by 5 percentage points
+    const stressWinRate = clamp01(w - 0.05);
+    const stress = runMonteCarlo(stressWinRate);
 
     return {
-      medianFinal: percentile(finals, 0.5),
-      p10Final: percentile(finals, 0.1),
-      p90Final: percentile(finals, 0.9),
-      medianDD: percentile(dds, 0.5),
-      p90DD: percentile(dds, 0.9),
-      medianStreak: percentile(streaks, 0.5),
-      p90Streak: percentile(streaks, 0.9),
-      blowups: results.filter((rr) => rr.finalEquity <= 0).length,
+      // Base distribution metrics
+      medianFinal: percentile(base.finals, 0.5),
+      p10Final: percentile(base.finals, 0.1),
+      p90Final: percentile(base.finals, 0.9),
+
+      medianDD: percentile(base.dds, 0.5),
+      p90DD: percentile(base.dds, 0.9),
+
+      medianStreak: percentile(base.streaks, 0.5),
+      p90Streak: percentile(base.streaks, 0.9),
+
+      blowups: base.blowups,
+      psychRuins: base.psychRuins,
+
+      ruinZeroProb: base.ruinZeroProb,
+      ruinPsychProb: base.ruinPsychProb,
+
+      // Stress test outputs (survival-only)
+      stressWinRate,
+      stressRuinZeroProb: stress.ruinZeroProb,
+      stressRuinPsychProb: stress.ruinPsychProb,
+
+      // Meta
       sims: nSims,
-      riskOfRuin,
+      nTrades,
+      startEquity,
+      psychologicalRuinThreshold,
+      baseWinRate: w,
     };
   }, [accountSize, riskPct, winRate, avgR, trades, sims]);
 
@@ -200,15 +294,29 @@ export default function VarianceClient() {
     </div>
   );
 
-  const rorTip = (
+  const survivalTip = (
     <div className="space-y-2">
       <div>
-        <span className="font-semibold">Risk of Ruin</span> estimates the probability your bankroll eventually hits zero
-        under your current sizing + edge assumptions.
+        <span className="font-semibold">Survival Outlook</span> is computed directly from your Monte Carlo runs over the
+        next <span className="font-semibold">{computed?.nTrades ?? "N"}</span> trades.
       </div>
+      <div className="text-foreground/70">
+        “Practical ruin” here is defined as falling below <span className="font-semibold">30%</span> of starting capital
+        (a <span className="font-semibold">70% drawdown</span>).
+      </div>
+    </div>
+  );
+
+  const stressTip = (
+    <div className="space-y-2">
       <div>
-        It’s a simplified approximation — use it to compare scenarios (e.g. 1% risk vs 0.5% risk), not as certainty.
+        <span className="font-semibold">Confidence Stress Test</span> answers: “What if your win rate is overstated?”
       </div>
+      <div className="text-foreground/70">
+        We rerun the Monte Carlo assuming win rate is <span className="font-semibold">5 percentage points lower</span>{" "}
+        (e.g., 55% → 50%).
+      </div>
+      <div className="text-foreground/70">This is a robustness check—not a forecast.</div>
     </div>
   );
 
@@ -323,7 +431,7 @@ export default function VarianceClient() {
                 }
                 value={`${formatCurrency(computed.p10Final)} – ${formatCurrency(computed.p90Final)}`}
               />
-              <Card label="Blow-ups" value={`${computed.blowups} / ${computed.sims}`} />
+              <Card label="Blow-ups (Zero)" value={`${computed.blowups} / ${computed.sims}`} />
             </section>
 
             <section className="grid gap-4 sm:grid-cols-3">
@@ -364,43 +472,70 @@ export default function VarianceClient() {
               <Card label="Reality Check" value="Losing streaks are normal." />
             </section>
 
-            <section className="grid gap-4 sm:grid-cols-3">
-              <Card
-                label={
-                  <span className="inline-flex items-center gap-2">
-                    Risk of Ruin (Approx.)
-                    <span className="text-foreground/70">
-                      <Tooltip label="Risk of Ruin">{rorTip}</Tooltip>
-                    </span>
-                  </span>
-                }
-                value={`${(computed.riskOfRuin * 100).toFixed(2)}%`}
-                tone={computed.riskOfRuin >= 0.25 ? "warn" : "accent"}
-                sub={
-                  computed.riskOfRuin >= 0.25
-                    ? "High. Consider lowering risk % per trade."
-                    : "Lower is better. Compare scenarios by adjusting risk %."
-                }
-              />
-              <Card
-                label="Interpretation"
-                value={
-                  computed.riskOfRuin >= 0.5
-                    ? "This sizing is extremely aggressive."
-                    : computed.riskOfRuin >= 0.25
-                      ? "Aggressive sizing — small edge can still blow you up."
-                      : "Reasonable sizing, assuming your win-rate estimate is real."
-                }
-                tone={computed.riskOfRuin >= 0.25 ? "warn" : "neutral"}
-              />
-              <Card
-                label="Quick Fix"
-                value={
-                  computed.riskOfRuin >= 0.25
-                    ? "Try cutting risk per trade in half and re-check RoR."
-                    : "Test a worse win-rate (e.g. -5%) to see robustness."
-                }
-              />
+            {/* Survival Dashboard */}
+            <section className="space-y-3 pt-2">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold tracking-tight">Survival Outlook</div>
+                <div className="text-xs text-foreground/70">
+                  <Tooltip label="Survival Outlook">{survivalTip}</Tooltip>
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-3">
+                <Card
+                  label="Probability of Account Death (Zero)"
+                  value={formatPct01(computed.ruinZeroProb, 2)}
+                  tone={toneFromProbability(computed.ruinZeroProb)}
+                  sub={`${computed.blowups} / ${computed.sims} runs hit zero within ${computed.nTrades} trades.`}
+                />
+
+                <Card
+                  label="Probability of Practical Ruin (70% Drawdown)"
+                  value={formatPct01(computed.ruinPsychProb, 2)}
+                  tone={toneFromProbability(computed.ruinPsychProb)}
+                  sub={`Falls below ${formatCurrency(computed.psychologicalRuinThreshold)} within ${computed.nTrades} trades.`}
+                />
+
+                <Card
+                  label="Survival Read"
+                  value="Position sizing drives survival."
+                  tone={toneFromProbability(Math.max(computed.ruinPsychProb, computed.ruinZeroProb))}
+                  sub={survivalMessage(computed.ruinPsychProb, computed.ruinZeroProb)}
+                />
+              </div>
+            </section>
+
+            {/* Confidence Stress Test */}
+            <section className="space-y-3 pt-2">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold tracking-tight">Confidence Stress Test</div>
+                <div className="text-xs text-foreground/70">
+                  <Tooltip label="Confidence Stress Test">{stressTip}</Tooltip>
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-3">
+                <Card
+                  label={`Practical Ruin (Base @ ${(computed.baseWinRate * 100).toFixed(0)}% WR)`}
+                  value={formatPct01(computed.ruinPsychProb, 2)}
+                  tone={toneFromProbability(computed.ruinPsychProb)}
+                  sub={`Monte Carlo over ${computed.nTrades} trades.`}
+                />
+
+                <Card
+                  label={`Practical Ruin (Stress @ ${(computed.stressWinRate * 100).toFixed(0)}% WR)`}
+                  value={formatPct01(computed.stressRuinPsychProb, 2)}
+                  tone={toneFromProbability(computed.stressRuinPsychProb)}
+                  sub="Win rate reduced by 5 percentage points."
+                />
+
+                <Card
+                  label="Sensitivity"
+                  value={formatPctSigned01(computed.stressRuinPsychProb - computed.ruinPsychProb, 2)}
+                  tone={toneFromDelta(computed.stressRuinPsychProb - computed.ruinPsychProb)}
+                  sub="Increase in practical ruin probability under stress."
+                />
+              </div>
             </section>
           </>
         )}
