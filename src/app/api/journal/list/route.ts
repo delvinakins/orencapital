@@ -1,29 +1,45 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/admin";
-import { getSubscriptionByEmail } from "@/lib/subscription";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-export const runtime = "nodejs";
+export async function GET(req: Request) {
+  const supabase = await createSupabaseServerClient();
 
-export async function GET() {
-  try {
-    const testEmail = "test@gmail.com"; // TEMP until auth
+  const {
+    data: { user },
+    error: userErr,
+  } = await supabase.auth.getUser();
 
-    const sub = await getSubscriptionByEmail(testEmail);
-    if (!sub.isPro) {
-      return NextResponse.json({ error: "Pro required." }, { status: 402 });
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from("journal_entries")
-      .select("id,tag,note,created_at,snapshot")
-      .eq("email", testEmail)
-      .order("created_at", { ascending: false })
-      .limit(25);
-
-    if (error) throw new Error(error.message);
-
-    return NextResponse.json({ items: data ?? [] });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "List failed" }, { status: 500 });
+  if (userErr || !user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const { searchParams } = new URL(req.url);
+
+  const limitRaw = Number(searchParams.get("limit") ?? 50);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
+
+  // Cursor is an ISO timestamp string (created_at). If provided, fetch older than this.
+  const cursor = searchParams.get("cursor");
+
+  let q = supabase
+    .from("journal_trades")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (cursor) {
+    q = q.lt("created_at", cursor);
+  }
+
+  const { data, error } = await q;
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+
+  const trades = data ?? [];
+  const nextCursor = trades.length ? trades[trades.length - 1].created_at : null;
+
+  return NextResponse.json({ trades, nextCursor });
 }
