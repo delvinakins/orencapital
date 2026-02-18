@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Tooltip } from "@/components/Tooltip";
-import { calculateRiskOfRuin } from "./utils/riskOfRuin";
+import { calculateRiskOfRuin } from "./utils/riskofruin";
 
 function formatCurrency(value: number) {
   return value.toLocaleString(undefined, {
@@ -123,7 +123,6 @@ export default function VarianceClient() {
   const [trades, setTrades] = useState("120");
   const [sims, setSims] = useState("300");
 
-  // Prefill from Risk Engine (optional)
   useEffect(() => {
     const acc = searchParams.get("account");
     const risk = searchParams.get("risk");
@@ -172,7 +171,7 @@ export default function VarianceClient() {
     const dds = results.map((rr) => rr.maxDD).sort((a, b) => a - b);
     const streaks = results.map((rr) => rr.longestL).sort((a, b) => a - b);
 
-    const riskOfRuin = calculateRiskOfRuin(w, rPct);
+    const riskOfRuin = calculateRiskOfRuin(w, rPct, r);
 
     return {
       medianFinal: percentile(finals, 0.5),
