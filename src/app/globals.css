@@ -1,14 +1,28 @@
 @import "tailwindcss";
 
+/* =========================================================
+   BRAND TOKENS
+========================================================= */
+
 :root {
   --background: #0b0f0d; /* pine-black */
   --foreground: #e7ebe8; /* soft white */
-  --card: #111614;       /* subtle lifted panel */
-  --border: #1b2320;     /* muted pine-gray */
+  --card: #111614;       /* lifted panel */
+  --border: #1b2320;     /* pine-gray divider */
 
-  /* pine accent (match logo arrow family) */
+  /* Primary pine accent */
   --accent: #2BCB77;
+
+  /* Slightly deeper hover tone */
+  --accent-strong: #22b866;
+
+  /* Soft accent glow */
+  --accent-glow: rgba(43, 203, 119, 0.25);
 }
+
+/* =========================================================
+   BASE
+========================================================= */
 
 body {
   background: var(--background);
@@ -18,9 +32,9 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* -------------------------------
-   Accent focus system (global)
--------------------------------- */
+/* =========================================================
+   GLOBAL FOCUS SYSTEM (Institutional feel)
+========================================================= */
 
 :focus {
   outline: none;
@@ -36,25 +50,34 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  box-shadow: 0 0 0 3px rgba(43, 203, 119, 0.22);
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
-/* -------------------------------
-   Institutional buttons (global)
--------------------------------- */
+/* =========================================================
+   INSTITUTIONAL BUTTON SYSTEM
+========================================================= */
 
 .oc-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+
   border-radius: 0.75rem;
   padding: 0.75rem 1.25rem;
+
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1;
-  transition: transform 150ms ease, background-color 150ms ease, border-color 150ms ease, color 150ms ease,
-    box-shadow 150ms ease, opacity 150ms ease;
+
+  transition:
+    transform 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease;
+
   user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
@@ -62,6 +85,25 @@ select:focus-visible {
 .oc-btn:active {
   transform: scale(0.98);
 }
+
+/* ---------------------------
+   Primary (Pine Accent)
+---------------------------- */
+
+.oc-btn-accent {
+  background: var(--accent);
+  color: #000;
+  box-shadow: 0 6px 18px -8px var(--accent-glow);
+}
+
+.oc-btn-accent:hover {
+  background: var(--accent-strong);
+  box-shadow: 0 8px 22px -6px var(--accent-glow);
+}
+
+/* ---------------------------
+   White (Homepage style)
+---------------------------- */
 
 .oc-btn-primary {
   background: #ffffff;
@@ -72,6 +114,10 @@ select:focus-visible {
   background: rgba(255, 255, 255, 0.92);
 }
 
+/* ---------------------------
+   Secondary (Card button)
+---------------------------- */
+
 .oc-btn-secondary {
   background: var(--card);
   color: rgba(231, 235, 232, 0.92);
@@ -80,5 +126,38 @@ select:focus-visible {
 
 .oc-btn-secondary:hover {
   background: rgba(255, 255, 255, 0.04);
-  border-color: rgba(43, 203, 119, 0.35);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+/* ---------------------------
+   Ghost Accent (Outline)
+---------------------------- */
+
+.oc-btn-outline-accent {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+
+.oc-btn-outline-accent:hover {
+  background: var(--accent);
+  color: #000;
+}
+
+/* =========================================================
+   CARD SYSTEM (Optional but recommended)
+========================================================= */
+
+.oc-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+}
+
+.oc-card-soft {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: 0 10px 30px -15px rgba(0, 0, 0, 0.6);
 }

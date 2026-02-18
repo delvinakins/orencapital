@@ -1,5 +1,6 @@
 "use client";
 
+import type React from "react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import JournalPanel from "@/components/JournalPanel";
@@ -64,7 +65,7 @@ function Input({
 
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-slate-400">
+      <label className="text-sm text-foreground/70">
         {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
       </label>
       <input
@@ -73,7 +74,7 @@ function Input({
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="h-12 rounded-lg border border-slate-800 bg-slate-900 px-4 text-slate-100 outline-none focus:ring-2 focus:ring-slate-600"
+        className="h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none placeholder:text-foreground/30"
       />
     </div>
   );
@@ -94,13 +95,13 @@ function Select({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-slate-400">
+      <label className="text-sm text-foreground/70">
         {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
       </label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-12 rounded-lg border border-slate-800 bg-slate-900 px-4 text-slate-100 outline-none focus:ring-2 focus:ring-slate-600"
+        className="h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -117,19 +118,28 @@ function Card({
   value,
   sub,
   tip,
+  tone = "neutral",
 }: {
   label: string;
   value: string;
   sub?: string;
   tip?: React.ReactNode;
+  tone?: "neutral" | "good" | "warn";
 }) {
+  const toneClass =
+    tone === "good"
+      ? "border-emerald-800/60"
+      : tone === "warn"
+        ? "border-amber-800/60"
+        : "border-[color:var(--border)]";
+
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 sm:p-6">
-      <div className="text-xs text-slate-500">
+    <div className={`rounded-xl border ${toneClass} bg-[color:var(--card)] p-5 sm:p-6`}>
+      <div className="text-xs text-foreground/60">
         {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
       </div>
-      <div className="mt-2 text-xl font-semibold">{value}</div>
-      {sub && <div className="mt-2 text-xs text-slate-500">{sub}</div>}
+      <div className="mt-2 text-xl font-semibold text-foreground">{value}</div>
+      {sub && <div className="mt-2 text-xs text-foreground/60">{sub}</div>}
     </div>
   );
 }
@@ -243,15 +253,7 @@ export default function RiskEnginePage() {
   function addPosition() {
     setPositions((prev) => [
       ...prev,
-      {
-        id: uid(),
-        label: "",
-        side: "long",
-        entry: "",
-        stop: "",
-        qty: "",
-        multiplier: "1",
-      },
+      { id: uid(), label: "", side: "long", entry: "", stop: "", qty: "", multiplier: "1" },
     ]);
   }
 
@@ -399,7 +401,6 @@ export default function RiskEnginePage() {
   }, [isPro]);
 
   function exportCsv() {
-    // Keep server-truth protection even though UI is overlaid.
     if (!isPro) {
       setMsg("CSV export is Pro. Upgrade to unlock.");
       return;
@@ -426,31 +427,31 @@ export default function RiskEnginePage() {
     setMsg("CSV exported ✅");
   }
 
+  const border = "border-[color:var(--border)]";
+  const card = "bg-[color:var(--card)]";
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-6xl px-4 sm:px-6 py-10 sm:py-16 space-y-8 sm:space-y-10">
         <header className="space-y-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h1 className="text-3xl font-semibold">Risk Engine</h1>
-              <p className="mt-2 text-sm text-slate-400">
+              <h1 className="text-3xl font-semibold tracking-tight">Risk Engine</h1>
+              <p className="mt-2 text-sm text-foreground/70">
                 Build positions with intention: quantify risk, then decide if it’s worth taking.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <div className="text-xs text-slate-400">
+              <div className="text-xs text-foreground/60">
                 Plan:{" "}
-                <span className={isPro ? "text-green-400" : "text-slate-300"}>
+                <span className={isPro ? "text-emerald-300" : "text-foreground/80"}>
                   {isPro ? `Pro (${proStatus || "active"})` : "Free"}
                 </span>
               </div>
 
               {!isPro && (
-                <Link
-                  href="/pricing"
-                  className="inline-flex items-center rounded-lg border border-slate-800 px-3 py-2 text-sm hover:bg-slate-900"
-                >
+                <Link href="/pricing" className="oc-btn oc-btn-secondary">
                   Upgrade
                 </Link>
               )}
@@ -458,10 +459,7 @@ export default function RiskEnginePage() {
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-            <Link
-              href="/variance"
-              className="inline-flex h-11 items-center justify-center rounded-lg border border-slate-800 px-4 text-sm hover:bg-slate-900"
-            >
+            <Link href="/variance" className="oc-btn oc-btn-secondary">
               Variance Simulator →
             </Link>
 
@@ -469,7 +467,7 @@ export default function RiskEnginePage() {
               href={`/variance?account=${encodeURIComponent(accountSize)}&risk=${encodeURIComponent(
                 sizingMode === "constant-fraction" ? riskPct : "1"
               )}`}
-              className="inline-flex h-11 items-center justify-center rounded-lg bg-slate-100 px-4 text-sm font-medium text-slate-950 hover:bg-white"
+              className="oc-btn oc-btn-accent"
             >
               Run simulator with these settings
             </Link>
@@ -497,12 +495,10 @@ export default function RiskEnginePage() {
             tip={
               <div className="space-y-2">
                 <div>
-                  <span className="font-semibold">Constant-fraction</span>: risk scales with equity (classic “risk 1% per
-                  trade”).
+                  <span className="font-semibold">Constant-fraction</span>: risk scales with equity (classic “risk 1% per trade”).
                 </div>
                 <div>
-                  <span className="font-semibold">Fixed-dollar</span>: risk a flat $ each trade (emotionally simpler early
-                  on).
+                  <span className="font-semibold">Fixed-dollar</span>: risk a flat $ each trade (emotionally simpler early on).
                 </div>
               </div>
             }
@@ -532,7 +528,7 @@ export default function RiskEnginePage() {
           <Card
             label="Target Dollar Risk"
             value={money(targetDollarRisk)}
-            tip="How much you *intend* to risk on this trade idea (based on sizing mode)."
+            tip="How much you intend to risk on this trade idea (based on sizing mode)."
           />
           <Card
             label="Current Total Risk"
@@ -544,18 +540,16 @@ export default function RiskEnginePage() {
             label="Risk Check"
             value={riskOk ? "Within target ✅" : "Over target ⚠️"}
             sub={riskOk ? "Looks reasonable." : "Reduce size or tighten stops."}
+            tone={riskOk ? "good" : "warn"}
             tip="If positions risk more than your target, you’re more likely to panic at the worst time."
           />
         </section>
 
         {/* Positions */}
-        <section className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 sm:p-6 space-y-4 overflow-visible">
+        <section className={`rounded-xl border ${border} ${card} p-4 sm:p-6 space-y-4 overflow-visible`}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-lg font-semibold">Positions</div>
-            <button
-              onClick={addPosition}
-              className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/30 px-4 text-sm font-medium text-slate-200 hover:bg-slate-900"
-            >
+            <button onClick={addPosition} className="oc-btn oc-btn-secondary">
               + Add position
             </button>
           </div>
@@ -566,10 +560,7 @@ export default function RiskEnginePage() {
               const distPct = calcStopDistancePct(p);
 
               return (
-                <div
-                  key={p.id}
-                  className="rounded-lg border border-slate-800 bg-slate-950/30 p-4 space-y-3 overflow-visible"
-                >
+                <div key={p.id} className={`rounded-lg border ${border} bg-black/20 p-4 space-y-3 overflow-visible`}>
                   <div className="grid gap-3 md:grid-cols-6">
                     <Input
                       label="Label"
@@ -629,27 +620,18 @@ export default function RiskEnginePage() {
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-3">
-                    <Card
-                      label="Position Dollar Risk"
-                      value={money(dr)}
-                      tip="Computed as |entry - stop| × qty × multiplier."
-                    />
+                    <Card label="Position Dollar Risk" value={money(dr)} tip="Computed as |entry - stop| × qty × multiplier." />
                     <Card label="Stop Distance" value={pct(distPct)} tip="Distance from entry to stop as a % of entry." />
                     <Card
                       label="Target Alignment"
-                      value={
-                        targetDollarRisk > 0 ? `${Math.round((dr / targetDollarRisk) * 100)}% of target` : "—"
-                      }
+                      value={targetDollarRisk > 0 ? `${Math.round((dr / targetDollarRisk) * 100)}% of target` : "—"}
                       tip="How much this single position consumes of your intended trade risk."
                     />
                   </div>
 
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <div className="text-xs text-slate-500">Tip: Over target? Reduce size first (fastest fix).</div>
-                    <button
-                      onClick={() => removePos(p.id)}
-                      className="text-sm text-red-300 hover:text-red-200 self-start sm:self-auto"
-                    >
+                    <div className="text-xs text-foreground/60">Tip: Over target? Reduce size first (fastest fix).</div>
+                    <button onClick={() => removePos(p.id)} className="text-sm text-red-300 hover:text-red-200 self-start sm:self-auto">
                       Remove
                     </button>
                   </div>
@@ -665,15 +647,10 @@ export default function RiskEnginePage() {
             mode="overlay"
           >
             <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              <button
-                onClick={exportCsv}
-                className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/30 px-4 text-sm font-medium text-slate-200 hover:bg-slate-900"
-              >
+              <button onClick={exportCsv} className="oc-btn oc-btn-secondary">
                 Export CSV (Pro)
               </button>
-              <div className="text-xs text-slate-500">
-                CSV export is Pro because it’s an “operational workflow” feature.
-              </div>
+              <div className="text-xs text-foreground/60">CSV export is Pro because it’s an “operational workflow” feature.</div>
             </div>
           </ProLock>
         </section>
@@ -684,20 +661,16 @@ export default function RiskEnginePage() {
           description="Save setups (account + sizing + positions) and reload them instantly."
           mode="overlay"
         >
-          <section className="rounded-xl border border-slate-800 bg-slate-900/30 p-4 sm:p-6 space-y-4 overflow-visible">
+          <section className={`rounded-xl border ${border} ${card} p-4 sm:p-6 space-y-4 overflow-visible`}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-lg font-semibold">Save / Load Portfolios (Pro)</div>
-              <button
-                onClick={refreshPortfolios}
-                disabled={busy === "list"}
-                className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/30 px-4 text-sm font-medium text-slate-200 hover:bg-slate-900 disabled:opacity-60"
-              >
+              <button onClick={refreshPortfolios} disabled={busy === "list"} className="oc-btn oc-btn-secondary disabled:opacity-60">
                 {busy === "list" ? "Refreshing..." : "Refresh list"}
               </button>
             </div>
 
             {!!msg && (
-              <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-sm text-slate-200">{msg}</div>
+              <div className={`rounded-lg border ${border} bg-black/20 p-3 text-sm text-foreground`}>{msg}</div>
             )}
 
             <div className="grid gap-4 md:grid-cols-3">
@@ -710,17 +683,15 @@ export default function RiskEnginePage() {
               />
 
               <div className="flex flex-col gap-2 md:col-span-2">
-                <label className="text-sm text-slate-400">
-                  <Tooltip label="Saved portfolios">
-                    Your saved configurations. Loading replaces the current editor state.
-                  </Tooltip>
+                <label className="text-sm text-foreground/70">
+                  <Tooltip label="Saved portfolios">Your saved configurations. Loading replaces the current editor state.</Tooltip>
                 </label>
 
                 <div className="flex flex-col sm:flex-row gap-2">
                   <select
                     value={selectedPortfolioId}
                     onChange={(e) => setSelectedPortfolioId(e.target.value)}
-                    className="h-12 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-4 text-slate-100 outline-none focus:ring-2 focus:ring-slate-600"
+                    className={`h-12 flex-1 rounded-lg border ${border} ${card} px-4 text-foreground outline-none`}
                   >
                     <option value="">Select…</option>
                     {portfolios.map((p) => (
@@ -730,28 +701,16 @@ export default function RiskEnginePage() {
                     ))}
                   </select>
 
-                  <button
-                    onClick={savePortfolio}
-                    disabled={busy === "save"}
-                    className="inline-flex h-12 items-center justify-center rounded-lg bg-slate-100 px-4 text-sm font-medium text-slate-950 hover:bg-white disabled:opacity-60"
-                  >
+                  <button onClick={savePortfolio} disabled={busy === "save"} className="oc-btn oc-btn-accent disabled:opacity-60">
                     {busy === "save" ? "Saving..." : "Save"}
                   </button>
 
-                  <button
-                    onClick={loadPortfolio}
-                    disabled={busy === "load"}
-                    className="inline-flex h-12 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/30 px-4 text-sm font-medium text-slate-200 hover:bg-slate-900 disabled:opacity-60"
-                  >
+                  <button onClick={loadPortfolio} disabled={busy === "load"} className="oc-btn oc-btn-secondary disabled:opacity-60">
                     {busy === "load" ? "Loading..." : "Load"}
                   </button>
                 </div>
 
-                {!isPro && (
-                  <div className="text-xs text-amber-200">
-                    Pro required. This is a “workflow” feature (people pay for saving time).
-                  </div>
-                )}
+                {!isPro && <div className="text-xs text-amber-200">Pro required. This is a “workflow” feature (people pay for saving time).</div>}
               </div>
             </div>
           </section>
