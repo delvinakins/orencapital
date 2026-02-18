@@ -9,8 +9,7 @@ type SaveTradeBody = {
 
   symbol: string;
   side: TradeSide;
-
-  instrument?: InstrumentType; // ✅ new
+  instrument?: InstrumentType;
 
   entry_price?: number | null;
   exit_price?: number | null;
@@ -23,16 +22,12 @@ type SaveTradeBody = {
   strategy?: string | null;
   notes?: string | null;
 
-  created_at?: string;
   closed_at?: string | null;
 };
 
 function computeResultR(body: SaveTradeBody): number | null {
   const { entry_price, exit_price, stop_price, side } = body;
-
-  if (entry_price == null || exit_price == null || stop_price == null) {
-    return null;
-  }
+  if (entry_price == null || exit_price == null || stop_price == null) return null;
 
   const risk = side === "long" ? entry_price - stop_price : stop_price - entry_price;
   if (!risk || risk === 0) return null;
@@ -70,13 +65,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "symbol and side are required" }, { status: 400 });
   }
 
-  // Auto-compute R if not manually provided
-  const resultR =
-    typeof body.result_r === "number" ? body.result_r : computeResultR(body);
-
-  const isClosed = typeof resultR === "number";
-
   const instrument = normalizeInstrument(body.instrument);
+
+  // Prefer manual result_r if provided (future advanced override)
+  const computedR = computeResultR(body);
+  const resultR = typeof body.result_r === "number" ? body.result_r : computedR;
+
+  // Consider trade "closed" if exit_price exists OR resultR exists
+  const hasExit = typeof body.exit_price === "number";
+  const isClosed = typeof resultR === "number" || hasExit;
 
   const payload = {
     ...(body.id ? { id: body.id } : {}),
@@ -84,8 +81,7 @@ export async function POST(req: Request) {
 
     symbol: body.symbol.trim().toUpperCase(),
     side: body.side,
-
-    instrument, // ✅ new
+    instrument,
 
     entry_price: body.entry_price ?? null,
     exit_price: body.exit_price ?? null,
