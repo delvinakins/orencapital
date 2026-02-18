@@ -50,7 +50,7 @@ export default function LoginClient() {
   const disabled = status === "sending" || !email;
 
   return (
-    <div className="space-y-6 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-6 shadow-sm">
+    <div className="oc-glass space-y-6 rounded-2xl p-6">
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Log in</h1>
         <p className="text-sm text-foreground/70">We’ll email you a magic link.</p>

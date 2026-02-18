@@ -161,3 +161,11 @@ select:focus-visible {
   border-radius: 1rem;
   box-shadow: 0 10px 30px -15px rgba(0, 0, 0, 0.6);
 }
+/* Subtle Institutional Glass */
+.oc-glass {
+  background: color-mix(in srgb, var(--card) 85%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
