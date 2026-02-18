@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Tooltip } from "@/components/Tooltip";
 
+/* ---------------- Helpers ---------------- */
+
 function formatCurrency(value: number) {
   return value.toLocaleString(undefined, {
     style: "currency",
@@ -22,6 +24,17 @@ function formatPctSigned01(x: number, digits = 1) {
   if (!Number.isFinite(x)) return "—";
   const sign = x > 0 ? "+" : "";
   return `${sign}${(x * 100).toFixed(digits)}%`;
+}
+
+function clamp01(x: number) {
+  if (!Number.isFinite(x)) return 0;
+  return Math.min(1, Math.max(0, x));
+}
+
+function formatR(x: number, digits = 3) {
+  if (!Number.isFinite(x)) return "—";
+  const sign = x > 0 ? "+" : "";
+  return `${sign}${x.toFixed(digits)}R`;
 }
 
 function percentile(sorted: number[], p: number) {
@@ -59,10 +72,7 @@ function longestLosingStreak(outcomes: boolean[]) {
   return best;
 }
 
-function clamp01(x: number) {
-  if (!Number.isFinite(x)) return 0;
-  return Math.min(1, Math.max(0, x));
-}
+/* ---------------- UI ---------------- */
 
 function Input({
   label,
@@ -127,9 +137,6 @@ function Card({
 }
 
 function toneFromProbability(p: number): "accent" | "neutral" | "warn" {
-  // Keep it calm/institutional:
-  // - warn only when it is meaningfully high
-  // - accent when comfortably low
   if (!Number.isFinite(p)) return "neutral";
   if (p >= 0.30) return "warn";
   if (p <= 0.10) return "accent";
@@ -137,10 +144,17 @@ function toneFromProbability(p: number): "accent" | "neutral" | "warn" {
 }
 
 function toneFromDelta(delta: number): "accent" | "neutral" | "warn" {
-  // Delta is "worse by X" (positive means increased risk). Keep it subtle.
   if (!Number.isFinite(delta)) return "neutral";
   if (delta >= 0.15) return "warn";
   if (delta <= -0.05) return "accent";
+  return "neutral";
+}
+
+function toneFromEV(evR: number): "accent" | "neutral" | "warn" {
+  // Calm institutional thresholds
+  if (!Number.isFinite(evR)) return "neutral";
+  if (evR < 0) return "warn";
+  if (evR >= 0.05) return "accent";
   return "neutral";
 }
 
@@ -157,6 +171,8 @@ function survivalMessage(psychRuin: number, zeroRuin: number) {
   return "Survival profile looks structurally reasonable—assuming your win rate and average R are realistic.";
 }
 
+/* ---------------- Component ---------------- */
+
 export default function VarianceClient() {
   const searchParams = useSearchParams();
 
@@ -170,6 +186,7 @@ export default function VarianceClient() {
   const [trades, setTrades] = useState("120");
   const [sims, setSims] = useState("300");
 
+  // Prefill from Risk Engine (optional)
   useEffect(() => {
     const acc = searchParams.get("account");
     const risk = searchParams.get("risk");
@@ -231,7 +248,6 @@ export default function VarianceClient() {
       const psychRuins = results.filter((rr) => rr.finalEquity <= psychologicalRuinThreshold).length;
 
       return {
-        results,
         finals,
         dds,
         streaks,
@@ -249,7 +265,15 @@ export default function VarianceClient() {
     const stressWinRate = clamp01(w - 0.05);
     const stress = runMonteCarlo(stressWinRate);
 
+    // Expected Value (R per trade): EV = p*avgR - (1-p)*1
+    const evBase = w * r - (1 - w);
+    const evStress = stressWinRate * r - (1 - stressWinRate);
+
     return {
+      // EV
+      evBase,
+      evStress,
+
       // Base distribution metrics
       medianFinal: percentile(base.finals, 0.5),
       p10Final: percentile(base.finals, 0.1),
@@ -278,6 +302,7 @@ export default function VarianceClient() {
       startEquity,
       psychologicalRuinThreshold,
       baseWinRate: w,
+      avgR: r,
     };
   }, [accountSize, riskPct, winRate, avgR, trades, sims]);
 
@@ -320,6 +345,21 @@ export default function VarianceClient() {
     </div>
   );
 
+  const evTip = (
+    <div className="space-y-2">
+      <div>
+        <span className="font-semibold">Expected Value (EV)</span> is your average outcome per trade in “R” units.
+      </div>
+      <div className="text-foreground/70">
+        Model: <span className="font-semibold">Loss = −1R</span>,{" "}
+        <span className="font-semibold">Win = +Avg R</span>.
+      </div>
+      <div className="text-foreground/70">
+        EV = (Win Rate × Avg R) − (Loss Rate × 1R)
+      </div>
+    </div>
+  );
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:space-y-10 sm:px-6 sm:py-16">
@@ -337,7 +377,7 @@ export default function VarianceClient() {
             <button
               type="button"
               onClick={() => setView("simple")}
-              className={`rounded-lg px-4 py-2 text-sm ${
+              className={`px-4 py-2 text-sm rounded-lg ${
                 view === "simple" ? "bg-white text-black" : "text-foreground/85 hover:bg-white/5"
               }`}
             >
@@ -346,7 +386,7 @@ export default function VarianceClient() {
             <button
               type="button"
               onClick={() => setView("advanced")}
-              className={`rounded-lg px-4 py-2 text-sm ${
+              className={`px-4 py-2 text-sm rounded-lg ${
                 view === "advanced" ? "bg-white text-black" : "text-foreground/85 hover:bg-white/5"
               }`}
             >
@@ -392,8 +432,8 @@ export default function VarianceClient() {
                 onChange={setAvgR}
                 tip={
                   <div className="space-y-2">
-                    <div>“R” is your risk unit. If you risk $100 per trade, a +1.2R win averages +$120.</div>
-                    <div>Lower win-rate strategies often rely on higher R.</div>
+                    <div>Losses are modeled as −1R. Winners are +Avg R.</div>
+                    <div>If you risk $100 per trade, +1.2R means +$120 on wins.</div>
                   </div>
                 }
               />
@@ -417,6 +457,7 @@ export default function VarianceClient() {
 
         {computed && (
           <>
+            {/* Primary outcomes */}
             <section className="grid gap-4 sm:grid-cols-3">
               <Card label="Median Final Equity" value={formatCurrency(computed.medianFinal)} />
               <Card
@@ -434,6 +475,7 @@ export default function VarianceClient() {
               <Card label="Blow-ups (Zero)" value={`${computed.blowups} / ${computed.sims}`} />
             </section>
 
+            {/* Drawdowns */}
             <section className="grid gap-4 sm:grid-cols-3">
               <Card label="Median Drawdown" value={`${(computed.medianDD * 100).toFixed(1)}%`} />
               <Card
@@ -456,6 +498,7 @@ export default function VarianceClient() {
               />
             </section>
 
+            {/* Streaks */}
             <section className="grid gap-4 sm:grid-cols-3">
               <Card label="Median Losing Streak" value={`${Math.round(computed.medianStreak)} trades`} />
               <Card
@@ -470,6 +513,43 @@ export default function VarianceClient() {
                 value={`${Math.round(computed.p90Streak)} trades`}
               />
               <Card label="Reality Check" value="Losing streaks are normal." />
+            </section>
+
+            {/* EV Panel */}
+            <section className="space-y-3 pt-2">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold tracking-tight">Expectancy</div>
+                <div className="text-xs text-foreground/70">
+                  <Tooltip label="Expected Value">{evTip}</Tooltip>
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-3">
+                <Card
+                  label={`Expected Value (Base @ ${(computed.baseWinRate * 100).toFixed(0)}% WR)`}
+                  value={formatR(computed.evBase, 3)}
+                  tone={toneFromEV(computed.evBase)}
+                  sub="Average R per trade under the assumed win rate."
+                />
+
+                <Card
+                  label={`Expected Value (Stress @ ${(computed.stressWinRate * 100).toFixed(0)}% WR)`}
+                  value={formatR(computed.evStress, 3)}
+                  tone={toneFromEV(computed.evStress)}
+                  sub="Win rate reduced by 5 percentage points."
+                />
+
+                <Card
+                  label="Edge Read"
+                  value={computed.evBase > 0 ? "Positive expectancy" : "Negative expectancy"}
+                  tone={toneFromEV(computed.evBase)}
+                  sub={
+                    computed.evBase > 0
+                      ? "Sizing controls survival; expectancy controls direction."
+                      : "If EV is negative, survival depends on luck—not structure."
+                  }
+                />
+              </div>
             </section>
 
             {/* Survival Dashboard */}
