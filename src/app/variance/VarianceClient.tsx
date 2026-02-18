@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Tooltip } from "@/components/Tooltip";
+import { calculateRiskOfRuin } from "./utils/riskOfRuin";
 
 function formatCurrency(value: number) {
   return value.toLocaleString(undefined, {
@@ -57,7 +58,7 @@ function Input({
   label: string;
   value: string;
   onChange: (v: string) => void;
-  tip?: React.ReactNode;
+  tip?: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -81,7 +82,7 @@ function Card({
   sub,
   tone = "neutral",
 }: {
-  label: React.ReactNode;
+  label: ReactNode;
   value: string;
   sub?: string;
   tone?: "neutral" | "accent" | "warn";
@@ -94,7 +95,11 @@ function Card({
         : "border-[color:var(--border)]";
 
   const valueClass =
-    tone === "accent" ? "text-[color:var(--accent)]" : tone === "warn" ? "text-amber-200" : "text-foreground";
+    tone === "accent"
+      ? "text-[color:var(--accent)]"
+      : tone === "warn"
+        ? "text-amber-200"
+        : "text-foreground";
 
   return (
     <div className={`rounded-xl border ${toneClass} bg-[color:var(--card)] p-5 sm:p-6`}>
@@ -163,9 +168,11 @@ export default function VarianceClient() {
       });
     }
 
-    const finals = results.map((r) => r.finalEquity).sort((a, b) => a - b);
-    const dds = results.map((r) => r.maxDD).sort((a, b) => a - b);
-    const streaks = results.map((r) => r.longestL).sort((a, b) => a - b);
+    const finals = results.map((rr) => rr.finalEquity).sort((a, b) => a - b);
+    const dds = results.map((rr) => rr.maxDD).sort((a, b) => a - b);
+    const streaks = results.map((rr) => rr.longestL).sort((a, b) => a - b);
+
+    const riskOfRuin = calculateRiskOfRuin(w, rPct);
 
     return {
       medianFinal: percentile(finals, 0.5),
@@ -175,8 +182,9 @@ export default function VarianceClient() {
       p90DD: percentile(dds, 0.9),
       medianStreak: percentile(streaks, 0.5),
       p90Streak: percentile(streaks, 0.9),
-      blowups: results.filter((r) => r.finalEquity <= 0).length,
+      blowups: results.filter((rr) => rr.finalEquity <= 0).length,
       sims: nSims,
+      riskOfRuin,
     };
   }, [accountSize, riskPct, winRate, avgR, trades, sims]);
 
@@ -193,9 +201,21 @@ export default function VarianceClient() {
     </div>
   );
 
+  const rorTip = (
+    <div className="space-y-2">
+      <div>
+        <span className="font-semibold">Risk of Ruin</span> estimates the probability your bankroll eventually hits zero
+        under your current sizing + edge assumptions.
+      </div>
+      <div>
+        It’s a simplified approximation — use it to compare scenarios (e.g. 1% risk vs 0.5% risk), not as certainty.
+      </div>
+    </div>
+  );
+
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto max-w-4xl px-4 sm:px-6 py-10 sm:py-16 space-y-8 sm:space-y-10">
+      <div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:space-y-10 sm:px-6 sm:py-16">
         <header className="space-y-4">
           <h1 className="text-3xl font-semibold tracking-tight">Variance Simulator</h1>
           <p className="text-sm text-foreground/70">See drawdowns and losing streaks before they happen.</p>
@@ -210,7 +230,7 @@ export default function VarianceClient() {
             <button
               type="button"
               onClick={() => setView("simple")}
-              className={`px-4 py-2 text-sm rounded-lg ${
+              className={`rounded-lg px-4 py-2 text-sm ${
                 view === "simple" ? "bg-white text-black" : "text-foreground/85 hover:bg-white/5"
               }`}
             >
@@ -219,7 +239,7 @@ export default function VarianceClient() {
             <button
               type="button"
               onClick={() => setView("advanced")}
-              className={`px-4 py-2 text-sm rounded-lg ${
+              className={`rounded-lg px-4 py-2 text-sm ${
                 view === "advanced" ? "bg-white text-black" : "text-foreground/85 hover:bg-white/5"
               }`}
             >
@@ -343,6 +363,45 @@ export default function VarianceClient() {
                 value={`${Math.round(computed.p90Streak)} trades`}
               />
               <Card label="Reality Check" value="Losing streaks are normal." />
+            </section>
+
+            <section className="grid gap-4 sm:grid-cols-3">
+              <Card
+                label={
+                  <span className="inline-flex items-center gap-2">
+                    Risk of Ruin (Approx.)
+                    <span className="text-foreground/70">
+                      <Tooltip label="Risk of Ruin">{rorTip}</Tooltip>
+                    </span>
+                  </span>
+                }
+                value={`${(computed.riskOfRuin * 100).toFixed(2)}%`}
+                tone={computed.riskOfRuin >= 0.25 ? "warn" : "accent"}
+                sub={
+                  computed.riskOfRuin >= 0.25
+                    ? "High. Consider lowering risk % per trade."
+                    : "Lower is better. Compare scenarios by adjusting risk %."
+                }
+              />
+              <Card
+                label="Interpretation"
+                value={
+                  computed.riskOfRuin >= 0.5
+                    ? "This sizing is extremely aggressive."
+                    : computed.riskOfRuin >= 0.25
+                      ? "Aggressive sizing — small edge can still blow you up."
+                      : "Reasonable sizing, assuming your win-rate estimate is real."
+                }
+                tone={computed.riskOfRuin >= 0.25 ? "warn" : "neutral"}
+              />
+              <Card
+                label="Quick Fix"
+                value={
+                  computed.riskOfRuin >= 0.25
+                    ? "Try cutting risk per trade in half and re-check RoR."
+                    : "Test a worse win-rate (e.g. -5%) to see robustness."
+                }
+              />
             </section>
           </>
         )}
