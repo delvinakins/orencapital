@@ -3,6 +3,10 @@ import type { Metadata } from "next";
 import TopNav from "@/components/TopNav";
 import { Inter_Tight } from "next/font/google";
 
+// Force dynamic rendering so TopNav reflects latest Pro status (no stale cache)
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 const interTight = Inter_Tight({
   subsets: ["latin"],
   display: "swap",
