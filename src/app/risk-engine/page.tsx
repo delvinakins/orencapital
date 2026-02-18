@@ -160,9 +160,7 @@ function Input({
 
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-foreground/70">
-        {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
-      </label>
+      <label className="text-sm text-foreground/70">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</label>
       <input
         type={type}
         inputMode={inputMode}
@@ -190,9 +188,7 @@ function Select({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-foreground/70">
-        {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
-      </label>
+      <label className="text-sm text-foreground/70">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -229,7 +225,7 @@ function Card({
         : "border-[color:var(--border)]";
 
   return (
-    <div className={`rounded-xl border ${toneClass} bg-[color:var(--card)] p-5 sm:p-6`}>
+    <div className={`oc-glass rounded-xl p-5 sm:p-6 ${toneClass}`}>
       <div className="text-xs text-foreground/60">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</div>
       <div className="mt-2 text-xl font-semibold text-foreground">{value}</div>
       {sub && <div className="mt-2 text-xs text-foreground/60">{sub}</div>}
@@ -310,7 +306,7 @@ export default function RiskEnginePage() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/pro/status");
+        const res = await fetch("/api/pro/status", { cache: "no-store" });
         const json = await res.json().catch(() => ({}));
         setIsPro(!!json?.isPro);
         setProStatus(json?.status ? String(json.status) : "");
@@ -366,7 +362,7 @@ export default function RiskEnginePage() {
     try {
       setMsg("");
       setBusy("list");
-      const res = await fetch("/api/portfolios/list");
+      const res = await fetch("/api/portfolios/list", { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
 
       if (res.status === 402) {
@@ -453,7 +449,7 @@ export default function RiskEnginePage() {
         return;
       }
 
-      const res = await fetch(`/api/portfolios/get?id=${encodeURIComponent(selectedPortfolioId)}`);
+      const res = await fetch(`/api/portfolios/get?id=${encodeURIComponent(selectedPortfolioId)}`, { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
 
       if (res.status === 402) {
@@ -514,9 +510,6 @@ export default function RiskEnginePage() {
     downloadText("oren-risk-engine.csv", lines.join("\n"));
     setMsg("CSV exported ✅");
   }
-
-  const border = "border-[color:var(--border)]";
-  const card = "bg-[color:var(--card)]";
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -613,7 +606,11 @@ export default function RiskEnginePage() {
 
         {/* Summary */}
         <section className="grid gap-4 sm:grid-cols-3">
-          <Card label="Target Dollar Risk" value={money(targetDollarRisk)} tip="How much you intend to risk on this trade idea (based on sizing mode)." />
+          <Card
+            label="Target Dollar Risk"
+            value={money(targetDollarRisk)}
+            tip="How much you intend to risk on this trade idea (based on sizing mode)."
+          />
           <Card
             label="Current Total Risk"
             value={money(totals.totalRisk)}
@@ -630,7 +627,7 @@ export default function RiskEnginePage() {
         </section>
 
         {/* Positions */}
-        <section className={`rounded-xl border ${border} ${card} p-4 sm:p-6 space-y-4 overflow-visible`}>
+        <section className="oc-glass rounded-2xl p-4 sm:p-6 space-y-4 overflow-visible">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-lg font-semibold">Positions</div>
             <button onClick={addPosition} className="oc-btn oc-btn-secondary">
@@ -644,9 +641,19 @@ export default function RiskEnginePage() {
               const distPct = calcStopDistancePct(p);
 
               return (
-                <div key={p.id} className={`rounded-lg border ${border} bg-black/20 p-4 space-y-3 overflow-visible`}>
+                <div
+                  key={p.id}
+                  className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]/55 backdrop-blur-[2px] p-4 space-y-3 overflow-visible"
+                >
                   <div className="grid gap-3 md:grid-cols-6">
-                    <Input label="Label" value={p.label} onChange={(v) => updatePos(p.id, { label: v })} placeholder="AAPL" type="text" tip='Ticker or nickname. Letters + numbers allowed (e.g., "AAPL", "SPY-1").' />
+                    <Input
+                      label="Label"
+                      value={p.label}
+                      onChange={(v) => updatePos(p.id, { label: v })}
+                      placeholder="AAPL"
+                      type="text"
+                      tip='Ticker or nickname. Letters + numbers allowed (e.g., "AAPL", "SPY-1").'
+                    />
 
                     <Select
                       label="Side"
@@ -659,13 +666,41 @@ export default function RiskEnginePage() {
                       tip="Side changes your trade logic, but risk magnitude is still entry-to-stop distance."
                     />
 
-                    <Input label="Entry Price" value={p.entry} onChange={(v) => updatePos(p.id, { entry: v })} type="number" placeholder="190" tip="Your planned entry. Risk is measured from entry to stop." />
+                    <Input
+                      label="Entry Price"
+                      value={p.entry}
+                      onChange={(v) => updatePos(p.id, { entry: v })}
+                      type="number"
+                      placeholder="190"
+                      tip="Your planned entry. Risk is measured from entry to stop."
+                    />
 
-                    <Input label="Stop Price" value={p.stop} onChange={(v) => updatePos(p.id, { stop: v })} type="number" placeholder="185" tip="Your invalidation level. If the stop is vague, the risk math is fake." />
+                    <Input
+                      label="Stop Price"
+                      value={p.stop}
+                      onChange={(v) => updatePos(p.id, { stop: v })}
+                      type="number"
+                      placeholder="185"
+                      tip="Your invalidation level. If the stop is vague, the risk math is fake."
+                    />
 
-                    <Input label="Qty" value={p.qty} onChange={(v) => updatePos(p.id, { qty: v })} type="number" placeholder="10" tip="Shares or contracts. Risk scales linearly with size." />
+                    <Input
+                      label="Qty"
+                      value={p.qty}
+                      onChange={(v) => updatePos(p.id, { qty: v })}
+                      type="number"
+                      placeholder="10"
+                      tip="Shares or contracts. Risk scales linearly with size."
+                    />
 
-                    <Input label="Multiplier" value={p.multiplier} onChange={(v) => updatePos(p.id, { multiplier: v })} type="number" placeholder="1" tip="Stocks: 1. Options: typically 100." />
+                    <Input
+                      label="Multiplier"
+                      value={p.multiplier}
+                      onChange={(v) => updatePos(p.id, { multiplier: v })}
+                      type="number"
+                      placeholder="1"
+                      tip="Stocks: 1. Options: typically 100."
+                    />
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-3">
@@ -680,7 +715,10 @@ export default function RiskEnginePage() {
 
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <div className="text-xs text-foreground/60">Tip: Over target? Reduce size first (fastest fix).</div>
-                    <button onClick={() => removePos(p.id)} className="text-sm text-red-300 hover:text-red-200 self-start sm:self-auto">
+                    <button
+                      onClick={() => removePos(p.id)}
+                      className="text-sm text-foreground/70 hover:text-foreground self-start sm:self-auto"
+                    >
                       Remove
                     </button>
                   </div>
@@ -706,7 +744,7 @@ export default function RiskEnginePage() {
 
         {/* Pro: Save / Load overlay */}
         <ProLock feature="Portfolio Save/Load" description="Save setups (account + sizing + positions) and reload them instantly." mode="overlay">
-          <section className={`rounded-xl border ${border} ${card} p-4 sm:p-6 space-y-4 overflow-visible`}>
+          <section className="oc-glass rounded-2xl p-4 sm:p-6 space-y-4 overflow-visible">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-lg font-semibold">Save / Load Portfolios (Pro)</div>
               <button onClick={refreshPortfolios} disabled={busy === "list"} className="oc-btn oc-btn-secondary disabled:opacity-60">
@@ -714,10 +752,20 @@ export default function RiskEnginePage() {
               </button>
             </div>
 
-            {!!msg && <div className={`rounded-lg border ${border} bg-black/20 p-3 text-sm text-foreground`}>{msg}</div>}
+            {!!msg && (
+              <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]/55 backdrop-blur-[2px] p-3 text-sm text-foreground">
+                {msg}
+              </div>
+            )}
 
             <div className="grid gap-4 md:grid-cols-3">
-              <Input label="Portfolio name" value={portfolioName} onChange={setPortfolioName} placeholder="My swing watchlist" tip="Name to save this current state (account + sizing + positions)." />
+              <Input
+                label="Portfolio name"
+                value={portfolioName}
+                onChange={setPortfolioName}
+                placeholder="My swing watchlist"
+                tip="Name to save this current state (account + sizing + positions)."
+              />
 
               <div className="flex flex-col gap-2 md:col-span-2">
                 <label className="text-sm text-foreground/70">
@@ -728,12 +776,12 @@ export default function RiskEnginePage() {
                   <select
                     value={selectedPortfolioId}
                     onChange={(e) => setSelectedPortfolioId(e.target.value)}
-                    className={`h-12 flex-1 rounded-lg border ${border} ${card} px-4 text-foreground outline-none`}
+                    className="h-12 flex-1 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none"
                   >
                     <option value="">Select…</option>
-                    {portfolios.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
+                    {portfolios.map((pp) => (
+                      <option key={pp.id} value={pp.id}>
+                        {pp.name}
                       </option>
                     ))}
                   </select>
@@ -747,12 +795,17 @@ export default function RiskEnginePage() {
                   </button>
                 </div>
 
-                {!isPro && <div className="text-xs text-amber-200">Pro required. This is a “workflow” feature (people pay for saving time).</div>}
+                {!isPro && (
+                  <div className="text-xs text-amber-200">
+                    Pro required. This is a “workflow” feature (people pay for saving time).
+                  </div>
+                )}
               </div>
             </div>
           </section>
         </ProLock>
 
+        {/* Journal: when we build it, match glass (oc-glass) inside JournalPanel */}
         <JournalPanel
           isPro={isPro}
           snapshot={{
