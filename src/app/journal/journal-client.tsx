@@ -10,14 +10,18 @@ type Trade = {
   symbol: string;
   side: "long" | "short";
   instrument: InstrumentType;
+
   entry_price: number | null;
   exit_price: number | null;
   stop_price: number | null;
+
   risk_r: number | null;
   result_r: number | null;
   pnl_dollars: number | null;
+
   strategy: string | null;
   notes: string | null;
+
   created_at: string;
   closed_at: string | null;
 };
@@ -60,6 +64,30 @@ function computeResultR(args: {
   return reward / risk;
 }
 
+function labelInstrument(x: InstrumentType) {
+  switch (x) {
+    case "stock":
+      return "Stock";
+    case "option":
+      return "Option";
+    case "future":
+      return "Future";
+    case "crypto":
+      return "Crypto";
+    case "fx":
+      return "FX";
+    default:
+      return "Other";
+  }
+}
+
+function toneFromEV(evR: number): "accent" | "neutral" | "warn" {
+  if (!Number.isFinite(evR)) return "neutral";
+  if (evR < 0) return "warn";
+  if (evR >= 0.05) return "accent";
+  return "neutral";
+}
+
 /* ---------------- UI Primitives (match Variance) ---------------- */
 
 function Field({
@@ -71,6 +99,7 @@ function Field({
   type = "text",
   inputMode,
   required,
+  className,
 }: {
   label: string;
   value: string;
@@ -80,6 +109,7 @@ function Field({
   type?: string;
   inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   required?: boolean;
+  className?: string;
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -93,7 +123,10 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         required={required}
-        className="h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none placeholder:text-foreground/30"
+        className={cn(
+          "h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none placeholder:text-foreground/30",
+          className
+        )}
       />
     </div>
   );
@@ -143,6 +176,7 @@ function Card({
   sub?: string;
   tone?: "neutral" | "accent" | "warn";
 }) {
+  // Institutional feel: no big red blocks. "warn" uses amber border/text only.
   const toneClass =
     tone === "accent"
       ? "border-[color:var(--accent)]/55 shadow-[0_0_0_1px_rgba(43,203,119,0.10)]"
@@ -164,30 +198,6 @@ function Card({
       {sub && <div className="mt-2 text-xs text-foreground/60">{sub}</div>}
     </div>
   );
-}
-
-function toneFromEV(evR: number): "accent" | "neutral" | "warn" {
-  if (!Number.isFinite(evR)) return "neutral";
-  if (evR < 0) return "warn";
-  if (evR >= 0.05) return "accent";
-  return "neutral";
-}
-
-function labelInstrument(x: InstrumentType) {
-  switch (x) {
-    case "stock":
-      return "Stock";
-    case "option":
-      return "Option";
-    case "future":
-      return "Future";
-    case "crypto":
-      return "Crypto";
-    case "fx":
-      return "FX";
-    default:
-      return "Other";
-  }
 }
 
 /* ---------------- Component ---------------- */
@@ -236,7 +246,7 @@ export default function JournalClient() {
       entry_price: parseNum(entryPrice),
       stop_price: parseNum(stopPrice),
       exit_price: parseNum(exitPrice),
-      // result_r omitted: API will compute if possible
+      // result_r omitted: API computes when possible
     };
 
     const res = await fetch("/api/journal/save", {
@@ -251,7 +261,6 @@ export default function JournalClient() {
       return;
     }
 
-    // reset
     setSymbol("");
     setInstrument("stock");
     setSide("long");
@@ -272,11 +281,36 @@ export default function JournalClient() {
     const totalR = closed.reduce((acc, t) => acc + (t.result_r ?? 0), 0);
     const avgR = n > 0 ? totalR / n : 0;
 
-    const ev = avgR; // Phase 1
+    // Phase 1 EV per trade = avgR
+    const ev = avgR;
+
     const lowSample = n > 0 && n < 10;
 
-    return { tradesLogged: trades.length, closedTrades: n, winRate, avgR, ev, totalR, lowSample };
+    return {
+      tradesLogged: trades.length,
+      closedTrades: n,
+      winRate,
+      avgR,
+      ev,
+      totalR,
+      lowSample,
+    };
   }, [trades]);
+
+  const stopTooltip = (
+    <div className="space-y-2">
+      <div>
+        <span className="font-semibold">Stop</span>: the price level that invalidates your trade idea.
+      </div>
+      <div className="text-foreground/70">
+        It defines where you are wrong and prevents small losses from becoming large ones.
+      </div>
+      <div className="text-foreground/70">
+        It also defines <span className="font-semibold">1R</span> (your risk per trade), so Oren can measure expectancy
+        and consistency.
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-8">
@@ -285,7 +319,7 @@ export default function JournalClient() {
         <Card
           label={
             <span className="inline-flex items-center gap-2">
-              Win Rate{" "}
+              Win Rate
               <span className="text-foreground/70">
                 <Tooltip label="Win Rate">Percent of closed trades with R &gt; 0. Open trades excluded.</Tooltip>
               </span>
@@ -295,10 +329,63 @@ export default function JournalClient() {
           tone={metrics.lowSample ? "warn" : "neutral"}
           sub={metrics.closedTrades ? `Closed: ${metrics.closedTrades}` : "No closed trades yet"}
         />
-        <Card label="Avg R" value={fmt(metrics.avgR)} tone={metrics.avgR < 0 ? "warn" : metrics.avgR > 0 ? "accent" : "neutral"} />
-        <Card label="EV" value={fmt(metrics.ev)} tone={toneFromEV(metrics.ev)} sub="Phase 1 = Avg R" />
-        <Card label="Total R" value={fmt(metrics.totalR)} tone={metrics.totalR < 0 ? "warn" : metrics.totalR > 0 ? "accent" : "neutral"} />
-        <Card label="Trades Logged" value={`${metrics.tradesLogged}`} sub={loading ? "Syncing…" : "Synced"} />
+
+        <Card
+          label={
+            <span className="inline-flex items-center gap-2">
+              Avg R
+              <span className="text-foreground/70">
+                <Tooltip label="Avg R">
+                  Average realized R across closed trades (requires Entry + Stop + Exit for auto-calculation).
+                </Tooltip>
+              </span>
+            </span>
+          }
+          value={fmt(metrics.avgR)}
+          tone={metrics.avgR < 0 ? "warn" : metrics.avgR > 0 ? "accent" : "neutral"}
+          sub={metrics.lowSample ? "Low sample: interpret cautiously." : "Stability increases with data."}
+        />
+
+        <Card
+          label={
+            <span className="inline-flex items-center gap-2">
+              EV
+              <span className="text-foreground/70">
+                <Tooltip label="EV (Phase 1)">Phase 1 EV = Avg R per trade. Rolling metrics later (Pro).</Tooltip>
+              </span>
+            </span>
+          }
+          value={fmt(metrics.ev)}
+          tone={toneFromEV(metrics.ev)}
+          sub="Per-trade expectancy (R)."
+        />
+
+        <Card
+          label={
+            <span className="inline-flex items-center gap-2">
+              Total R
+              <span className="text-foreground/70">
+                <Tooltip label="Total R">Sum of realized R across closed trades.</Tooltip>
+              </span>
+            </span>
+          }
+          value={fmt(metrics.totalR)}
+          tone={metrics.totalR < 0 ? "warn" : metrics.totalR > 0 ? "accent" : "neutral"}
+          sub="Direction over time."
+        />
+
+        <Card
+          label={
+            <span className="inline-flex items-center gap-2">
+              Trades Logged
+              <span className="text-foreground/70">
+                <Tooltip label="Trades Logged">All journal entries (open + closed).</Tooltip>
+              </span>
+            </span>
+          }
+          value={`${metrics.tradesLogged}`}
+          sub={loading ? "Syncing…" : "Synced"}
+        />
       </section>
 
       {/* Entry */}
@@ -306,19 +393,22 @@ export default function JournalClient() {
         <div className="flex items-end justify-between gap-4">
           <div className="space-y-1">
             <div className="text-sm font-semibold tracking-tight">Log Trade</div>
-            <div className="text-sm text-foreground/70">
-              Enter prices like you naturally think. Oren computes R.
-            </div>
+            <div className="text-sm text-foreground/70">Enter prices naturally. Oren computes R.</div>
           </div>
 
-          <div className="text-xs text-foreground/60">
+          <div className="text-xs text-foreground/70">
             <Tooltip label="Auto Result (R)">
               Auto Result computes when Entry, Stop, and Exit are present. Otherwise it stays blank.
             </Tooltip>
             <div className="mt-1">
               Auto Result:{" "}
-              <span className={cn("font-semibold", typeof previewR === "number" && previewR > 0 ? "text-[color:var(--accent)]" : "text-foreground")}>
-                {previewR == null ? "—" : fmtR(previewR, 2)}
+              <span
+                className={cn(
+                  "font-semibold",
+                  typeof previewR === "number" && previewR > 0 ? "text-[color:var(--accent)]" : "text-foreground"
+                )}
+              >
+                {previewR == null ? "—" : fmtR(previewR)}
               </span>
             </div>
           </div>
@@ -335,6 +425,7 @@ export default function JournalClient() {
                 label="Instrument"
                 value={instrument}
                 onChange={(v) => setInstrument(v as InstrumentType)}
+                tip="Separates stock vs options/futures for cleaner analytics later."
                 options={[
                   { label: "Stock", value: "stock" },
                   { label: "Option", value: "option" },
@@ -351,6 +442,7 @@ export default function JournalClient() {
                 label="Side"
                 value={side}
                 onChange={(v) => setSide(v as any)}
+                tip="Long = profit if price rises. Short = profit if price falls."
                 options={[
                   { label: "Long", value: "long" },
                   { label: "Short", value: "short" },
@@ -359,13 +451,39 @@ export default function JournalClient() {
             </div>
 
             <div className="sm:col-span-2">
-              <Field label="Entry" value={entryPrice} onChange={setEntryPrice} placeholder="e.g. 502.25" type="number" inputMode="decimal" />
+              <Field
+                label="Entry"
+                value={entryPrice}
+                onChange={setEntryPrice}
+                placeholder="e.g. 502.25"
+                type="number"
+                inputMode="decimal"
+              />
             </div>
+
+            {/* STOP: subtle highlight + simplified tooltip */}
             <div className="sm:col-span-2">
-              <Field label="Stop" value={stopPrice} onChange={setStopPrice} placeholder="e.g. 498.75" type="number" inputMode="decimal" />
+              <Field
+                label="Stop (Risk Anchor)"
+                value={stopPrice}
+                onChange={setStopPrice}
+                placeholder="e.g. 498.75"
+                type="number"
+                inputMode="decimal"
+                tip={stopTooltip}
+                className="border-[color:var(--accent)]/45 focus:border-[color:var(--accent)]"
+              />
             </div>
+
             <div className="sm:col-span-2">
-              <Field label="Exit (optional)" value={exitPrice} onChange={setExitPrice} placeholder="e.g. 507.00" type="number" inputMode="decimal" />
+              <Field
+                label="Exit (optional)"
+                value={exitPrice}
+                onChange={setExitPrice}
+                placeholder="e.g. 507.00"
+                type="number"
+                inputMode="decimal"
+              />
             </div>
 
             <div className="sm:col-span-6 flex items-center justify-end pt-1">
@@ -396,9 +514,18 @@ export default function JournalClient() {
                   <th className="px-4 py-3">Instrument</th>
                   <th className="px-4 py-3">Side</th>
                   <th className="px-4 py-3">Entry</th>
-                  <th className="px-4 py-3">Stop</th>
+
+                  {/* STOP header tooltip + subtle accent */}
+                  <th className="px-4 py-3 text-[color:var(--accent)]">
+                    <Tooltip label="Stop = the price level that invalidates your trade idea. It anchors risk (1R).">
+                      Stop
+                    </Tooltip>
+                  </th>
+
                   <th className="px-4 py-3">Exit</th>
                   <th className="px-4 py-3">Result (R)</th>
+                  <th className="px-4 py-3">Strategy</th>
+                  <th className="px-4 py-3">Notes</th>
                 </tr>
               </thead>
 
@@ -424,16 +551,23 @@ export default function JournalClient() {
                       <td className="px-4 py-3 text-foreground/80">{labelInstrument(t.instrument)}</td>
                       <td className="px-4 py-3 text-foreground/80">{t.side}</td>
                       <td className="px-4 py-3 text-foreground/80">{t.entry_price == null ? "—" : fmt(t.entry_price, 2)}</td>
-                      <td className="px-4 py-3 text-foreground/80">{t.stop_price == null ? "—" : fmt(t.stop_price, 2)}</td>
+
+                      {/* STOP cell subtle highlight */}
+                      <td className="px-4 py-3 text-[color:var(--accent)]">
+                        {t.stop_price == null ? "—" : fmt(t.stop_price, 2)}
+                      </td>
+
                       <td className="px-4 py-3 text-foreground/80">{t.exit_price == null ? "—" : fmt(t.exit_price, 2)}</td>
                       <td className={cn("px-4 py-3 font-semibold", rClass)}>{r === null ? "—" : fmtR(r, 2)}</td>
+                      <td className="px-4 py-3 text-foreground/80">{t.strategy ?? "—"}</td>
+                      <td className="px-4 py-3 text-foreground/80">{t.notes ?? "—"}</td>
                     </tr>
                   );
                 })}
 
                 {!loading && trades.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-4 py-10 text-center text-sm text-foreground/70">
+                    <td colSpan={10} className="px-4 py-10 text-center text-sm text-foreground/70">
                       No trades yet.
                     </td>
                   </tr>
