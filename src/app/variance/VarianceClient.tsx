@@ -129,7 +129,8 @@ function Input({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-foreground/70">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</label>
+      <label className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] text-[11px] text-foreground/80 hover:border-[color:var(--accent)] hover:text-[color:var(--accent)] active:scale-[0.98] transition-colors"
+>{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</label>
       <input
         type="number"
         inputMode="decimal"
