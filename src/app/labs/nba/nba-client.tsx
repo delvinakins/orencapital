@@ -37,7 +37,7 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-function fmtNum(x: any, digits = 1) {
+function fmtNum(x: any, digits = 2) {
   const v = typeof x === "number" ? x : x == null ? null : Number(x);
   if (typeof v !== "number" || !Number.isFinite(v)) return "—";
   return v.toFixed(digits);
@@ -91,7 +91,7 @@ function DeviationTip() {
   );
 }
 
-type ViewMode = "table" | "treemap";
+type ViewMode = "slate" | "heatmap";
 
 type Row = {
   key: string;
@@ -101,7 +101,6 @@ type Row = {
   awayTeam: string;
   homeTeam: string;
 
-  // score is optional (depends on feed)
   awayScore: number | null;
   homeScore: number | null;
 
@@ -238,7 +237,7 @@ export default function NbaClient() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [view, setView] = useState<ViewMode>("table");
+  const [view, setView] = useState<ViewMode>("slate");
 
   async function load() {
     setLoadError(null);
@@ -337,12 +336,16 @@ export default function NbaClient() {
     return computed;
   }, [games]);
 
+  // Heat map should focus attention: hide low-signal games (but keep them in Slate).
+  const heatRows = useMemo(() => rows.filter((r) => r.abs >= 0.35), [rows]);
+
   const treemap = useMemo(() => {
+    // More room reduces crowding.
     const W = 1000;
-    const H = 520;
+    const H = 620;
     const area = W * H;
 
-    const items: TreeItem[] = rows.map((r) => {
+    const items: TreeItem[] = heatRows.map((r) => {
       const capped = clamp(r.abs, 0, 2.2);
       const weight = 1 + capped * 3.0;
       return { id: r.key, value: weight, row: r };
@@ -354,7 +357,8 @@ export default function NbaClient() {
     const scaled: TreeItem[] = items.map((it) => ({ ...it, value: (it.value / total) * area }));
     const placed = squarify(scaled, { x: 0, y: 0, w: W, h: H });
 
-    const gutterPx = 6;
+    // Slightly larger gutters = calmer layout.
+    const gutterPx = 10;
 
     return placed.map(({ item, rect }) => {
       const leftPct = (rect.x / W) * 100;
@@ -372,7 +376,7 @@ export default function NbaClient() {
         heightPct,
       };
     });
-  }, [rows]);
+  }, [heatRows]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -393,23 +397,23 @@ export default function NbaClient() {
           <div className="inline-flex w-full sm:w-auto rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-1">
             <button
               type="button"
-              onClick={() => setView("table")}
+              onClick={() => setView("slate")}
               className={cn(
                 "flex-1 sm:flex-none px-4 py-2 text-sm rounded-lg transition",
-                view === "table" ? "bg-white text-slate-950" : "text-foreground/80 hover:bg-white/5"
+                view === "slate" ? "bg-white text-slate-950" : "text-foreground/80 hover:bg-white/5"
               )}
             >
-              Table
+              Slate
             </button>
             <button
               type="button"
-              onClick={() => setView("treemap")}
+              onClick={() => setView("heatmap")}
               className={cn(
                 "flex-1 sm:flex-none px-4 py-2 text-sm rounded-lg transition",
-                view === "treemap" ? "bg-white text-slate-950" : "text-foreground/80 hover:bg-white/5"
+                view === "heatmap" ? "bg-white text-slate-950" : "text-foreground/80 hover:bg-white/5"
               )}
             >
-              Treemap
+              Heat Map
             </button>
           </div>
         </div>
@@ -419,7 +423,7 @@ export default function NbaClient() {
             <div className="text-foreground/70">Loading…</div>
           ) : rows.length === 0 ? (
             <div className="text-foreground/70">{loadError ?? "No games available."}</div>
-          ) : view === "table" ? (
+          ) : view === "slate" ? (
             <div className="overflow-x-auto">
               <table className="min-w-[960px] w-full text-[15px]">
                 <thead>
@@ -442,7 +446,6 @@ export default function NbaClient() {
 
                     return (
                       <tr key={r.key} className="border-t border-[color:var(--border)]">
-                        {/* Matchup cell now includes score on a second line */}
                         <td className="px-4 py-3">
                           <div className="font-medium text-foreground">{r.matchup}</div>
                           <div className="mt-1 text-sm text-foreground/70">
@@ -490,7 +493,7 @@ export default function NbaClient() {
               </div>
 
               <div className="relative w-full overflow-hidden rounded-2xl border border-[color:var(--border)] bg-black/20">
-                <div className="relative h-[520px]">
+                <div className="relative h-[620px]">
                   {treemap.map((t) => {
                     const r = t.item.row;
 
@@ -501,8 +504,9 @@ export default function NbaClient() {
                           ? "border-amber-800/45 bg-amber-900/10"
                           : "border-white/10 bg-white/5";
 
-                    const isLarge = t.widthPct >= 22 && t.heightPct >= 22;
-                    const isMedium = t.widthPct >= 14 && t.heightPct >= 14;
+                    // Tighten density: medium tiles show less; large tiles keep detail.
+                    const isLarge = t.widthPct >= 24 && t.heightPct >= 24;
+                    const isMedium = t.widthPct >= 16 && t.heightPct >= 16;
 
                     return (
                       <div
@@ -540,6 +544,7 @@ export default function NbaClient() {
                             ) : null}
                           </div>
 
+                          {/* Only large tiles get Live/Close blocks (reduces clutter) */}
                           {isLarge ? (
                             <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                               <div className="rounded-lg border border-white/10 bg-black/10 px-2 py-1.5">
@@ -572,7 +577,15 @@ export default function NbaClient() {
                 </div>
               </div>
 
-              <div className="text-sm text-foreground/55">Lab preview. All signals require review.</div>
+              <div className="text-sm text-foreground/55">
+                Lab preview. All signals require review.
+              </div>
+
+              {rows.length !== heatRows.length ? (
+                <div className="text-sm text-foreground/55">
+                  Showing {heatRows.length} games on the heat map (low-signal games are hidden).
+                </div>
+              ) : null}
             </div>
           )}
         </section>
