@@ -33,6 +33,8 @@ type StrategyStat = {
   largestLoss: number | null;
 };
 
+const MIN_TRACKED = 5;
+
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
@@ -97,16 +99,14 @@ function RTipBody() {
         <span className="font-semibold">R</span> means “risk unit.”
       </div>
       <div className="text-foreground/70">
-        Your <span className="font-semibold">stop</span> defines how much you’re willing to lose if you’re wrong.
-        That amount is <span className="font-semibold">1R</span>.
+        Your <span className="font-semibold">stop</span> defines how much you’re willing to lose if you’re wrong. That
+        amount is <span className="font-semibold">1R</span>.
       </div>
       <div className="text-foreground/70">
         Example: entry 100, stop 98 → risk is 2 points. If you exit at 104, profit is 4 points →{" "}
         <span className="font-semibold">+2R</span>.
       </div>
-      <div className="text-foreground/70">
-        R lets you compare trades fairly even when position size changes.
-      </div>
+      <div className="text-foreground/70">R lets you compare trades fairly even when position size changes.</div>
     </div>
   );
 }
@@ -121,9 +121,7 @@ function EVTipBody() {
       <div className="text-foreground/70">
         Over time: positive EV trends upward; negative EV trends downward.
       </div>
-      <div className="text-foreground/70">
-        This isn’t a guarantee—just the long-run average of what you’ve actually logged.
-      </div>
+      <div className="text-foreground/70">This isn’t a guarantee—just the average of what you’ve logged.</div>
     </div>
   );
 }
@@ -148,9 +146,7 @@ function StrategyTipBody() {
   return (
     <div className="space-y-2 max-w-sm">
       <div className="font-semibold">Strategy (optional label)</div>
-      <div className="text-foreground/70">
-        Strategy is simply a short tag you reuse so Oren can group results.
-      </div>
+      <div className="text-foreground/70">A short tag you reuse so Oren can group results.</div>
       <div className="text-foreground/70">
         Keep it plain. Examples:
         <ul className="mt-2 list-disc pl-5 space-y-1">
@@ -164,9 +160,7 @@ function StrategyTipBody() {
           </li>
         </ul>
       </div>
-      <div className="text-foreground/70">
-        The goal is consistency: use the same label for the same idea.
-      </div>
+      <div className="text-foreground/70">The goal is consistency: same label for the same idea.</div>
     </div>
   );
 }
@@ -176,10 +170,23 @@ function TradeIdeaTipBody() {
     <div className="space-y-2 max-w-sm">
       <div className="font-semibold">Trade idea</div>
       <div className="text-foreground/70">
-        This is your “why.” A plain-language sentence about what you believed would happen—and what would prove you wrong.
+        Your “why.” One sentence about what you expected—and what would prove you wrong.
       </div>
       <div className="text-foreground/70">
         Example: “Price reclaimed VWAP; I expected a push to highs. If it loses VWAP and fails to reclaim, I’m out.”
+      </div>
+    </div>
+  );
+}
+
+function SmallSampleTipBody() {
+  return (
+    <div className="space-y-2 max-w-sm">
+      <div className="font-semibold">Small samples</div>
+      <div className="text-foreground/70">With only a few trades, results can swing a lot due to randomness.</div>
+      <div className="text-foreground/70">
+        By default, Oren shows strategies with at least <span className="font-semibold">{MIN_TRACKED}</span> tracked
+        trades.
       </div>
     </div>
   );
@@ -216,9 +223,9 @@ function Card({
 
   return (
     <div className={cn("oc-glass rounded-xl border p-5 sm:p-6", toneClass)}>
-      <div className="text-xs text-foreground/60">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</div>
-      <div className={cn("mt-2 text-xl font-semibold", valueClass)}>{value}</div>
-      {sub && <div className="mt-2 text-xs text-foreground/60">{sub}</div>}
+      <div className="text-sm text-foreground/65">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</div>
+      <div className={cn("mt-2 text-[22px] leading-tight font-semibold", valueClass)}>{value}</div>
+      {sub && <div className="mt-2 text-sm text-foreground/60">{sub}</div>}
     </div>
   );
 }
@@ -249,7 +256,7 @@ function Input({
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none placeholder:text-foreground/30"
+        className="h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-[15px] text-foreground outline-none placeholder:text-foreground/30"
       />
     </div>
   );
@@ -274,7 +281,7 @@ function Select({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none"
+        className="h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-[15px] text-foreground outline-none"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -294,6 +301,9 @@ export default function JournalClient() {
   const [strategyStats, setStrategyStats] = useState<StrategyStat[] | null>(null);
 
   const [err, setErr] = useState<string | null>(null);
+
+  // Strategy display preference
+  const [showSmallSamples, setShowSmallSamples] = useState(false);
 
   // Entry form state
   const [symbol, setSymbol] = useState("");
@@ -364,6 +374,19 @@ export default function JournalClient() {
     };
   }, [trades]);
 
+  const strategyFiltered = useMemo(() => {
+    if (!strategyStats) return [];
+    if (showSmallSamples) return strategyStats;
+
+    return strategyStats.filter((s) => (s.tracked ?? 0) >= MIN_TRACKED);
+  }, [strategyStats, showSmallSamples]);
+
+  const hiddenCount = useMemo(() => {
+    if (!strategyStats) return 0;
+    const shown = new Set(strategyFiltered.map((s) => s.strategy));
+    return strategyStats.filter((s) => !shown.has(s.strategy)).length;
+  }, [strategyStats, strategyFiltered]);
+
   async function onSaveTrade() {
     setErr(null);
     setSavedMsg(null);
@@ -407,7 +430,7 @@ export default function JournalClient() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 text-[15px]">
       {/* Summary */}
       <section className="grid gap-4 sm:grid-cols-5">
         <Card
@@ -439,11 +462,11 @@ export default function JournalClient() {
       <section className="oc-glass rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
         <div className="mb-4 flex items-end justify-between gap-4">
           <div>
-            <div className="text-sm font-semibold tracking-tight">Log a trade</div>
-            <div className="mt-1 text-sm text-foreground/70">Structured input. Calm defaults.</div>
+            <div className="text-base font-semibold tracking-tight">Log a trade</div>
+            <div className="mt-1 text-[15px] text-foreground/70">Structured input. Calm defaults.</div>
           </div>
 
-          <div className="text-xs text-foreground/60">
+          <div className="text-sm text-foreground/60">
             <Tooltip label="Stop">
               <StopTipBody />
             </Tooltip>
@@ -479,14 +502,7 @@ export default function JournalClient() {
 
           <Input label="Entry Price" value={entry} onChange={setEntry} type="number" placeholder="190.25" />
 
-          <Input
-            label="Stop Price"
-            value={stop}
-            onChange={setStop}
-            type="number"
-            placeholder="187.50"
-            tip={<StopTipBody />}
-          />
+          <Input label="Stop Price" value={stop} onChange={setStop} type="number" placeholder="187.50" tip={<StopTipBody />} />
 
           <Input label="Exit Price" value={exit} onChange={setExit} type="number" placeholder="194.10" />
 
@@ -506,7 +522,7 @@ export default function JournalClient() {
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Example: what you expected, what would prove you wrong, and how you executed."
-              className="mt-2 min-h-[44px] w-full resize-y rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-3 text-foreground outline-none placeholder:text-foreground/30"
+              className="mt-2 min-h-[44px] w-full resize-y rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-3 text-[15px] text-foreground outline-none placeholder:text-foreground/30"
             />
           </div>
         </div>
@@ -521,7 +537,7 @@ export default function JournalClient() {
             {saving ? "Saving…" : "Save Trade"}
           </button>
 
-          <div className="text-xs text-foreground/60">
+          <div className="text-sm text-foreground/60">
             Tip: To calculate <Tooltip label="R">{<RTipBody />}</Tooltip>, include entry + stop + exit.
           </div>
         </div>
@@ -545,43 +561,52 @@ export default function JournalClient() {
       {/* Strategy Breakdown (Pro) */}
       <ProLock
         feature="Strategy breakdown"
-        description="See your results grouped by strategy labels. Keep labels simple and consistent."
+        description="See results grouped by your strategy labels. Small samples can be noisy—Oren filters by default."
         mode="overlay"
       >
         <section className="oc-glass rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
-          <div className="mb-4 flex items-end justify-between gap-4">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <div className="text-sm font-semibold tracking-tight">Strategy Breakdown</div>
-              <div className="mt-1 text-sm text-foreground/70">
-                Grouped results by your strategy labels. Calm view, no hype.
+              <div className="text-base font-semibold tracking-tight">Strategy Breakdown</div>
+              <div className="mt-1 text-[15px] text-foreground/70">
+                Grouped results by strategy label. Calm view—designed to reduce overreaction.
               </div>
             </div>
 
-            <div className="text-xs text-foreground/60">
-              <Tooltip label="How this works">
-                <div className="space-y-2 max-w-sm">
-                  <div className="font-semibold">Tracked trades</div>
-                  <div className="text-foreground/70">
-                    A trade shows up here when Oren can measure the result in <span className="font-semibold">R</span>{" "}
-                    (stored or computed from entry/stop/exit).
-                  </div>
-                  <div className="text-foreground/70">Next step: we’ll hide tiny samples by default (e.g., &lt; 5 trades).</div>
-                </div>
-              </Tooltip>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="text-sm text-foreground/60">
+                <Tooltip label="Small samples">{<SmallSampleTipBody />}</Tooltip>
+              </div>
+
+              <button type="button" onClick={() => setShowSmallSamples((v) => !v)} className="oc-btn oc-btn-secondary">
+                {showSmallSamples ? "Hide small samples" : "Show small samples"}
+              </button>
             </div>
           </div>
 
+          {!loading && isPro && !showSmallSamples && hiddenCount > 0 && (
+            <div className="mb-4 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-3 text-[15px] text-foreground/75">
+              {hiddenCount} strategy{hiddenCount === 1 ? "" : "ies"} hidden (fewer than {MIN_TRACKED} tracked trades).
+            </div>
+          )}
+
           {loading ? (
-            <div className="text-sm text-foreground/70">Loading…</div>
+            <div className="text-[15px] text-foreground/70">Loading…</div>
           ) : !isPro ? (
-            <div className="text-sm text-foreground/70">Upgrade to unlock strategy analytics.</div>
+            <div className="text-[15px] text-foreground/70">Upgrade to unlock strategy analytics.</div>
           ) : !strategyStats || strategyStats.length === 0 ? (
-            <div className="text-sm text-foreground/70">
-              No strategies yet. Add a strategy label to trades to populate this.
+            <div className="text-[15px] text-foreground/70">No strategies yet. Add a strategy label to trades.</div>
+          ) : strategyFiltered.length === 0 ? (
+            <div className="text-[15px] text-foreground/70">
+              No strategies meet the default sample size yet. You can{" "}
+              <button className="underline underline-offset-2" onClick={() => setShowSmallSamples(true)}>
+                show small samples
+              </button>{" "}
+              to review early data.
             </div>
           ) : (
             <div className="overflow-x-auto rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]">
-              <table className="min-w-[820px] w-full text-sm">
+              <table className="min-w-[860px] w-full text-[15px]">
                 <thead>
                   <tr className="text-left text-foreground/60">
                     <th className="px-4 py-3 font-medium">
@@ -600,18 +625,26 @@ export default function JournalClient() {
                   </tr>
                 </thead>
                 <tbody>
-                  {strategyStats.map((s) => {
+                  {strategyFiltered.map((s) => {
                     const tone = toneFromEV(s.avgR ?? null);
                     const totalTone = toneFromEV(s.totalR ?? null);
+                    const isSmall = (s.tracked ?? 0) < MIN_TRACKED;
 
                     return (
                       <tr key={s.strategy} className="border-t border-[color:var(--border)]">
-                        <td className="px-4 py-3 font-medium text-foreground">{s.strategy}</td>
+                        <td className="px-4 py-3 font-medium text-foreground">
+                          <div className="flex items-center gap-2">
+                            <span>{s.strategy}</span>
+                            {showSmallSamples && isSmall && (
+                              <span className="rounded-full border border-amber-800/60 px-2 py-0.5 text-[12px] text-amber-200">
+                                small sample
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-foreground/85">{s.trades}</td>
                         <td className="px-4 py-3 text-foreground/85">{s.tracked}</td>
-                        <td className="px-4 py-3 text-foreground/85">
-                          {s.winRate == null ? "—" : fmtPct01(s.winRate, 1)}
-                        </td>
+                        <td className="px-4 py-3 text-foreground/85">{s.winRate == null ? "—" : fmtPct01(s.winRate, 1)}</td>
                         <td
                           className={cn(
                             "px-4 py-3",
@@ -651,8 +684,8 @@ export default function JournalClient() {
       <section className="oc-glass rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
         <div className="mb-4 flex items-end justify-between gap-4">
           <div>
-            <div className="text-sm font-semibold tracking-tight">Trades</div>
-            <div className="mt-1 text-sm text-foreground/70">Most recent trades.</div>
+            <div className="text-base font-semibold tracking-tight">Trades</div>
+            <div className="mt-1 text-[15px] text-foreground/70">Most recent trades.</div>
           </div>
 
           <button type="button" onClick={refresh} className="oc-btn oc-btn-secondary">
@@ -661,12 +694,12 @@ export default function JournalClient() {
         </div>
 
         {loading ? (
-          <div className="text-sm text-foreground/70">Loading…</div>
+          <div className="text-[15px] text-foreground/70">Loading…</div>
         ) : trades.length === 0 ? (
-          <div className="text-sm text-foreground/70">No trades yet.</div>
+          <div className="text-[15px] text-foreground/70">No trades yet.</div>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]">
-            <table className="min-w-[980px] w-full text-sm">
+            <table className="min-w-[980px] w-full text-[15px]">
               <thead>
                 <tr className="text-left text-foreground/60">
                   <th className="px-4 py-3 font-medium">Symbol</th>
