@@ -59,8 +59,6 @@ function safeInt(x: any): number | null {
   return Math.trunc(v);
 }
 
-// Supports either your current mock shape (homeScore/awayScore)
-// or possible alternates (home_score/away_score).
 function getLiveScore(g: any): { away: number | null; home: number | null } {
   const away =
     safeInt(g?.awayScore) ??
@@ -84,9 +82,9 @@ function DeviationTip() {
     <div className="max-w-sm space-y-2">
       <div className="font-semibold">Deviation</div>
       <div className="text-foreground/70">
-        Measures how far live performance has moved from market expectation.
+        A simple indicator of how unusual this game looks compared to expectation.
       </div>
-      <div className="text-foreground/70">Higher values indicate a more unusual move.</div>
+      <div className="text-foreground/70">Higher absolute values are more unusual.</div>
     </div>
   );
 }
@@ -111,8 +109,6 @@ type Row = {
   close: string;
 
   deviationText: string;
-  toneText: string;
-  directionLabel: string;
   tone: "accent" | "warn" | "neutral";
 };
 
@@ -121,7 +117,7 @@ type Rect = { x: number; y: number; w: number; h: number };
 
 type TreeItem = {
   id: string;
-  value: number; // area weight
+  value: number;
   row: Row;
 };
 
@@ -232,6 +228,41 @@ function squarify(items: TreeItem[], rect: Rect): Placed[] {
   return placed;
 }
 
+function toneFromAbs(abs: number): Row["tone"] {
+  if (abs >= 1.5) return "accent";
+  if (abs >= 1.0) return "warn";
+  return "neutral";
+}
+
+function bgFromTone(tone: Row["tone"], intensity01: number) {
+  // Keep it calm: most tiles are near-neutral; only high signal gets pine/amber tint.
+  // intensity01 is 0..1
+  const a = clamp(intensity01, 0, 1);
+
+  if (tone === "accent") {
+    // Pine tint
+    return `rgba(43, 203, 119, ${0.10 + 0.22 * a})`;
+  }
+  if (tone === "warn") {
+    // Amber tint
+    return `rgba(245, 158, 11, ${0.08 + 0.18 * a})`;
+  }
+  // Neutral tint
+  return `rgba(255, 255, 255, ${0.03 + 0.06 * a})`;
+}
+
+function borderFromTone(tone: Row["tone"]) {
+  if (tone === "accent") return "rgba(43, 203, 119, 0.22)";
+  if (tone === "warn") return "rgba(245, 158, 11, 0.22)";
+  return "rgba(255, 255, 255, 0.10)";
+}
+
+function textToneClass(tone: Row["tone"]) {
+  if (tone === "accent") return "text-[color:var(--accent)]";
+  if (tone === "warn") return "text-amber-200";
+  return "text-foreground/80";
+}
+
 export default function NbaClient() {
   const [games, setGames] = useState<GameClockState[]>([]);
   const [loading, setLoading] = useState(true);
@@ -292,19 +323,10 @@ export default function NbaClient() {
       const deviation = Number.isFinite(result.zSpread) ? result.zSpread : 0;
       const abs = Math.abs(deviation);
 
-      const tone: Row["tone"] = abs >= 1.5 ? "accent" : abs >= 1.0 ? "warn" : "neutral";
-      const toneText =
-        tone === "accent"
-          ? "text-[color:var(--accent)]"
-          : tone === "warn"
-            ? "text-amber-200"
-            : "text-foreground/80";
+      const tone = toneFromAbs(abs);
 
       const mm = Math.floor((Number(g.secondsRemaining) || 0) / 60);
       const ss = String((Number(g.secondsRemaining) || 0) % 60).padStart(2, "0");
-
-      const directionLabel =
-        deviation >= 0.35 ? "above expectation" : deviation <= -0.35 ? "below expectation" : "near expectation";
 
       const awayTeam = String(g?.awayTeam ?? "—");
       const homeTeam = String(g?.homeTeam ?? "—");
@@ -326,8 +348,6 @@ export default function NbaClient() {
         live: formatSpread(g.liveSpreadHome, 1),
         close: formatSpread(g.closingSpreadHome, 1),
         deviationText: fmtNum(deviation, 2),
-        toneText,
-        directionLabel,
         tone,
       };
     });
@@ -336,16 +356,17 @@ export default function NbaClient() {
     return computed;
   }, [games]);
 
-  // Heat map should focus attention: hide low-signal games (but keep them in Slate).
+  // Heat map focuses attention: hide low-signal games (Slate still shows everything).
   const heatRows = useMemo(() => rows.filter((r) => r.abs >= 0.35), [rows]);
 
   const treemap = useMemo(() => {
-    // More room reduces crowding.
+    // Bigger canvas reduces the “strip” problem.
     const W = 1000;
-    const H = 620;
+    const H = 720;
     const area = W * H;
 
     const items: TreeItem[] = heatRows.map((r) => {
+      // Weight is based on abs deviation (capped), but not extreme.
       const capped = clamp(r.abs, 0, 2.2);
       const weight = 1 + capped * 3.0;
       return { id: r.key, value: weight, row: r };
@@ -357,8 +378,7 @@ export default function NbaClient() {
     const scaled: TreeItem[] = items.map((it) => ({ ...it, value: (it.value / total) * area }));
     const placed = squarify(scaled, { x: 0, y: 0, w: W, h: H });
 
-    // Slightly larger gutters = calmer layout.
-    const gutterPx = 10;
+    const gutterPx = 12;
 
     return placed.map(({ item, rect }) => {
       const leftPct = (rect.x / W) * 100;
@@ -387,7 +407,9 @@ export default function NbaClient() {
               Labs • NBA
             </div>
 
-            <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">Live Deviation Heat Map</h1>
+            <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">
+              Live Deviation Heat Map
+            </h1>
 
             <p className="mt-4 max-w-3xl text-lg text-foreground/75">
               Highlights games performing materially above or below market expectation.
@@ -443,6 +465,7 @@ export default function NbaClient() {
                 <tbody>
                   {rows.map((r) => {
                     const hasScore = typeof r.awayScore === "number" && typeof r.homeScore === "number";
+                    const devClass = textToneClass(r.tone);
 
                     return (
                       <tr key={r.key} className="border-t border-[color:var(--border)]">
@@ -466,14 +489,16 @@ export default function NbaClient() {
                         <td className="px-4 py-3 text-foreground/80">{r.clock}</td>
                         <td className="px-4 py-3 text-foreground/80">{r.live}</td>
                         <td className="px-4 py-3 text-foreground/80">{r.close}</td>
-                        <td className={cn("px-4 py-3 font-medium", r.toneText)}>{r.deviationText}</td>
+                        <td className={cn("px-4 py-3 font-medium", devClass)}>{r.deviationText}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
 
-              <div className="mt-4 text-sm text-foreground/55">Lab preview. All signals require review.</div>
+              <div className="mt-4 text-sm text-foreground/55">
+                Lab preview. All signals require review.
+              </div>
             </div>
           ) : (
             <div className="space-y-4">
@@ -492,37 +517,41 @@ export default function NbaClient() {
                 </div>
               </div>
 
+              {/* Heat Map surface (less “card”, more “data surface”) */}
               <div className="relative w-full overflow-hidden rounded-2xl border border-[color:var(--border)] bg-black/20">
-                <div className="relative h-[620px]">
+                <div className="relative h-[720px]">
                   {treemap.map((t) => {
                     const r = t.item.row;
 
-                    const tileClass =
-                      r.tone === "accent"
-                        ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10"
-                        : r.tone === "warn"
-                          ? "border-amber-800/45 bg-amber-900/10"
-                          : "border-white/10 bg-white/5";
-
-                    // Tighten density: medium tiles show less; large tiles keep detail.
                     const isLarge = t.widthPct >= 24 && t.heightPct >= 24;
                     const isMedium = t.widthPct >= 16 && t.heightPct >= 16;
+
+                    // intensity based on abs deviation (capped)
+                    const intensity01 = clamp(r.abs / 2.0, 0, 1);
+
+                    const bg = bgFromTone(r.tone, intensity01);
+                    const border = borderFromTone(r.tone);
+                    const numClass = textToneClass(r.tone);
+
+                    const showClock = isMedium;
+                    const showLiveClose = isLarge;
 
                     return (
                       <div
                         key={t.item.id}
                         className={cn(
-                          "absolute overflow-hidden rounded-xl border",
-                          "transition-[filter] duration-200 hover:brightness-110",
-                          tileClass
+                          "absolute overflow-hidden rounded-lg",
+                          "transition-[filter,transform] duration-200 hover:brightness-110"
                         )}
                         style={{
                           left: t.left,
                           top: t.top,
                           width: t.width,
                           height: t.height,
+                          background: bg,
+                          border: `1px solid ${border}`,
                         }}
-                        title={`${r.matchup} • ${r.clock} • ${r.directionLabel}`}
+                        title={`${r.matchup} • ${r.clock}`}
                       >
                         <div className={cn("h-full w-full", isLarge ? "p-4" : isMedium ? "p-3" : "p-2")}>
                           <div className="flex items-start justify-between gap-2">
@@ -535,41 +564,46 @@ export default function NbaClient() {
                               >
                                 {r.matchup}
                               </div>
-
-                              {isMedium ? <div className="mt-1 text-xs text-foreground/65">{r.clock}</div> : null}
+                              {showClock ? <div className="mt-1 text-xs text-foreground/65">{r.clock}</div> : null}
                             </div>
 
                             {isLarge ? (
-                              <div className={cn("text-xs font-semibold", r.toneText)}>{r.directionLabel}</div>
+                              <div className={cn("text-xs font-semibold", numClass)}>
+                                {r.deviation >= 0 ? "above" : "below"}
+                              </div>
                             ) : null}
                           </div>
 
-                          {/* Only large tiles get Live/Close blocks (reduces clutter) */}
-                          {isLarge ? (
+                          {/* Center-weight the number (signal-first) */}
+                          <div className={cn("mt-3", isLarge ? "text-2xl" : isMedium ? "text-xl" : "text-lg")}>
+                            <div className={cn("font-semibold tabular-nums", numClass)}>{r.deviationText}</div>
+                          </div>
+
+                          {/* Only large tiles show Live/Close (reduces clutter drastically) */}
+                          {showLiveClose ? (
                             <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                              <div className="rounded-lg border border-white/10 bg-black/10 px-2 py-1.5">
+                              <div className="rounded-md border border-white/10 bg-black/10 px-2 py-1.5">
                                 <div className="text-foreground/60">Live</div>
-                                <div className="mt-0.5 font-semibold text-foreground">{r.live}</div>
+                                <div className="mt-0.5 font-semibold text-foreground tabular-nums">{r.live}</div>
                               </div>
-                              <div className="rounded-lg border border-white/10 bg-black/10 px-2 py-1.5">
+                              <div className="rounded-md border border-white/10 bg-black/10 px-2 py-1.5">
                                 <div className="text-foreground/60">Close</div>
-                                <div className="mt-0.5 font-semibold text-foreground">{r.close}</div>
+                                <div className="mt-0.5 font-semibold text-foreground tabular-nums">{r.close}</div>
                               </div>
                             </div>
                           ) : null}
 
-                          <div className={cn("mt-3 flex items-center justify-between", isLarge ? "text-xs" : "text-[11px]")}>
-                            {isLarge ? (
+                          {/* Footer row: keep minimal */}
+                          {isLarge ? (
+                            <div className="mt-3 flex items-center justify-between text-xs">
                               <div className="text-foreground/60">
                                 <Tooltip label="Deviation">
                                   <DeviationTip />
                                 </Tooltip>
                               </div>
-                            ) : (
-                              <div className="text-foreground/60">Deviation</div>
-                            )}
-                            <div className={cn("font-semibold", r.toneText)}>{r.deviationText}</div>
-                          </div>
+                              <div className="text-foreground/55">review</div>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     );
@@ -577,9 +611,7 @@ export default function NbaClient() {
                 </div>
               </div>
 
-              <div className="text-sm text-foreground/55">
-                Lab preview. All signals require review.
-              </div>
+              <div className="text-sm text-foreground/55">Lab preview. All signals require review.</div>
 
               {rows.length !== heatRows.length ? (
                 <div className="text-sm text-foreground/55">
