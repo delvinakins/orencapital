@@ -390,11 +390,9 @@ export default function JournalClient() {
     return strategyStats.filter((s) => !shown.has(s.strategy)).length;
   }, [strategyStats, strategyFiltered]);
 
-  // Local patch helpers for B2 (no re-fetch required)
+  // B2: Local patch helpers
   function patchTrade(updated: JournalTrade) {
     setTrades((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-    // Strategy stats are derived server-side; refresh calmly in background.
-    // We keep it simple + safe: no silent background fetch here (avoids surprises).
   }
 
   function removeTrade(id: string) {
@@ -462,12 +460,7 @@ export default function JournalClient() {
           }
         />
         <Card label="Avg R" value={fmtR(summary.avgR, 3)} tip={<RTipBody />} />
-        <Card
-          label="EV (average outcome)"
-          value={fmtR(summary.ev, 3)}
-          tone={toneFromEV(summary.ev)}
-          tip={<EVTipBody />}
-        />
+        <Card label="EV (average outcome)" value={fmtR(summary.ev, 3)} tone={toneFromEV(summary.ev)} tip={<EVTipBody />} />
         <Card label="Total R" value={fmtR(summary.totalR, 2)} tip={<RTipBody />} />
         <Card
           label="Trades Logged"
@@ -521,14 +514,7 @@ export default function JournalClient() {
 
           <Input label="Entry Price" value={entry} onChange={setEntry} type="number" placeholder="190.25" />
 
-          <Input
-            label="Stop Price"
-            value={stop}
-            onChange={setStop}
-            type="number"
-            placeholder="187.50"
-            tip={<StopTipBody />}
-          />
+          <Input label="Stop Price" value={stop} onChange={setStop} type="number" placeholder="187.50" tip={<StopTipBody />} />
 
           <Input label="Exit Price" value={exit} onChange={setExit} type="number" placeholder="194.10" />
 
@@ -670,9 +656,7 @@ export default function JournalClient() {
                         </td>
                         <td className="px-4 py-3 text-foreground/85">{s.trades}</td>
                         <td className="px-4 py-3 text-foreground/85">{s.tracked}</td>
-                        <td className="px-4 py-3 text-foreground/85">
-                          {s.winRate == null ? "—" : fmtPct01(s.winRate, 1)}
-                        </td>
+                        <td className="px-4 py-3 text-foreground/85">{s.winRate == null ? "—" : fmtPct01(s.winRate, 1)}</td>
                         <td
                           className={cn(
                             "px-4 py-3",
@@ -779,9 +763,11 @@ export default function JournalClient() {
                       <td className="px-4 py-3">
                         <div className="flex justify-end">
                           <JournalTradeActions
-                            trade={t as any}
-                            onUpdated={(updated) => patchTrade(updated as JournalTrade)}
-                            onDeleted={(id) => removeTrade(id)}
+                            trade={t}
+                            onUpdated={(updated: Record<string, any>) =>
+                              patchTrade(updated as JournalTrade)
+                            }
+                            onDeleted={(id: string) => removeTrade(id)}
                           />
                         </div>
                       </td>
