@@ -1,153 +1,176 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Tooltip } from "@/components/Tooltip";
+import ProLock from "@/components/ProLock";
 
 type InstrumentType = "stock" | "option" | "future" | "crypto" | "fx" | "other";
+type TradeSide = "long" | "short";
 
-type Trade = {
+type JournalTrade = {
   id: string;
-  symbol: string;
-  side: "long" | "short";
-  instrument: InstrumentType;
-
+  symbol: string | null;
+  instrument: InstrumentType | string | null;
+  side: TradeSide | string | null;
   entry_price: number | null;
-  exit_price: number | null;
   stop_price: number | null;
-
-  risk_r: number | null;
+  exit_price: number | null;
   result_r: number | null;
-  pnl_dollars: number | null;
-
   strategy: string | null;
   notes: string | null;
-
-  created_at: string;
+  created_at: string | null;
   closed_at: string | null;
 };
 
-/* ---------------- Helpers ---------------- */
-
-function fmt(n: number, digits = 2) {
-  return Number.isFinite(n) ? n.toFixed(digits) : "—";
-}
-
-function fmtR(x: number, digits = 2) {
-  if (!Number.isFinite(x)) return "—";
-  const sign = x > 0 ? "+" : "";
-  return `${sign}${x.toFixed(digits)}R`;
-}
+type StrategyStat = {
+  strategy: string;
+  trades: number;
+  tracked: number;
+  winRate: number | null;
+  avgR: number | null;
+  totalR: number | null;
+  expectancy: number | null;
+  largestLoss: number | null;
+};
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function parseNum(s: string): number | null {
-  if (s.trim() === "") return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
+function n(x: any): number | null {
+  const v = typeof x === "number" ? x : x == null ? null : Number(x);
+  return Number.isFinite(v as number) ? (v as number) : null;
 }
 
-function computeResultR(args: {
-  side: "long" | "short";
-  entry: number | null;
-  stop: number | null;
-  exit: number | null;
-}) {
-  const { side, entry, stop, exit } = args;
-  if (entry == null || stop == null || exit == null) return null;
-
-  const risk = side === "long" ? entry - stop : stop - entry;
-  if (!risk || risk === 0) return null;
-
-  const reward = side === "long" ? exit - entry : entry - exit;
-  return reward / risk;
+function fmtPct01(x: number | null | undefined, digits = 1) {
+  if (typeof x !== "number" || !Number.isFinite(x)) return "—";
+  return `${(x * 100).toFixed(digits)}%`;
 }
 
-function labelInstrument(x: InstrumentType) {
-  switch (x) {
-    case "stock":
-      return "Stock";
-    case "option":
-      return "Option";
-    case "future":
-      return "Future";
-    case "crypto":
-      return "Crypto";
-    case "fx":
-      return "FX";
-    default:
-      return "Other";
-  }
+function fmtR(x: number | null | undefined, digits = 2) {
+  if (typeof x !== "number" || !Number.isFinite(x)) return "—";
+  const sign = x > 0 ? "+" : "";
+  return `${sign}${x.toFixed(digits)}R`;
 }
 
-function toneFromEV(evR: number): "accent" | "neutral" | "warn" {
-  if (!Number.isFinite(evR)) return "neutral";
-  if (evR < 0) return "warn";
-  if (evR >= 0.05) return "accent";
+function cleanStrategy(s: any) {
+  if (typeof s !== "string") return null;
+  const t = s.trim();
+  if (!t) return null;
+  return t.length > 80 ? t.slice(0, 80) : t;
+}
+
+function computeResultR(t: Pick<JournalTrade, "result_r" | "entry_price" | "stop_price" | "exit_price" | "side">) {
+  const rr = n(t.result_r);
+  if (rr !== null) return rr;
+
+  const entry = n(t.entry_price);
+  const stop = n(t.stop_price);
+  const exit = n(t.exit_price);
+  const side = t.side;
+
+  if (entry === null || stop === null || exit === null) return null;
+  if (side !== "long" && side !== "short") return null;
+
+  const risk = Math.abs(entry - stop);
+  if (!Number.isFinite(risk) || risk <= 0) return null;
+
+  const pnl = side === "long" ? exit - entry : entry - exit;
+  const r = pnl / risk;
+  return Number.isFinite(r) ? r : null;
+}
+
+function toneFromEV(ev: number | null): "neutral" | "accent" | "warn" {
+  if (typeof ev !== "number" || !Number.isFinite(ev)) return "neutral";
+  if (ev < 0) return "warn";
+  if (ev >= 0.05) return "accent";
   return "neutral";
 }
 
-/* ---------------- UI Primitives (match Variance) ---------------- */
+function Card({
+  label,
+  value,
+  sub,
+  tone = "neutral",
+  tip,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "neutral" | "accent" | "warn";
+  tip?: React.ReactNode;
+}) {
+  const toneClass =
+    tone === "accent"
+      ? "border-[color:var(--accent)]/55 shadow-[0_0_0_1px_rgba(43,203,119,0.10)]"
+      : tone === "warn"
+        ? "border-amber-800/60"
+        : "border-[color:var(--border)]";
 
-function Field({
+  const valueClass =
+    tone === "accent"
+      ? "text-[color:var(--accent)]"
+      : tone === "warn"
+        ? "text-amber-200"
+        : "text-foreground";
+
+  return (
+    <div className={cn("oc-glass rounded-xl border p-5 sm:p-6", toneClass)}>
+      <div className="text-xs text-foreground/60">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</div>
+      <div className={cn("mt-2 text-xl font-semibold", valueClass)}>{value}</div>
+      {sub && <div className="mt-2 text-xs text-foreground/60">{sub}</div>}
+    </div>
+  );
+}
+
+function Input({
   label,
   value,
   onChange,
   placeholder,
-  tip,
   type = "text",
-  inputMode,
-  required,
-  className,
+  tip,
 }: {
-  label: ReactNode;
+  label: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
-  tip?: ReactNode;
-  type?: string;
-  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
-  required?: boolean;
-  className?: string;
+  type?: "text" | "number";
+  tip?: React.ReactNode;
 }) {
+  const inputMode = type === "number" ? ("decimal" as const) : undefined;
+
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-foreground/70">{tip ? <Tooltip label={label as any}>{tip}</Tooltip> : label}</label>
+      <label className="text-sm text-foreground/70">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</label>
       <input
         type={type}
         inputMode={inputMode}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        required={required}
-        className={cn(
-          "h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none placeholder:text-foreground/30",
-          className
-        )}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none placeholder:text-foreground/30"
       />
     </div>
   );
 }
 
-function SelectField({
+function Select({
   label,
   value,
   onChange,
-  tip,
   options,
+  tip,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
-  tip?: ReactNode;
-  options: Array<{ label: string; value: string }>;
+  options: { value: string; label: string }[];
+  tip?: React.ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-foreground/70">
-        {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
-      </label>
+      <label className="text-sm text-foreground/70">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -163,429 +186,431 @@ function SelectField({
   );
 }
 
-function Card({
-  label,
-  value,
-  sub,
-  tone = "neutral",
-}: {
-  label: ReactNode;
-  value: string;
-  sub?: string;
-  tone?: "neutral" | "accent" | "warn";
-}) {
-  // Institutional feel: no big red blocks. "warn" uses amber border/text only.
-  const toneClass =
-    tone === "accent"
-      ? "border-[color:var(--accent)]/55 shadow-[0_0_0_1px_rgba(43,203,119,0.10)]"
-      : tone === "warn"
-      ? "border-amber-800/60"
-      : "border-[color:var(--border)]";
-
-  const valueClass =
-    tone === "accent"
-      ? "text-[color:var(--accent)]"
-      : tone === "warn"
-      ? "text-amber-200"
-      : "text-foreground";
-
+function StopTipBody() {
   return (
-    <div className={`rounded-xl border ${toneClass} bg-[color:var(--card)] p-5 sm:p-6`}>
-      <div className="text-xs text-foreground/60">{label}</div>
-      <div className={`mt-2 text-xl font-semibold ${valueClass}`}>{value}</div>
-      {sub && <div className="mt-2 text-xs text-foreground/60">{sub}</div>}
-    </div>
-  );
-}
-
-/* ---------------- Component ---------------- */
-
-export default function JournalClient() {
-  const [trades, setTrades] = useState<Trade[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // Entry form
-  const [symbol, setSymbol] = useState("");
-  const [instrument, setInstrument] = useState<InstrumentType>("stock");
-  const [side, setSide] = useState<"long" | "short">("long");
-
-  const [entryPrice, setEntryPrice] = useState("");
-  const [stopPrice, setStopPrice] = useState("");
-  const [exitPrice, setExitPrice] = useState("");
-
-  async function load() {
-    setLoading(true);
-    const res = await fetch("/api/journal/list?limit=200", { cache: "no-store" });
-    const json = await res.json();
-    setTrades(json.trades ?? []);
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  const previewR = useMemo(() => {
-    return computeResultR({
-      side,
-      entry: parseNum(entryPrice),
-      stop: parseNum(stopPrice),
-      exit: parseNum(exitPrice),
-    });
-  }, [side, entryPrice, stopPrice, exitPrice]);
-
-  async function saveTrade(e: React.FormEvent) {
-    e.preventDefault();
-
-    const payload = {
-      symbol,
-      instrument,
-      side,
-      entry_price: parseNum(entryPrice),
-      stop_price: parseNum(stopPrice),
-      exit_price: parseNum(exitPrice),
-    };
-
-    const res = await fetch("/api/journal/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const j = await res.json().catch(() => null);
-      alert(j?.error ?? "Failed to save trade");
-      return;
-    }
-
-    setSymbol("");
-    setInstrument("stock");
-    setSide("long");
-    setEntryPrice("");
-    setStopPrice("");
-    setExitPrice("");
-
-    await load();
-  }
-
-  const metrics = useMemo(() => {
-    const closed = trades.filter((t) => typeof t.result_r === "number" && t.result_r !== null);
-
-    const n = closed.length;
-    const wins = closed.filter((t) => (t.result_r ?? 0) > 0).length;
-    const winRate = n > 0 ? wins / n : 0;
-
-    const totalR = closed.reduce((acc, t) => acc + (t.result_r ?? 0), 0);
-    const avgR = n > 0 ? totalR / n : 0;
-
-    // Phase 1 EV per trade = avgR
-    const ev = avgR;
-
-    const lowSample = n > 0 && n < 10;
-
-    return {
-      tradesLogged: trades.length,
-      closedTrades: n,
-      winRate,
-      avgR,
-      ev,
-      totalR,
-      lowSample,
-    };
-  }, [trades]);
-
-  const stopTipBody = (
     <div className="space-y-2 max-w-xs">
       <div>
         <span className="font-semibold">Stop</span>: the price level that invalidates your trade idea.
       </div>
-      <div className="text-foreground/70">It defines where you are wrong and prevents small losses from becoming large ones.</div>
+      <div className="text-foreground/70">
+        It defines where you are wrong and prevents small losses from becoming large ones.
+      </div>
       <div className="text-foreground/70">
         It also defines <span className="font-semibold">1R</span> (your risk per trade), so Oren can measure expectancy and
         consistency.
       </div>
     </div>
   );
+}
+
+export default function JournalClient() {
+  const [loading, setLoading] = useState(true);
+  const [isPro, setIsPro] = useState(false);
+
+  const [trades, setTrades] = useState<JournalTrade[]>([]);
+  const [strategyStats, setStrategyStats] = useState<StrategyStat[] | null>(null);
+
+  const [err, setErr] = useState<string | null>(null);
+
+  // Entry form state (simple + calm)
+  const [symbol, setSymbol] = useState("");
+  const [instrument, setInstrument] = useState<InstrumentType>("stock");
+  const [side, setSide] = useState<TradeSide>("long");
+  const [entry, setEntry] = useState("");
+  const [stop, setStop] = useState("");
+  const [exit, setExit] = useState("");
+  const [strategy, setStrategy] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+
+  async function refresh() {
+    setErr(null);
+    setSavedMsg(null);
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/journal/list?limit=500", { cache: "no-store" });
+      const j = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        setErr(j?.error ?? "Failed to load journal.");
+        setLoading(false);
+        return;
+      }
+
+      setTrades(Array.isArray(j?.items) ? j.items : []);
+      setIsPro(!!j?.pro?.isPro);
+      setStrategyStats(j?.strategyStats ?? null);
+
+      setLoading(false);
+    } catch {
+      setErr("Failed to load journal.");
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    refresh().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const summary = useMemo(() => {
+    const rs = trades
+      .map((t) => computeResultR(t))
+      .filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+
+    const tracked = rs.length;
+    const wins = rs.filter((x) => x > 0).length;
+
+    const winRate = tracked > 0 ? wins / tracked : null;
+    const avgR = tracked > 0 ? rs.reduce((a, b) => a + b, 0) / tracked : null;
+    const totalR = tracked > 0 ? rs.reduce((a, b) => a + b, 0) : null;
+    const largestLoss = tracked > 0 ? Math.min(...rs) : null;
+
+    // Calm: EV ~ avgR under the model (losers are negative R)
+    const ev = avgR;
+
+    return {
+      tradesLogged: trades.length,
+      tracked,
+      winRate,
+      avgR,
+      ev,
+      totalR,
+      largestLoss,
+    };
+  }, [trades]);
+
+  async function onSaveTrade() {
+    setErr(null);
+    setSavedMsg(null);
+    setSaving(true);
+
+    try {
+      const res = await fetch("/api/journal/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol: symbol.trim(),
+          instrument,
+          side,
+          entry_price: entry.trim() ? Number(entry) : null,
+          stop_price: stop.trim() ? Number(stop) : null,
+          exit_price: exit.trim() ? Number(exit) : null,
+          strategy: cleanStrategy(strategy),
+          notes: notes.trim() ? notes.trim() : null,
+        }),
+      });
+
+      const j = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        setErr(j?.error ?? "Save failed.");
+        setSaving(false);
+        return;
+      }
+
+      setSavedMsg("Trade saved.");
+      setSaving(false);
+
+      // reset minimal fields
+      setExit("");
+      setNotes("");
+
+      await refresh();
+    } catch {
+      setErr("Save failed.");
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="space-y-8">
       {/* Summary */}
-      <section className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      <section className="grid gap-4 sm:grid-cols-5">
         <Card
-          label={
-            <span className="inline-flex items-center gap-2">
-              Win Rate
-              <span className="text-foreground/70">
-                <Tooltip label="Win Rate">Percent of closed trades with R &gt; 0. Open trades excluded.</Tooltip>
-              </span>
-            </span>
-          }
-          value={`${Math.round(metrics.winRate * 100)}%`}
-          tone={metrics.lowSample ? "warn" : "neutral"}
-          sub={metrics.closedTrades ? `Closed: ${metrics.closedTrades}` : "No closed trades yet"}
+          label="Win Rate"
+          value={fmtPct01(summary.winRate, 1)}
+          sub={summary.tracked ? `${summary.tracked} tracked trades` : "—"}
+          tip="Wins / tracked trades. Trades are tracked when result R can be computed or is stored."
         />
-
+        <Card label="Avg R" value={fmtR(summary.avgR, 3)} tip="Average R multiple across tracked trades." />
         <Card
-          label={
-            <span className="inline-flex items-center gap-2">
-              Avg R
-              <span className="text-foreground/70">
-                <Tooltip label="Avg R">Average realized R across closed trades.</Tooltip>
-              </span>
-            </span>
-          }
-          value={fmt(metrics.avgR)}
-          tone={metrics.avgR < 0 ? "warn" : metrics.avgR > 0 ? "accent" : "neutral"}
-          sub={metrics.lowSample ? "Low sample: interpret cautiously." : "Stability increases with data."}
+          label="EV"
+          value={fmtR(summary.ev, 3)}
+          tone={toneFromEV(summary.ev)}
+          tip="Expectancy (R per trade). For now, EV is measured as average realized R."
         />
-
+        <Card label="Total R" value={fmtR(summary.totalR, 2)} tip="Sum of R across tracked trades." />
         <Card
-          label={
-            <span className="inline-flex items-center gap-2">
-              EV
-              <span className="text-foreground/70">
-                <Tooltip label="EV (Phase 1)">Phase 1 EV = Avg R per trade. Rolling metrics later (Pro).</Tooltip>
-              </span>
-            </span>
-          }
-          value={fmt(metrics.ev)}
-          tone={toneFromEV(metrics.ev)}
-          sub="Per-trade expectancy (R)."
-        />
-
-        <Card
-          label={
-            <span className="inline-flex items-center gap-2">
-              Total R
-              <span className="text-foreground/70">
-                <Tooltip label="Total R">Sum of realized R across closed trades.</Tooltip>
-              </span>
-            </span>
-          }
-          value={fmt(metrics.totalR)}
-          tone={metrics.totalR < 0 ? "warn" : metrics.totalR > 0 ? "accent" : "neutral"}
-          sub="Direction over time."
-        />
-
-        <Card
-          label={
-            <span className="inline-flex items-center gap-2">
-              Trades Logged
-              <span className="text-foreground/70">
-                <Tooltip label="Trades Logged">All journal entries (open + closed).</Tooltip>
-              </span>
-            </span>
-          }
-          value={`${metrics.tradesLogged}`}
-          sub={loading ? "Syncing…" : "Synced"}
+          label="Trades Logged"
+          value={`${summary.tradesLogged}`}
+          sub={summary.tradesLogged ? "All trades" : "—"}
+          tip="Total logged trades (including those without enough info to compute R)."
         />
       </section>
 
-      {/* Entry */}
-      <section className="space-y-4">
-        <div className="flex items-end justify-between gap-4">
-          <div className="space-y-1">
-            <div className="text-sm font-semibold tracking-tight">Log Trade</div>
-            <div className="text-sm text-foreground/70">Enter prices naturally. Oren computes R.</div>
+      {/* Entry Form */}
+      <section className="oc-glass rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
+        <div className="mb-4 flex items-end justify-between gap-4">
+          <div>
+            <div className="text-sm font-semibold tracking-tight">Log a trade</div>
+            <div className="mt-1 text-sm text-foreground/70">Structured input. Calm defaults.</div>
           </div>
 
-          <div className="text-xs text-foreground/70">
-            <Tooltip label="Auto Result (R)">
-              Auto Result computes when Entry, Stop, and Exit are present. Otherwise it stays blank.
+          <div className="text-xs text-foreground/60">
+            <Tooltip label="Stop">
+              <StopTipBody />
             </Tooltip>
-            <div className="mt-1">
-              Auto Result:{" "}
-              <span
-                className={cn(
-                  "font-semibold",
-                  typeof previewR === "number" && previewR > 0 ? "text-[color:var(--accent)]" : "text-foreground"
-                )}
-              >
-                {previewR == null ? "—" : fmtR(previewR)}
-              </span>
-            </div>
           </div>
         </div>
 
-        <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
-          <form onSubmit={saveTrade} className="grid gap-4 sm:grid-cols-6">
-            <div className="sm:col-span-2">
-              <div className="flex flex-col gap-2">
-                <label className="text-sm text-foreground/70">Symbol</label>
-                <input
-                  value={symbol}
-                  onChange={(e) => setSymbol(e.target.value)}
-                  placeholder="AAPL, ES, SPY…"
-                  required
-                  className="h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none placeholder:text-foreground/30"
-                />
-              </div>
-            </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Input label="Symbol" value={symbol} onChange={setSymbol} placeholder="AAPL" tip="Ticker (max 20 chars)." />
 
-            <div className="sm:col-span-2">
-              <SelectField
-                label="Instrument"
-                value={instrument}
-                onChange={(v) => setInstrument(v as InstrumentType)}
-                tip="Separates stock vs options/futures for cleaner analytics later."
-                options={[
-                  { label: "Stock", value: "stock" },
-                  { label: "Option", value: "option" },
-                  { label: "Future", value: "future" },
-                  { label: "Crypto", value: "crypto" },
-                  { label: "FX", value: "fx" },
-                  { label: "Other", value: "other" },
-                ]}
-              />
-            </div>
+          <Select
+            label="Instrument"
+            value={instrument}
+            onChange={(v) => setInstrument(v as InstrumentType)}
+            options={[
+              { value: "stock", label: "Stock" },
+              { value: "option", label: "Option" },
+              { value: "future", label: "Future" },
+              { value: "crypto", label: "Crypto" },
+              { value: "fx", label: "FX" },
+              { value: "other", label: "Other" },
+            ]}
+          />
 
-            <div className="sm:col-span-2">
-              <SelectField
-                label="Side"
-                value={side}
-                onChange={(v) => setSide(v as any)}
-                tip="Long = profit if price rises. Short = profit if price falls."
-                options={[
-                  { label: "Long", value: "long" },
-                  { label: "Short", value: "short" },
-                ]}
-              />
-            </div>
+          <Select
+            label="Side"
+            value={side}
+            onChange={(v) => setSide(v as TradeSide)}
+            options={[
+              { value: "long", label: "Long" },
+              { value: "short", label: "Short" },
+            ]}
+          />
 
-            <div className="sm:col-span-2">
-              <Field
-                label="Entry"
-                value={entryPrice}
-                onChange={setEntryPrice}
-                placeholder="e.g. 502.25"
-                type="number"
-                inputMode="decimal"
-              />
-            </div>
+          <Input label="Entry Price" value={entry} onChange={setEntry} type="number" placeholder="190.25" />
+          <Input
+            label="Stop Price"
+            value={stop}
+            onChange={setStop}
+            type="number"
+            placeholder="187.50"
+            tip="The price level that invalidates your trade idea. It defines 1R."
+          />
+          <Input label="Exit Price" value={exit} onChange={setExit} type="number" placeholder="194.10" />
 
-            {/* Stop: subtle highlight + correct Tooltip usage (short label, rich hover content) */}
-            <div className="sm:col-span-2">
-              <div className="flex flex-col gap-2">
-                <label className="text-sm text-foreground/70">
-                  <Tooltip label="Stop">{stopTipBody}</Tooltip>
-                </label>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  value={stopPrice}
-                  onChange={(e) => setStopPrice(e.target.value)}
-                  placeholder="e.g. 498.75"
-                  className="h-12 rounded-lg border border-[color:var(--accent)]/45 bg-[color:var(--card)] px-4 text-foreground outline-none placeholder:text-foreground/30 focus:border-[color:var(--accent)]"
-                />
-              </div>
-            </div>
-
-            <div className="sm:col-span-2">
-              <Field
-                label="Exit (optional)"
-                value={exitPrice}
-                onChange={setExitPrice}
-                placeholder="e.g. 507.00"
-                type="number"
-                inputMode="decimal"
-              />
-            </div>
-
-            <div className="sm:col-span-6 flex items-center justify-end pt-1">
-              <button type="submit" className="oc-btn oc-btn-primary">
-                Save Trade
-              </button>
-            </div>
-          </form>
+          <Input label="Strategy" value={strategy} onChange={setStrategy} placeholder="ORB / Trend / Breakout" />
+          <div className="sm:col-span-2">
+            <label className="text-sm text-foreground/70">Notes</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="What was the thesis? What would invalidate it? What did you execute well/poorly?"
+              className="mt-2 min-h-[44px] w-full resize-y rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-3 text-foreground outline-none placeholder:text-foreground/30"
+            />
+          </div>
         </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={onSaveTrade}
+            disabled={saving || !symbol.trim()}
+            className={cn("oc-btn oc-btn-accent", (saving || !symbol.trim()) && "opacity-60")}
+          >
+            {saving ? "Saving…" : "Save Trade"}
+          </button>
+
+          <div className="text-xs text-foreground/60">Tip: For analytics, include exit + stop so R can be computed.</div>
+        </div>
+
+        {(err || savedMsg) && (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {err && (
+              <div className="rounded-lg border border-amber-800/60 bg-[color:var(--card)] px-4 py-3 text-sm text-amber-200">
+                {err}
+              </div>
+            )}
+            {savedMsg && (
+              <div className="rounded-lg border border-[color:var(--accent)]/45 bg-[color:var(--card)] px-4 py-3 text-sm text-[color:var(--accent)]">
+                {savedMsg}
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
-      {/* Table */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="text-sm font-semibold tracking-tight">Trades</div>
-          <button onClick={load} className="oc-btn oc-btn-secondary">
+      {/* Strategy Breakdown (Pro) */}
+      <ProLock
+        feature="Strategy breakdown"
+        description="See win rate, average R, and total R by strategy. This is where edge becomes measurable."
+        mode="overlay"
+      >
+        <section className="oc-glass rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
+          <div className="mb-4 flex items-end justify-between gap-4">
+            <div>
+              <div className="text-sm font-semibold tracking-tight">Strategy Breakdown</div>
+              <div className="mt-1 text-sm text-foreground/70">
+                Performance by strategy. Calm, data-forward, no storytelling.
+              </div>
+            </div>
+
+            <div className="text-xs text-foreground/60">
+              <Tooltip label="How this works">
+                <div className="space-y-2 max-w-sm">
+                  <div className="font-semibold">Tracked trades</div>
+                  <div className="text-foreground/70">
+                    A trade is included in strategy stats when <span className="font-semibold">result R</span> is stored or can
+                    be computed from <span className="font-semibold">entry, stop, exit</span>.
+                  </div>
+                  <div className="text-foreground/70">Sorted by Total R (highest first).</div>
+                </div>
+              </Tooltip>
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="text-sm text-foreground/70">Loading…</div>
+          ) : !isPro ? (
+            <div className="text-sm text-foreground/70">Upgrade to unlock strategy analytics.</div>
+          ) : !strategyStats || strategyStats.length === 0 ? (
+            <div className="text-sm text-foreground/70">No strategies yet. Add a strategy label to trades to populate this.</div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]">
+              <table className="min-w-[820px] w-full text-sm">
+                <thead>
+                  <tr className="text-left text-foreground/60">
+                    <th className="px-4 py-3 font-medium">Strategy</th>
+                    <th className="px-4 py-3 font-medium">Trades</th>
+                    <th className="px-4 py-3 font-medium">Tracked</th>
+                    <th className="px-4 py-3 font-medium">Win Rate</th>
+                    <th className="px-4 py-3 font-medium">Avg R</th>
+                    <th className="px-4 py-3 font-medium">Total R</th>
+                    <th className="px-4 py-3 font-medium">Largest Loss</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {strategyStats.map((s) => {
+                    const tone = toneFromEV(s.avgR ?? null);
+                    const totalTone = toneFromEV(s.totalR ?? null);
+
+                    return (
+                      <tr key={s.strategy} className="border-t border-[color:var(--border)]">
+                        <td className="px-4 py-3 font-medium text-foreground">{s.strategy}</td>
+                        <td className="px-4 py-3 text-foreground/85">{s.trades}</td>
+                        <td className="px-4 py-3 text-foreground/85">{s.tracked}</td>
+                        <td className="px-4 py-3 text-foreground/85">
+                          {s.winRate == null ? "—" : fmtPct01(s.winRate, 1)}
+                        </td>
+                        <td
+                          className={cn(
+                            "px-4 py-3",
+                            tone === "accent"
+                              ? "text-[color:var(--accent)]"
+                              : tone === "warn"
+                                ? "text-amber-200"
+                                : "text-foreground/85"
+                          )}
+                        >
+                          {fmtR(s.avgR, 3)}
+                        </td>
+                        <td
+                          className={cn(
+                            "px-4 py-3",
+                            totalTone === "accent"
+                              ? "text-[color:var(--accent)]"
+                              : totalTone === "warn"
+                                ? "text-amber-200"
+                                : "text-foreground/85"
+                          )}
+                        >
+                          {fmtR(s.totalR, 2)}
+                        </td>
+                        <td className="px-4 py-3 text-foreground/85">{fmtR(s.largestLoss, 2)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </ProLock>
+
+      {/* Trades Table (basic) */}
+      <section className="oc-glass rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
+        <div className="mb-4 flex items-end justify-between gap-4">
+          <div>
+            <div className="text-sm font-semibold tracking-tight">Trades</div>
+            <div className="mt-1 text-sm text-foreground/70">Your most recent trades.</div>
+          </div>
+
+          <button type="button" onClick={refresh} className="oc-btn oc-btn-secondary">
             Refresh
           </button>
         </div>
 
-        <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1100px] text-left text-sm">
-              <thead className="text-xs text-foreground/60">
-                <tr className="border-b border-[color:var(--border)]">
-                  <th className="px-4 py-3">Time</th>
-                  <th className="px-4 py-3">Symbol</th>
-                  <th className="px-4 py-3">Instrument</th>
-                  <th className="px-4 py-3">Side</th>
-                  <th className="px-4 py-3">Entry</th>
-
-                  {/* Stop header: show only "Stop" inline, tooltip content on hover */}
-                  <th className="px-4 py-3 text-[color:var(--accent)]">
-                    <Tooltip label="Stop">{stopTipBody}</Tooltip>
-                  </th>
-
-                  <th className="px-4 py-3">Exit</th>
-                  <th className="px-4 py-3">Result (R)</th>
-                  <th className="px-4 py-3">Strategy</th>
-                  <th className="px-4 py-3">Notes</th>
+        {loading ? (
+          <div className="text-sm text-foreground/70">Loading…</div>
+        ) : trades.length === 0 ? (
+          <div className="text-sm text-foreground/70">No trades yet.</div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]">
+            <table className="min-w-[980px] w-full text-sm">
+              <thead>
+                <tr className="text-left text-foreground/60">
+                  <th className="px-4 py-3 font-medium">Symbol</th>
+                  <th className="px-4 py-3 font-medium">Instrument</th>
+                  <th className="px-4 py-3 font-medium">Side</th>
+                  <th className="px-4 py-3 font-medium">Entry</th>
+                  <th className="px-4 py-3 font-medium">Stop</th>
+                  <th className="px-4 py-3 font-medium">Exit</th>
+                  <th className="px-4 py-3 font-medium">Result (R)</th>
+                  <th className="px-4 py-3 font-medium">Strategy</th>
+                  <th className="px-4 py-3 font-medium">Created</th>
                 </tr>
               </thead>
-
               <tbody>
                 {trades.map((t) => {
-                  const r = t.result_r ?? null;
-                  const tone =
-                    typeof r === "number" ? (r < 0 ? "warn" : r >= 0.05 ? "accent" : "neutral") : "neutral";
-
-                  const rClass =
-                    tone === "accent"
-                      ? "text-[color:var(--accent)]"
-                      : tone === "warn"
-                      ? "text-amber-200"
-                      : "text-foreground";
+                  const rr = computeResultR(t);
+                  const rrTone = toneFromEV(rr);
+                  const created = t.created_at ? new Date(t.created_at).toLocaleDateString() : "—";
 
                   return (
-                    <tr key={t.id} className="border-b border-[color:var(--border)]/60 hover:bg-white/5">
-                      <td className="px-4 py-3 text-xs text-foreground/60">
-                        {new Date(t.created_at).toLocaleString()}
+                    <tr key={t.id} className="border-t border-[color:var(--border)]">
+                      <td className="px-4 py-3 font-medium text-foreground">{t.symbol ?? "—"}</td>
+                      <td className="px-4 py-3 text-foreground/85">{String(t.instrument ?? "—")}</td>
+                      <td className="px-4 py-3 text-foreground/85">{String(t.side ?? "—")}</td>
+                      <td className="px-4 py-3 text-foreground/85">{t.entry_price ?? "—"}</td>
+                      <td className="px-4 py-3 text-foreground/85">{t.stop_price ?? "—"}</td>
+                      <td className="px-4 py-3 text-foreground/85">{t.exit_price ?? "—"}</td>
+                      <td
+                        className={cn(
+                          "px-4 py-3",
+                          rrTone === "accent"
+                            ? "text-[color:var(--accent)]"
+                            : rrTone === "warn"
+                              ? "text-amber-200"
+                              : "text-foreground/85"
+                        )}
+                      >
+                        {fmtR(rr, 2)}
                       </td>
-                      <td className="px-4 py-3 font-medium">{t.symbol}</td>
-                      <td className="px-4 py-3 text-foreground/80">{labelInstrument(t.instrument)}</td>
-                      <td className="px-4 py-3 text-foreground/80">{t.side}</td>
-                      <td className="px-4 py-3 text-foreground/80">{t.entry_price == null ? "—" : fmt(t.entry_price, 2)}</td>
-
-                      {/* Stop cell subtle highlight */}
-                      <td className="px-4 py-3 text-[color:var(--accent)]">
-                        {t.stop_price == null ? "—" : fmt(t.stop_price, 2)}
-                      </td>
-
-                      <td className="px-4 py-3 text-foreground/80">{t.exit_price == null ? "—" : fmt(t.exit_price, 2)}</td>
-                      <td className={cn("px-4 py-3 font-semibold", rClass)}>{r === null ? "—" : fmtR(r, 2)}</td>
-                      <td className="px-4 py-3 text-foreground/80">{t.strategy ?? "—"}</td>
-                      <td className="px-4 py-3 text-foreground/80">{t.notes ?? "—"}</td>
+                      <td className="px-4 py-3 text-foreground/85">{t.strategy ?? "—"}</td>
+                      <td className="px-4 py-3 text-foreground/85">{created}</td>
                     </tr>
                   );
                 })}
-
-                {!loading && trades.length === 0 && (
-                  <tr>
-                    <td colSpan={10} className="px-4 py-10 text-center text-sm text-foreground/70">
-                      No trades yet.
-                    </td>
-                  </tr>
-                )}
               </tbody>
             </table>
           </div>
-
-          <div className="flex items-center justify-between px-4 py-3 text-xs text-foreground/60">
-            <div>
-              Showing <span className="text-foreground">{trades.length}</span> most recent trades
-            </div>
-            <div className="text-foreground/60">Pro adds filters, rolling metrics, export, and equity curve.</div>
-          </div>
-        </div>
+        )}
       </section>
     </div>
   );
