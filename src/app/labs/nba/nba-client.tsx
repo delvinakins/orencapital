@@ -235,19 +235,14 @@ function toneFromAbs(abs: number): Row["tone"] {
 }
 
 function bgFromTone(tone: Row["tone"], intensity01: number) {
-  // Keep it calm: most tiles are near-neutral; only high signal gets pine/amber tint.
-  // intensity01 is 0..1
   const a = clamp(intensity01, 0, 1);
 
   if (tone === "accent") {
-    // Pine tint
     return `rgba(43, 203, 119, ${0.10 + 0.22 * a})`;
   }
   if (tone === "warn") {
-    // Amber tint
     return `rgba(245, 158, 11, ${0.08 + 0.18 * a})`;
   }
-  // Neutral tint
   return `rgba(255, 255, 255, ${0.03 + 0.06 * a})`;
 }
 
@@ -356,17 +351,14 @@ export default function NbaClient() {
     return computed;
   }, [games]);
 
-  // Heat map focuses attention: hide low-signal games (Slate still shows everything).
   const heatRows = useMemo(() => rows.filter((r) => r.abs >= 0.35), [rows]);
 
   const treemap = useMemo(() => {
-    // Bigger canvas reduces the “strip” problem.
     const W = 1000;
     const H = 720;
     const area = W * H;
 
     const items: TreeItem[] = heatRows.map((r) => {
-      // Weight is based on abs deviation (capped), but not extreme.
       const capped = clamp(r.abs, 0, 2.2);
       const weight = 1 + capped * 3.0;
       return { id: r.key, value: weight, row: r };
@@ -502,22 +494,29 @@ export default function NbaClient() {
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-3 text-sm text-foreground/70">
-                <div className="flex items-center gap-2">
-                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-[color:var(--accent)]/80" />
-                  <span>unusual move</span>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3 text-sm text-foreground/70">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-[color:var(--accent)]/80" />
+                    <span>unusual move</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-300/80" />
+                    <span>worth watching</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-white/30" />
+                    <span>typical range</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-300/80" />
-                  <span>worth watching</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-white/30" />
-                  <span>typical range</span>
+
+                <div className="text-sm text-foreground/60">
+                  <Tooltip label="Deviation">
+                    <DeviationTip />
+                  </Tooltip>
                 </div>
               </div>
 
-              {/* Heat Map surface (less “card”, more “data surface”) */}
               <div className="relative w-full overflow-hidden rounded-2xl border border-[color:var(--border)] bg-black/20">
                 <div className="relative h-[720px]">
                   {treemap.map((t) => {
@@ -526,11 +525,11 @@ export default function NbaClient() {
                     const isLarge = t.widthPct >= 24 && t.heightPct >= 24;
                     const isMedium = t.widthPct >= 16 && t.heightPct >= 16;
 
-                    // intensity based on abs deviation (capped)
                     const intensity01 = clamp(r.abs / 2.0, 0, 1);
 
                     const bg = bgFromTone(r.tone, intensity01);
                     const border = borderFromTone(r.tone);
+
                     const numClass = textToneClass(r.tone);
 
                     const showClock = isMedium;
@@ -574,12 +573,10 @@ export default function NbaClient() {
                             ) : null}
                           </div>
 
-                          {/* Center-weight the number (signal-first) */}
                           <div className={cn("mt-3", isLarge ? "text-2xl" : isMedium ? "text-xl" : "text-lg")}>
                             <div className={cn("font-semibold tabular-nums", numClass)}>{r.deviationText}</div>
                           </div>
 
-                          {/* Only large tiles show Live/Close (reduces clutter drastically) */}
                           {showLiveClose ? (
                             <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                               <div className="rounded-md border border-white/10 bg-black/10 px-2 py-1.5">
@@ -590,18 +587,6 @@ export default function NbaClient() {
                                 <div className="text-foreground/60">Close</div>
                                 <div className="mt-0.5 font-semibold text-foreground tabular-nums">{r.close}</div>
                               </div>
-                            </div>
-                          ) : null}
-
-                          {/* Footer row: keep minimal */}
-                          {isLarge ? (
-                            <div className="mt-3 flex items-center justify-between text-xs">
-                              <div className="text-foreground/60">
-                                <Tooltip label="Deviation">
-                                  <DeviationTip />
-                                </Tooltip>
-                              </div>
-                              <div className="text-foreground/55">review</div>
                             </div>
                           ) : null}
                         </div>
