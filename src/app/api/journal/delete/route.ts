@@ -1,16 +1,42 @@
-// app/api/journal/delete/route.ts
+// src/app/api/journal/delete/route.ts
 import { NextResponse } from "next/server";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 
 type DeletePayload = { id: string };
 
 const SAFE_USER_ERROR =
   "We couldn’t delete that trade right now. Please try again in a moment.";
 
+function getSupabaseServerClient() {
+  const cookieStore = cookies();
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !key) {
+    throw new Error("Missing Supabase env vars");
+  }
+
+  return createServerClient(url, key, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
+      },
+      setAll(cookiesToSet) {
+        for (const { name, value, options } of cookiesToSet) {
+          cookieStore.set(name, value, options);
+        }
+      },
+    },
+  });
+}
+
 export async function POST(req: Request) {
   try {
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = getSupabaseServerClient();
 
     const {
       data: { user },

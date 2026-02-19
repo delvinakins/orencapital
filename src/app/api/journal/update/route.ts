@@ -1,20 +1,45 @@
-// app/api/journal/update/route.ts
+// src/app/api/journal/update/route.ts
 import { NextResponse } from "next/server";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
 
 type UpdatePayload = {
   id: string;
-  // Allow partial updates; only provided fields will be updated
   updates: Record<string, unknown>;
 };
 
 const SAFE_USER_ERROR =
   "We couldn’t update that trade right now. Please try again in a moment.";
 
+function getSupabaseServerClient() {
+  const cookieStore = cookies();
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!url || !key) {
+    throw new Error("Missing Supabase env vars");
+  }
+
+  return createServerClient(url, key, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
+      },
+      setAll(cookiesToSet) {
+        for (const { name, value, options } of cookiesToSet) {
+          cookieStore.set(name, value, options);
+        }
+      },
+    },
+  });
+}
+
 export async function POST(req: Request) {
   try {
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = getSupabaseServerClient();
 
     const {
       data: { user },
@@ -35,7 +60,6 @@ export async function POST(req: Request) {
     }
 
     // Block updating owner/user fields even if client sends them.
-    // (Adjust field names if your schema uses different column names.)
     const forbidden = new Set([
       "user_id",
       "owner_id",
@@ -53,8 +77,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No valid updates" }, { status: 400 });
     }
 
-    // NOTE: assumes journal_trades has user_id column.
-    // If your column is named differently, swap it here.
     const { data, error } = await supabase
       .from("journal_trades")
       .update(cleanedUpdates)
@@ -64,7 +86,6 @@ export async function POST(req: Request) {
       .single();
 
     if (error) {
-      // Log privately on server only
       console.error("[journal/update] supabase error:", {
         code: error.code,
         message: error.message,
