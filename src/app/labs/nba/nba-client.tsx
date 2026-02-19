@@ -57,9 +57,7 @@ function DeviationTip() {
   return (
     <div className="max-w-sm space-y-2">
       <div className="font-semibold">Deviation</div>
-      <div className="text-foreground/70">
-        Measures how far live performance has moved from market expectation.
-      </div>
+      <div className="text-foreground/70">Measures how far live performance has moved from market expectation.</div>
       <div className="text-foreground/70">Higher values indicate a more unusual move.</div>
     </div>
   );
@@ -125,7 +123,6 @@ function layoutRow(row: TreeItem[], rect: Rect): { placed: Placed[]; remaining: 
   const horizontal = rect.w >= rect.h;
 
   if (horizontal) {
-    // Row: constant height
     const h = s / rect.w;
     let x = rect.x;
 
@@ -140,7 +137,6 @@ function layoutRow(row: TreeItem[], rect: Rect): { placed: Placed[]; remaining: 
       remaining: { x: rect.x, y: rect.y + h, w: rect.w, h: rect.h - h },
     };
   } else {
-    // Column: constant width
     const w = s / rect.h;
     let y = rect.y;
 
@@ -187,7 +183,6 @@ function squarify(items: TreeItem[], rect: Rect): Placed[] {
       placed.push(...res.placed);
       r = res.remaining;
       row = [];
-      // If the remaining rect is degenerate, stop
       if (r.w <= 0 || r.h <= 0) break;
     }
   }
@@ -296,9 +291,9 @@ export default function NbaClient() {
   const treemap = useMemo(() => {
     const W = 1000;
     const H = 520;
+    const area = W * H;
 
-    const baseArea = W * H;
-
+    // Cleaner map: baseline weight + capped influence.
     const items: TreeItem[] = rows.map((r) => {
       const capped = clamp(r.abs, 0, 2.2);
       const weight = 1 + capped * 3.0;
@@ -308,19 +303,29 @@ export default function NbaClient() {
     const total = items.reduce((a, b) => a + b.value, 0);
     if (!Number.isFinite(total) || total <= 0) return [];
 
-    const scaled: TreeItem[] = items.map((it) => ({
-      ...it,
-      value: (it.value / total) * baseArea,
-    }));
-
+    const scaled: TreeItem[] = items.map((it) => ({ ...it, value: (it.value / total) * area }));
     const placed = squarify(scaled, { x: 0, y: 0, w: W, h: H });
 
+    // Add gutters (space between tiles) using CSS calc().
+    const gutterPx = 6;
+
     return placed.map(({ item, rect }) => {
-      const left = (rect.x / W) * 100;
-      const top = (rect.y / H) * 100;
-      const width = (rect.w / W) * 100;
-      const height = (rect.h / H) * 100;
-      return { item, left, top, width, height };
+      const leftPct = (rect.x / W) * 100;
+      const topPct = (rect.y / H) * 100;
+      const widthPct = (rect.w / W) * 100;
+      const heightPct = (rect.h / H) * 100;
+
+      // If a tile is extremely tiny, we still render it, but we shrink content inside.
+      return {
+        item,
+        left: `calc(${leftPct}% + ${gutterPx / 2}px)`,
+        top: `calc(${topPct}% + ${gutterPx / 2}px)`,
+        width: `calc(${widthPct}% - ${gutterPx}px)`,
+        height: `calc(${heightPct}% - ${gutterPx}px)`,
+        // For content rules (percent thresholds)
+        widthPct,
+        heightPct,
+      };
     });
   }, [rows]);
 
@@ -425,57 +430,78 @@ export default function NbaClient() {
 
                     const tileClass =
                       r.tone === "accent"
-                        ? "border-[color:var(--accent)]/30 bg-[color:var(--accent)]/10 shadow-[0_0_0_1px_rgba(43,203,119,0.08)]"
+                        ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10"
                         : r.tone === "warn"
-                          ? "border-amber-800/50 bg-amber-900/10"
+                          ? "border-amber-800/45 bg-amber-900/10"
                           : "border-white/10 bg-white/5";
 
-                    const showDetails = t.width >= 14 && t.height >= 14;
+                    // Progressive disclosure:
+                    const isLarge = t.widthPct >= 22 && t.heightPct >= 22;
+                    const isMedium = t.widthPct >= 14 && t.heightPct >= 14;
 
                     return (
                       <div
                         key={t.item.id}
-                        className={cn("absolute rounded-xl border p-3 transition-[filter] duration-200 hover:brightness-110")}
+                        className={cn(
+                          "absolute overflow-hidden rounded-xl border",
+                          "transition-[filter] duration-200 hover:brightness-110",
+                          tileClass
+                        )}
                         style={{
-                          left: `${t.left}%`,
-                          top: `${t.top}%`,
-                          width: `${t.width}%`,
-                          height: `${t.height}%`,
+                          left: t.left,
+                          top: t.top,
+                          width: t.width,
+                          height: t.height,
                         }}
                         title={`${r.matchup} • ${r.clock} • ${r.directionLabel}`}
                       >
-                        <div className={cn("h-full w-full rounded-xl", tileClass)}>
-                          <div className="h-full w-full p-3">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="truncate text-sm font-semibold text-foreground">{r.matchup}</div>
-                                <div className="mt-1 text-xs text-foreground/65">{r.clock}</div>
+                        <div className={cn("h-full w-full", isLarge ? "p-4" : isMedium ? "p-3" : "p-2")}>
+                          {/* Header */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div
+                                className={cn(
+                                  "truncate font-semibold text-foreground",
+                                  isLarge ? "text-base" : "text-sm"
+                                )}
+                              >
+                                {r.matchup}
                               </div>
 
-                              <div className={cn("text-xs font-semibold", r.toneText)}>{r.directionLabel}</div>
+                              {isMedium ? <div className="mt-1 text-xs text-foreground/65">{r.clock}</div> : null}
                             </div>
 
-                            {showDetails ? (
-                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                                <div className="rounded-lg border border-white/10 bg-black/10 px-2 py-1.5">
-                                  <div className="text-foreground/60">Live</div>
-                                  <div className="mt-0.5 font-semibold text-foreground">{r.live}</div>
-                                </div>
-                                <div className="rounded-lg border border-white/10 bg-black/10 px-2 py-1.5">
-                                  <div className="text-foreground/60">Close</div>
-                                  <div className="mt-0.5 font-semibold text-foreground">{r.close}</div>
-                                </div>
-                              </div>
+                            {isLarge ? (
+                              <div className={cn("text-xs font-semibold", r.toneText)}>{r.directionLabel}</div>
                             ) : null}
+                          </div>
 
-                            <div className="mt-3 flex items-center justify-between text-xs">
+                          {/* Body */}
+                          {isLarge ? (
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                              <div className="rounded-lg border border-white/10 bg-black/10 px-2 py-1.5">
+                                <div className="text-foreground/60">Live</div>
+                                <div className="mt-0.5 font-semibold text-foreground">{r.live}</div>
+                              </div>
+                              <div className="rounded-lg border border-white/10 bg-black/10 px-2 py-1.5">
+                                <div className="text-foreground/60">Close</div>
+                                <div className="mt-0.5 font-semibold text-foreground">{r.close}</div>
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {/* Footer */}
+                          <div className={cn("mt-3 flex items-center justify-between", isLarge ? "text-xs" : "text-[11px]")}>
+                            {isLarge ? (
                               <div className="text-foreground/60">
                                 <Tooltip label="Deviation">
                                   <DeviationTip />
                                 </Tooltip>
                               </div>
-                              <div className={cn("font-semibold", r.toneText)}>{r.deviationText}</div>
-                            </div>
+                            ) : (
+                              <div className="text-foreground/60">Deviation</div>
+                            )}
+                            <div className={cn("font-semibold", r.toneText)}>{r.deviationText}</div>
                           </div>
                         </div>
                       </div>
