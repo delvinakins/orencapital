@@ -43,15 +43,12 @@ function normalizeNumber(x: unknown): number | null {
 }
 
 function reqId() {
-  // short, log-friendly request id
   return Math.random().toString(36).slice(2, 10);
 }
 
 function classifyOpenAIError(err: any): { code: string; status: number; message: string } {
   const status = Number(err?.status ?? err?.response?.status ?? 500);
 
-  // OpenAI SDK often includes `status` and sometimes `code`/`type`.
-  // We never pass provider text to the client.
   if (status === 401) {
     return {
       code: "OPENAI_AUTH",
@@ -61,7 +58,6 @@ function classifyOpenAIError(err: any): { code: string; status: number; message:
   }
 
   if (status === 429) {
-    // Could be rate-limit OR quota. Treat it as capacity for the user.
     return {
       code: "OPENAI_LIMIT",
       status: 503,
@@ -84,6 +80,23 @@ function classifyOpenAIError(err: any): { code: string; status: number; message:
   };
 }
 
+// Rate limit config (Free-tier safe defaults)
+// Later: we can tier by Pro (e.g., Free 30/hr, Pro 300/hr)
+const RL_KEY = "journal_parse_v1";
+const RL_LIMIT = 60; // requests per window
+const RL_WINDOW_SECONDS = 60 * 60; // 1 hour
+
+function toIsoOrNull(x: any): string | null {
+  try {
+    if (!x) return null;
+    const d = new Date(String(x));
+    if (!Number.isFinite(d.getTime())) return null;
+    return d.toISOString();
+  } catch {
+    return null;
+  }
+}
+
 export async function POST(req: Request) {
   const requestId = reqId();
 
@@ -98,6 +111,57 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Rate limit (atomic, per-user)
+  try {
+    const { data, error } = await supabase.rpc("check_rate_limit", {
+      p_user_id: user.id,
+      p_key: RL_KEY,
+      p_limit: RL_LIMIT,
+      p_window_seconds: RL_WINDOW_SECONDS,
+    });
+
+    if (error) {
+      // If RL fails, do NOT block user; log and continue.
+      console.error("[journal/parse] rate limit rpc error", { requestId, error: error.message });
+    } else {
+      const row = Array.isArray(data) ? data[0] : data;
+      const allowed = !!row?.allowed;
+      const remaining = Number(row?.remaining ?? RL_LIMIT);
+      const resetAtIso = toIsoOrNull(row?.reset_at);
+
+      if (!allowed) {
+        const headers = new Headers();
+        headers.set("X-RateLimit-Limit", String(RL_LIMIT));
+        headers.set("X-RateLimit-Remaining", String(remaining));
+        if (resetAtIso) headers.set("X-RateLimit-Reset", resetAtIso);
+
+        if (resetAtIso) {
+          const retryAfterSeconds = Math.max(
+            1,
+            Math.ceil((new Date(resetAtIso).getTime() - Date.now()) / 1000)
+          );
+          headers.set("Retry-After", String(retryAfterSeconds));
+        }
+
+        return new NextResponse(
+          JSON.stringify({
+            error: "You’ve hit the AI parsing limit. Please try again shortly.",
+            code: "RATE_LIMITED",
+            requestId,
+            resetAt: resetAtIso,
+          }),
+          {
+            status: 429,
+            headers,
+          }
+        );
+      }
+    }
+  } catch (e: any) {
+    console.error("[journal/parse] rate limit unexpected error", { requestId, message: e?.message });
+  }
+
+  // Body parse
   let body: { text?: string };
   try {
     body = await req.json();
@@ -202,7 +266,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ trade: out, warnings, requestId });
   } catch (err: any) {
-    // Log full details server-side only (Vercel logs)
     console.error("[journal/parse] OpenAI error", {
       requestId,
       status: err?.status ?? err?.response?.status,
