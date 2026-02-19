@@ -8,35 +8,29 @@ type DeletePayload = { id: string };
 const SAFE_USER_ERROR =
   "We couldn’t delete that trade right now. Please try again in a moment.";
 
-function getSupabaseServerClient() {
-  const cookieStore = cookies();
+async function getSupabaseServerClient() {
+  const cookieStore = await cookies();
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key =
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (!url || !key) {
-    throw new Error("Missing Supabase env vars");
-  }
+  if (!url || !key) throw new Error("Missing Supabase env vars");
 
   return createServerClient(url, key, {
     cookies: {
       getAll() {
         return cookieStore.getAll();
       },
-      setAll(cookiesToSet) {
-        for (const { name, value, options } of cookiesToSet) {
-          cookieStore.set(name, value, options);
-        }
-      },
+      setAll() {},
     },
   });
 }
 
 export async function POST(req: Request) {
   try {
-    const supabase = getSupabaseServerClient();
+    const supabase = await getSupabaseServerClient();
 
     const {
       data: { user },
@@ -64,10 +58,7 @@ export async function POST(req: Request) {
       console.error("[journal/delete] supabase error:", {
         code: error.code,
         message: error.message,
-        details: error.details,
-        hint: error.hint,
       });
-
       return NextResponse.json({ error: SAFE_USER_ERROR }, { status: 500 });
     }
 
