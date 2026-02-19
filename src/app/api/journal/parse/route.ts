@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getOpenAI } from "@/lib/openai/server";
+import getOpenAI from "@/lib/openai/server";
 
 type InstrumentType = "stock" | "option" | "future" | "crypto" | "fx" | "other";
 type TradeSide = "long" | "short";
@@ -68,7 +68,7 @@ export async function POST(req: Request) {
 
   const openai = getOpenAI();
 
-  // Structured Outputs via Responses API: text.format = { type, name, schema, strict } :contentReference[oaicite:1]{index=1}
+  // Structured Outputs via Responses API (strict JSON schema)
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -96,7 +96,7 @@ export async function POST(req: Request) {
   try {
     const resp = await openai.responses.create({
       model: "gpt-4o-mini",
-      store: false, // don’t store responses for later retrieval by default :contentReference[oaicite:2]{index=2}
+      store: false,
       input: [
         {
           role: "system",
