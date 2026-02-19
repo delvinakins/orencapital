@@ -39,9 +39,7 @@ function DeviationTip() {
   return (
     <div className="max-w-sm space-y-2">
       <div className="font-semibold">Deviation</div>
-      <div className="text-foreground/70">
-        Measures how far the live performance has moved from market expectation.
-      </div>
+      <div className="text-foreground/70">Measures how far live performance has moved from market expectation.</div>
       <div className="text-foreground/70">Higher values indicate a more unusual move.</div>
     </div>
   );
@@ -58,34 +56,27 @@ export default function NbaClient() {
     try {
       const res = await fetch("/api/labs/nba/mock-games", { cache: "no-store" });
 
-      // If middleware redirects or blocks, this often returns HTML (not JSON).
-      const contentType = res.headers.get("content-type") || "";
+      if (res.status === 404) {
+        setGames([]);
+        setLoadError("Feed endpoint not found.");
+        setLoading(false);
+        return;
+      }
 
+      const contentType = res.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
         setGames([]);
         setLoadError("Unable to load games right now.");
         setLoading(false);
-
-        // Dev-only hint (not shown in UI)
-        console.warn(
-          "[NBA labs] mock-games returned non-JSON response. Likely middleware/auth redirect.",
-          { status: res.status, contentType }
-        );
         return;
       }
 
       const json = await res.json().catch(() => null);
 
-      if (!res.ok || !json?.ok || !Array.isArray(json.items)) {
+      if (!json?.ok || !Array.isArray(json.items)) {
         setGames([]);
         setLoadError("Unable to load games right now.");
         setLoading(false);
-
-        console.warn("[NBA labs] mock-games JSON shape unexpected.", {
-          status: res.status,
-          ok: json?.ok,
-          hasItems: Array.isArray(json?.items),
-        });
         return;
       }
 
@@ -113,11 +104,7 @@ export default function NbaClient() {
       const abs = Math.abs(deviation);
 
       const tone =
-        abs >= 1.5
-          ? "text-[color:var(--accent)]"
-          : abs >= 1.0
-            ? "text-amber-200"
-            : "text-foreground/80";
+        abs >= 1.5 ? "text-[color:var(--accent)]" : abs >= 1.0 ? "text-amber-200" : "text-foreground/80";
 
       const mm = Math.floor((Number(g.secondsRemaining) || 0) / 60);
       const ss = String((Number(g.secondsRemaining) || 0) % 60).padStart(2, "0");
@@ -134,9 +121,7 @@ export default function NbaClient() {
       };
     });
 
-    // Strongest deviation first
     computed.sort((a, b) => b.abs - a.abs);
-
     return computed;
   }, [games]);
 
@@ -148,9 +133,7 @@ export default function NbaClient() {
             Labs • NBA
           </div>
 
-          <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">
-            Live Deviation Heat Map
-          </h1>
+          <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">Live Deviation Heat Map</h1>
 
           <p className="mt-4 max-w-3xl text-lg text-foreground/75">
             Highlights games performing materially above or below market expectation.

@@ -34,8 +34,7 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-// Deterministic generator so UI remains stable
-function makeLCG(seed = 42) {
+function makeLCG(seed = 2025) {
   let s = seed >>> 0;
   return () => {
     s = (1664525 * s + 1013904223) >>> 0;
@@ -43,80 +42,61 @@ function makeLCG(seed = 42) {
   };
 }
 
-function generateSlate(): GameClockState[] {
-  const rand = makeLCG(2025);
+function makeSlate(gameCount = 10): GameClockState[] {
+  const rand = makeLCG(20250219);
 
-  // Shuffle teams deterministically
-  const teams = [...NBA_TEAMS].sort(() => rand() - 0.5);
+  // deterministic shuffle (Fisher-Yates)
+  const teams = [...NBA_TEAMS];
+  for (let i = teams.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [teams[i], teams[j]] = [teams[j], teams[i]];
+  }
 
-  const games: GameClockState[] = [];
-  const gameCount = 10; // realistic slate size
+  const slate: GameClockState[] = [];
+  const pairs = Math.min(gameCount * 2, teams.length);
 
-  for (let i = 0; i < gameCount * 2; i += 2) {
-    const away = teams[i];
-    const home = teams[i + 1];
+  for (let i = 0; i < pairs; i += 2) {
+    const awayTeam = teams[i];
+    const homeTeam = teams[i + 1];
 
     const period = 1 + Math.floor(rand() * 4);
     const secondsRemaining = Math.floor(rand() * 720);
 
-    const closingSpreadHome = roundToHalf((rand() - 0.5) * 14); // -7..+7
-    const closingTotal = roundToHalf(214 + rand() * 30);        // 214..244
+    const closingSpreadHome = roundToHalf((rand() - 0.5) * 16); // -8..+8
+    const closingTotal = roundToHalf(212 + rand() * 34); // 212..246
 
     const progress =
-      ((period - 1) * 720 + (720 - secondsRemaining)) / (4 * 720);
+      ((period - 1) * 720 + (720 - secondsRemaining)) / (4 * 720); // 0..1
 
     const expectedTotalSoFar = closingTotal * progress;
-    const totalNoise = (rand() - 0.5) * 16;
-    const liveTotal = clamp(
-      Math.round(expectedTotalSoFar + totalNoise),
-      0,
-      260
-    );
+    const totalNoise = (rand() - 0.5) * 18; // +/-9
+    const liveTotalSoFar = clamp(Math.round(expectedTotalSoFar + totalNoise), 0, 260);
 
-    const marginNoise = (rand() - 0.5) * 12;
-    const expectedMarginSoFar =
-      (-closingSpreadHome) * (0.3 + 0.7 * progress);
+    const expectedMarginSoFar = (-closingSpreadHome) * (0.25 + 0.75 * progress);
+    const marginNoise = (rand() - 0.5) * 14; // +/-7
     const homeMargin = Math.round(expectedMarginSoFar + marginNoise);
 
-    const homeScore = clamp(
-      Math.round((liveTotal + homeMargin) / 2),
-      0,
-      200
-    );
-    const awayScore = clamp(liveTotal - homeScore, 0, 200);
+    const homeScore = clamp(Math.round((liveTotalSoFar + homeMargin) / 2), 0, 200);
+    const awayScore = clamp(liveTotalSoFar - homeScore, 0, 200);
 
-    const lateFactor = 0.6 + progress;
-    const marginInfluence =
-      clamp(homeMargin / 10, -2.5, 2.5) * lateFactor;
+    const lateFactor = 0.6 + progress; // more movement later
+    const marginInfluence = clamp(homeMargin / 10, -3, 3) * lateFactor;
+    const spreadNoise = (rand() - 0.5) * 2.8 * lateFactor;
 
-    const spreadNoise = (rand() - 0.5) * 2.5 * lateFactor;
-
-    const liveSpreadHome = roundToHalf(
-      closingSpreadHome - marginInfluence + spreadNoise
-    );
+    const liveSpreadHome = roundToHalf(closingSpreadHome - marginInfluence + spreadNoise);
 
     const possessionRoll = rand();
-    const possession =
-      possessionRoll < 0.45
-        ? "HOME"
-        : possessionRoll < 0.9
-        ? "AWAY"
-        : "UNKNOWN";
+    const possession: GameClockState["possession"] =
+      possessionRoll < 0.45 ? "HOME" : possessionRoll < 0.9 ? "AWAY" : "UNKNOWN";
 
     const strengthRoll = rand();
-    const strengthBucket =
-      strengthRoll < 0.2
-        ? "ELITE"
-        : strengthRoll < 0.5
-        ? "GOOD"
-        : strengthRoll < 0.8
-        ? "AVG"
-        : "WEAK";
+    const strengthBucket: GameClockState["strengthBucket"] =
+      strengthRoll < 0.2 ? "ELITE" : strengthRoll < 0.5 ? "GOOD" : strengthRoll < 0.8 ? "AVG" : "WEAK";
 
-    games.push({
-      gameId: `game-${i / 2 + 1}`,
-      awayTeam: away,
-      homeTeam: home,
+    slate.push({
+      gameId: `mock-${slate.length + 1}`,
+      homeTeam,
+      awayTeam,
       homeScore,
       awayScore,
       period,
@@ -125,17 +105,20 @@ function generateSlate(): GameClockState[] {
       closingSpreadHome,
       closingTotal,
       liveSpreadHome,
-      liveTotal,
+      liveTotal: roundToHalf(closingTotal + (rand() - 0.5) * 6),
       strengthBucket,
     });
   }
 
-  return games;
+  return slate;
 }
 
 export async function GET() {
-  return NextResponse.json(
-    { ok: true, items: generateSlate() },
-    { status: 200 }
-  );
+  try {
+    const items = makeSlate(10);
+    return NextResponse.json({ ok: true, items }, { status: 200 });
+  } catch {
+    // Always JSON (never HTML), and user-safe.
+    return NextResponse.json({ ok: false, items: [], error: "Unavailable." }, { status: 200 });
+  }
 }
