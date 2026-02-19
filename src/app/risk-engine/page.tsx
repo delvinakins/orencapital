@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import JournalPanel from "@/components/JournalPanel";
 import ProLock from "@/components/ProLock";
+import JournalQuickAdd from "@/components/journal/JournalQuickAdd";
 
 type SizingMode = "constant-fraction" | "fixed-dollar";
 type Side = "long" | "short";
@@ -221,8 +222,8 @@ function Card({
     tone === "good"
       ? "border-emerald-800/60"
       : tone === "warn"
-        ? "border-amber-800/60"
-        : "border-[color:var(--border)]";
+      ? "border-amber-800/60"
+      : "border-[color:var(--border)]";
 
   return (
     <div className={`oc-glass rounded-xl p-5 sm:p-6 ${toneClass}`}>
@@ -805,7 +806,7 @@ export default function RiskEnginePage() {
           </section>
         </ProLock>
 
-        {/* Journal: when we build it, match glass (oc-glass) inside JournalPanel */}
+        {/* Journal panel (existing) */}
         <JournalPanel
           isPro={isPro}
           snapshot={{
@@ -822,6 +823,9 @@ export default function RiskEnginePage() {
             savedFrom: "risk-engine",
           }}
         />
+
+        {/* OpenAI: Natural-language → Journal preview/apply/save */}
+        <JournalQuickAdd />
       </div>
     </main>
   );
