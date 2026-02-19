@@ -87,6 +87,106 @@ function toneFromEV(ev: number | null): "neutral" | "accent" | "warn" {
   return "neutral";
 }
 
+/* ---------------- Tooltips (calm, non-jargony) ---------------- */
+
+function RTipBody() {
+  return (
+    <div className="space-y-2 max-w-sm">
+      <div className="font-semibold">What is “R”?</div>
+      <div className="text-foreground/70">
+        <span className="font-semibold">R</span> means “risk unit.”
+      </div>
+      <div className="text-foreground/70">
+        Your <span className="font-semibold">stop</span> defines how much you’re willing to lose if you’re wrong.
+        That amount is <span className="font-semibold">1R</span>.
+      </div>
+      <div className="text-foreground/70">
+        Example: entry 100, stop 98 → risk is 2 points. If you exit at 104, profit is 4 points →{" "}
+        <span className="font-semibold">+2R</span>.
+      </div>
+      <div className="text-foreground/70">
+        R lets you compare trades fairly even when position size changes.
+      </div>
+    </div>
+  );
+}
+
+function EVTipBody() {
+  return (
+    <div className="space-y-2 max-w-sm">
+      <div className="font-semibold">EV (average outcome)</div>
+      <div className="text-foreground/70">
+        EV is your <span className="font-semibold">average result per trade</span>, measured in R.
+      </div>
+      <div className="text-foreground/70">
+        Over time: positive EV trends upward; negative EV trends downward.
+      </div>
+      <div className="text-foreground/70">
+        This isn’t a guarantee—just the long-run average of what you’ve actually logged.
+      </div>
+    </div>
+  );
+}
+
+function StopTipBody() {
+  return (
+    <div className="space-y-2 max-w-xs">
+      <div>
+        <span className="font-semibold">Stop</span>: the price level that invalidates your trade idea.
+      </div>
+      <div className="text-foreground/70">
+        It defines where you are wrong and prevents small losses from becoming large ones.
+      </div>
+      <div className="text-foreground/70">
+        It also defines <span className="font-semibold">1R</span> (your risk unit), so Oren can measure consistency.
+      </div>
+    </div>
+  );
+}
+
+function StrategyTipBody() {
+  return (
+    <div className="space-y-2 max-w-sm">
+      <div className="font-semibold">Strategy (optional label)</div>
+      <div className="text-foreground/70">
+        Strategy is simply a short tag you reuse so Oren can group results.
+      </div>
+      <div className="text-foreground/70">
+        Keep it plain. Examples:
+        <ul className="mt-2 list-disc pl-5 space-y-1">
+          <li>“Breakout”</li>
+          <li>“Pullback”</li>
+          <li>“Reversal”</li>
+          <li>“Trend day”</li>
+          <li>“Earnings”</li>
+          <li>
+            “ORB” <span className="text-foreground/60">(Opening Range Breakout)</span>
+          </li>
+        </ul>
+      </div>
+      <div className="text-foreground/70">
+        The goal is consistency: use the same label for the same idea.
+      </div>
+    </div>
+  );
+}
+
+function TradeIdeaTipBody() {
+  return (
+    <div className="space-y-2 max-w-sm">
+      <div className="font-semibold">Trade idea</div>
+      <div className="text-foreground/70">
+        This is your “why.” A plain-language sentence about what you believed would happen—and what would prove you wrong.
+      </div>
+      <div className="text-foreground/70">
+        Example: “Price reclaimed VWAP; I expected a push to highs. If it loses VWAP and fails to reclaim, I’m out.”
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- UI atoms ---------------- */
+
 function Card({
   label,
   value,
@@ -186,23 +286,6 @@ function Select({
   );
 }
 
-function StopTipBody() {
-  return (
-    <div className="space-y-2 max-w-xs">
-      <div>
-        <span className="font-semibold">Stop</span>: the price level that invalidates your trade idea.
-      </div>
-      <div className="text-foreground/70">
-        It defines where you are wrong and prevents small losses from becoming large ones.
-      </div>
-      <div className="text-foreground/70">
-        It also defines <span className="font-semibold">1R</span> (your risk per trade), so Oren can measure expectancy and
-        consistency.
-      </div>
-    </div>
-  );
-}
-
 export default function JournalClient() {
   const [loading, setLoading] = useState(true);
   const [isPro, setIsPro] = useState(false);
@@ -212,7 +295,7 @@ export default function JournalClient() {
 
   const [err, setErr] = useState<string | null>(null);
 
-  // Entry form state (simple + calm)
+  // Entry form state
   const [symbol, setSymbol] = useState("");
   const [instrument, setInstrument] = useState<InstrumentType>("stock");
   const [side, setSide] = useState<TradeSide>("long");
@@ -267,9 +350,8 @@ export default function JournalClient() {
     const winRate = tracked > 0 ? wins / tracked : null;
     const avgR = tracked > 0 ? rs.reduce((a, b) => a + b, 0) / tracked : null;
     const totalR = tracked > 0 ? rs.reduce((a, b) => a + b, 0) : null;
-    const largestLoss = tracked > 0 ? Math.min(...rs) : null;
 
-    // Calm: EV ~ avgR under the model (losers are negative R)
+    // EV = average outcome per trade (in R)
     const ev = avgR;
 
     return {
@@ -279,7 +361,6 @@ export default function JournalClient() {
       avgR,
       ev,
       totalR,
-      largestLoss,
     };
   }, [trades]);
 
@@ -315,7 +396,6 @@ export default function JournalClient() {
       setSavedMsg("Trade saved.");
       setSaving(false);
 
-      // reset minimal fields
       setExit("");
       setNotes("");
 
@@ -333,22 +413,25 @@ export default function JournalClient() {
         <Card
           label="Win Rate"
           value={fmtPct01(summary.winRate, 1)}
-          sub={summary.tracked ? `${summary.tracked} tracked trades` : "—"}
-          tip="Wins / tracked trades. Trades are tracked when result R can be computed or is stored."
+          sub={summary.tracked ? `${summary.tracked} trades with R` : "—"}
+          tip={
+            <div className="space-y-2 max-w-sm">
+              <div className="font-semibold">Win rate</div>
+              <div className="text-foreground/70">
+                Computed from trades where Oren can measure the result in <span className="font-semibold">R</span>.
+              </div>
+              <div className="text-foreground/70">If a trade is missing stop or exit, it may not count here yet.</div>
+            </div>
+          }
         />
-        <Card label="Avg R" value={fmtR(summary.avgR, 3)} tip="Average R multiple across tracked trades." />
-        <Card
-          label="EV"
-          value={fmtR(summary.ev, 3)}
-          tone={toneFromEV(summary.ev)}
-          tip="Expectancy (R per trade). For now, EV is measured as average realized R."
-        />
-        <Card label="Total R" value={fmtR(summary.totalR, 2)} tip="Sum of R across tracked trades." />
+        <Card label="Avg R" value={fmtR(summary.avgR, 3)} tip={<RTipBody />} />
+        <Card label="EV (average outcome)" value={fmtR(summary.ev, 3)} tone={toneFromEV(summary.ev)} tip={<EVTipBody />} />
+        <Card label="Total R" value={fmtR(summary.totalR, 2)} tip={<RTipBody />} />
         <Card
           label="Trades Logged"
           value={`${summary.tradesLogged}`}
           sub={summary.tradesLogged ? "All trades" : "—"}
-          tip="Total logged trades (including those without enough info to compute R)."
+          tip="Total logged trades. Some may be missing fields needed for R calculations."
         />
       </section>
 
@@ -395,23 +478,34 @@ export default function JournalClient() {
           />
 
           <Input label="Entry Price" value={entry} onChange={setEntry} type="number" placeholder="190.25" />
+
           <Input
             label="Stop Price"
             value={stop}
             onChange={setStop}
             type="number"
             placeholder="187.50"
-            tip="The price level that invalidates your trade idea. It defines 1R."
+            tip={<StopTipBody />}
           />
+
           <Input label="Exit Price" value={exit} onChange={setExit} type="number" placeholder="194.10" />
 
-          <Input label="Strategy" value={strategy} onChange={setStrategy} placeholder="ORB / Trend / Breakout" />
+          <Input
+            label="Strategy (optional)"
+            value={strategy}
+            onChange={setStrategy}
+            placeholder="Breakout / Pullback / Reversal"
+            tip={<StrategyTipBody />}
+          />
+
           <div className="sm:col-span-2">
-            <label className="text-sm text-foreground/70">Notes</label>
+            <label className="text-sm text-foreground/70">
+              <Tooltip label="Trade idea (notes)">{<TradeIdeaTipBody />}</Tooltip>
+            </label>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="What was the thesis? What would invalidate it? What did you execute well/poorly?"
+              placeholder="Example: what you expected, what would prove you wrong, and how you executed."
               className="mt-2 min-h-[44px] w-full resize-y rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-3 text-foreground outline-none placeholder:text-foreground/30"
             />
           </div>
@@ -427,7 +521,9 @@ export default function JournalClient() {
             {saving ? "Saving…" : "Save Trade"}
           </button>
 
-          <div className="text-xs text-foreground/60">Tip: For analytics, include exit + stop so R can be computed.</div>
+          <div className="text-xs text-foreground/60">
+            Tip: To calculate <Tooltip label="R">{<RTipBody />}</Tooltip>, include entry + stop + exit.
+          </div>
         </div>
 
         {(err || savedMsg) && (
@@ -449,7 +545,7 @@ export default function JournalClient() {
       {/* Strategy Breakdown (Pro) */}
       <ProLock
         feature="Strategy breakdown"
-        description="See win rate, average R, and total R by strategy. This is where edge becomes measurable."
+        description="See your results grouped by strategy labels. Keep labels simple and consistent."
         mode="overlay"
       >
         <section className="oc-glass rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
@@ -457,7 +553,7 @@ export default function JournalClient() {
             <div>
               <div className="text-sm font-semibold tracking-tight">Strategy Breakdown</div>
               <div className="mt-1 text-sm text-foreground/70">
-                Performance by strategy. Calm, data-forward, no storytelling.
+                Grouped results by your strategy labels. Calm view, no hype.
               </div>
             </div>
 
@@ -466,10 +562,10 @@ export default function JournalClient() {
                 <div className="space-y-2 max-w-sm">
                   <div className="font-semibold">Tracked trades</div>
                   <div className="text-foreground/70">
-                    A trade is included in strategy stats when <span className="font-semibold">result R</span> is stored or can
-                    be computed from <span className="font-semibold">entry, stop, exit</span>.
+                    A trade shows up here when Oren can measure the result in <span className="font-semibold">R</span>{" "}
+                    (stored or computed from entry/stop/exit).
                   </div>
-                  <div className="text-foreground/70">Sorted by Total R (highest first).</div>
+                  <div className="text-foreground/70">Next step: we’ll hide tiny samples by default (e.g., &lt; 5 trades).</div>
                 </div>
               </Tooltip>
             </div>
@@ -480,18 +576,26 @@ export default function JournalClient() {
           ) : !isPro ? (
             <div className="text-sm text-foreground/70">Upgrade to unlock strategy analytics.</div>
           ) : !strategyStats || strategyStats.length === 0 ? (
-            <div className="text-sm text-foreground/70">No strategies yet. Add a strategy label to trades to populate this.</div>
+            <div className="text-sm text-foreground/70">
+              No strategies yet. Add a strategy label to trades to populate this.
+            </div>
           ) : (
             <div className="overflow-x-auto rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]">
               <table className="min-w-[820px] w-full text-sm">
                 <thead>
                   <tr className="text-left text-foreground/60">
-                    <th className="px-4 py-3 font-medium">Strategy</th>
+                    <th className="px-4 py-3 font-medium">
+                      <Tooltip label="Strategy">{<StrategyTipBody />}</Tooltip>
+                    </th>
                     <th className="px-4 py-3 font-medium">Trades</th>
                     <th className="px-4 py-3 font-medium">Tracked</th>
                     <th className="px-4 py-3 font-medium">Win Rate</th>
-                    <th className="px-4 py-3 font-medium">Avg R</th>
-                    <th className="px-4 py-3 font-medium">Total R</th>
+                    <th className="px-4 py-3 font-medium">
+                      <Tooltip label="Avg R">{<RTipBody />}</Tooltip>
+                    </th>
+                    <th className="px-4 py-3 font-medium">
+                      <Tooltip label="Total R">{<RTipBody />}</Tooltip>
+                    </th>
                     <th className="px-4 py-3 font-medium">Largest Loss</th>
                   </tr>
                 </thead>
@@ -543,12 +647,12 @@ export default function JournalClient() {
         </section>
       </ProLock>
 
-      {/* Trades Table (basic) */}
+      {/* Trades Table */}
       <section className="oc-glass rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
         <div className="mb-4 flex items-end justify-between gap-4">
           <div>
             <div className="text-sm font-semibold tracking-tight">Trades</div>
-            <div className="mt-1 text-sm text-foreground/70">Your most recent trades.</div>
+            <div className="mt-1 text-sm text-foreground/70">Most recent trades.</div>
           </div>
 
           <button type="button" onClick={refresh} className="oc-btn oc-btn-secondary">
@@ -569,10 +673,16 @@ export default function JournalClient() {
                   <th className="px-4 py-3 font-medium">Instrument</th>
                   <th className="px-4 py-3 font-medium">Side</th>
                   <th className="px-4 py-3 font-medium">Entry</th>
-                  <th className="px-4 py-3 font-medium">Stop</th>
+                  <th className="px-4 py-3 font-medium">
+                    <Tooltip label="Stop">{<StopTipBody />}</Tooltip>
+                  </th>
                   <th className="px-4 py-3 font-medium">Exit</th>
-                  <th className="px-4 py-3 font-medium">Result (R)</th>
-                  <th className="px-4 py-3 font-medium">Strategy</th>
+                  <th className="px-4 py-3 font-medium">
+                    <Tooltip label="Result (R)">{<RTipBody />}</Tooltip>
+                  </th>
+                  <th className="px-4 py-3 font-medium">
+                    <Tooltip label="Strategy">{<StrategyTipBody />}</Tooltip>
+                  </th>
                   <th className="px-4 py-3 font-medium">Created</th>
                 </tr>
               </thead>
