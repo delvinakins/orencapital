@@ -42,9 +42,7 @@ function DeviationTip() {
       <div className="text-foreground/70">
         Measures how far the live performance has moved from market expectation.
       </div>
-      <div className="text-foreground/70">
-        Higher values indicate a more unusual move.
-      </div>
+      <div className="text-foreground/70">Higher values indicate a more unusual move.</div>
     </div>
   );
 }
@@ -77,27 +75,25 @@ export default function NbaClient() {
   }, []);
 
   const rows = useMemo(() => {
-    return games.map((g: any) => {
+    const computed = games.map((g: any) => {
       const result = computeDeviation(g, { spreadIndex });
 
-      const deviation = Number.isFinite(result.zSpread)
-        ? result.zSpread
-        : 0;
-
+      const deviation = Number.isFinite(result.zSpread) ? result.zSpread : 0;
       const abs = Math.abs(deviation);
 
       const tone =
         abs >= 1.5
           ? "text-[color:var(--accent)]"
           : abs >= 1.0
-          ? "text-amber-200"
-          : "text-foreground/80";
+            ? "text-amber-200"
+            : "text-foreground/80";
 
       const mm = Math.floor((Number(g.secondsRemaining) || 0) / 60);
       const ss = String((Number(g.secondsRemaining) || 0) % 60).padStart(2, "0");
 
       return {
         key: String(g.gameId ?? `${g.awayTeam}-${g.homeTeam}`),
+        abs,
         matchup: `${g.awayTeam ?? "—"} @ ${g.homeTeam ?? "—"}`,
         clock: `P${g.period ?? "—"} • ${mm}:${ss}`,
         live: fmtNum(g.liveSpreadHome, 1),
@@ -106,6 +102,11 @@ export default function NbaClient() {
         tone,
       };
     });
+
+    // Strongest deviation first (calm sorting, no extra UI controls yet)
+    computed.sort((a, b) => b.abs - a.abs);
+
+    return computed;
   }, [games]);
 
   return (
@@ -150,29 +151,17 @@ export default function NbaClient() {
                 <tbody>
                   {rows.map((r) => (
                     <tr key={r.key} className="border-t border-[color:var(--border)]">
-                      <td className="px-4 py-3 font-medium text-foreground">
-                        {r.matchup}
-                      </td>
-                      <td className="px-4 py-3 text-foreground/80">
-                        {r.clock}
-                      </td>
-                      <td className="px-4 py-3 text-foreground/80">
-                        {r.live}
-                      </td>
-                      <td className="px-4 py-3 text-foreground/80">
-                        {r.close}
-                      </td>
-                      <td className={`px-4 py-3 font-medium ${r.tone}`}>
-                        {r.deviationText}
-                      </td>
+                      <td className="px-4 py-3 font-medium text-foreground">{r.matchup}</td>
+                      <td className="px-4 py-3 text-foreground/80">{r.clock}</td>
+                      <td className="px-4 py-3 text-foreground/80">{r.live}</td>
+                      <td className="px-4 py-3 text-foreground/80">{r.close}</td>
+                      <td className={`px-4 py-3 font-medium ${r.tone}`}>{r.deviationText}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
 
-              <div className="mt-4 text-sm text-foreground/55">
-                Lab preview. All signals require review.
-              </div>
+              <div className="mt-4 text-sm text-foreground/55">Lab preview. All signals require review.</div>
             </div>
           )}
         </section>
