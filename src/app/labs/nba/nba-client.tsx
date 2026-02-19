@@ -65,18 +65,7 @@ function DeviationTip() {
   );
 }
 
-function ViewTip() {
-  return (
-    <div className="max-w-sm space-y-2">
-      <div className="font-semibold">View</div>
-      <div className="text-foreground/70">
-        Heat map is a fast scan. Table is for detail.
-      </div>
-    </div>
-  );
-}
-
-type ViewMode = "heatmap" | "table";
+type ViewMode = "table" | "treemap";
 
 type Row = {
   key: string;
@@ -89,16 +78,110 @@ type Row = {
   deviationText: string;
   toneText: string;
   directionLabel: string;
-  tileTone: "accent" | "warn" | "neutral";
-  scale: number;
+  tone: "accent" | "warn" | "neutral";
 };
+
+/** -------- Treemap (squarify) layout (no deps) -------- */
+type Rect = { x: number; y: number; w: number; h: number };
+type TreeItem = {
+  id: string;
+  value: number; // area weight
+  row: Row;
+};
+
+function sum(items: TreeItem[]) {
+  return items.reduce((a, b) => a + b.value, 0);
+}
+
+function worstAspect(row: TreeItem[], side: number) {
+  if (row.length === 0) return Infinity;
+  const s = sum(row);
+  let minV = Infinity;
+  let maxV = 0;
+  for (const it of row) {
+    minV = Math.min(minV, it.value);
+    maxV = Math.max(maxV, it.value);
+  }
+  // standard squarify heuristic
+  const s2 = s * s;
+  const side2 = side * side;
+  return Math.max((side2 * maxV) / s2, s2 / (side2 * minV));
+}
+
+function layoutRow(row: TreeItem[], rect: Rect) {
+  const out: Array<{ item: TreeItem; rect: Rect }> = [];
+  const s = sum(row);
+  if (s <= 0) return out;
+
+  const horizontal = rect.w >= rect.h; // lay along the shorter side
+  if (horizontal) {
+    // row height
+    const h = s / rect.w;
+    let x = rect.x;
+    for (const it of row) {
+      const w = it.value / h;
+      out.push({ item: it, rect: { x, y: rect.y, w, h } });
+      x += w;
+    }
+    return { placed: out, remaining: { x: rect.x, y: rect.y + h, w: rect.w, h: rect.h - h } };
+  } else {
+    // column width
+    const w = s / rect.h;
+    let y = rect.y;
+    for (const it of row) {
+      const h = it.value / w;
+      out.push({ item: it, rect: { x: rect.x, y, w, h } });
+      y += h;
+    }
+    return { placed: out, remaining: { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h } };
+  }
+}
+
+function squarify(items: TreeItem[], rect: Rect) {
+  const placed: Array<{ item: TreeItem; rect: Rect }> = [];
+  const remaining = [...items].sort((a, b) => b.value - a.value);
+
+  let r = { ...rect };
+  let row: TreeItem[] = [];
+
+  while (remaining.length > 0) {
+    const next = remaining[0];
+    const side = Math.min(r.w, r.h);
+
+    if (row.length === 0) {
+      row.push(next);
+      remaining.shift();
+      continue;
+    }
+
+    const currentWorst = worstAspect(row, side);
+    const nextWorst = worstAspect([...row, next], side);
+
+    if (nextWorst <= currentWorst) {
+      row.push(next);
+      remaining.shift();
+    } else {
+      const res = layoutRow(row, r);
+      placed.push(...res.placed);
+      r = res.remaining;
+      row = [];
+    }
+  }
+
+  if (row.length > 0) {
+    const res = layoutRow(row, r);
+    placed.push(...res.placed);
+  }
+
+  return placed;
+}
 
 export default function NbaClient() {
   const [games, setGames] = useState<GameClockState[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [view, setView] = useState<ViewMode>("heatmap");
+  const [view, setView] = useState<ViewMode>("table");
 
   async function load() {
     setLoadError(null);
@@ -153,22 +236,13 @@ export default function NbaClient() {
       const deviation = Number.isFinite(result.zSpread) ? result.zSpread : 0;
       const abs = Math.abs(deviation);
 
-      const tileTone: Row["tileTone"] = abs >= 1.5 ? "accent" : abs >= 1.0 ? "warn" : "neutral";
+      const tone: Row["tone"] = abs >= 1.5 ? "accent" : abs >= 1.0 ? "warn" : "neutral";
       const toneText =
-        tileTone === "accent"
-          ? "text-[color:var(--accent)]"
-          : tileTone === "warn"
-            ? "text-amber-200"
-            : "text-foreground/80";
-
-      // Subtle tile growth based on signal strength.
-      // Capped to avoid "gamey" UI and layout jitter.
-      const scale = 1 + clamp(abs, 0, 2.0) * 0.06; // 1.00 .. 1.12
+        tone === "accent" ? "text-[color:var(--accent)]" : tone === "warn" ? "text-amber-200" : "text-foreground/80";
 
       const mm = Math.floor((Number(g.secondsRemaining) || 0) / 60);
       const ss = String((Number(g.secondsRemaining) || 0) % 60).padStart(2, "0");
 
-      // Plain direction label (no jargon)
       const directionLabel =
         deviation >= 0.35 ? "above expectation" : deviation <= -0.35 ? "below expectation" : "near expectation";
 
@@ -183,8 +257,7 @@ export default function NbaClient() {
         deviationText: fmtNum(deviation, 2),
         toneText,
         directionLabel,
-        tileTone,
-        scale,
+        tone,
       };
     });
 
@@ -192,24 +265,39 @@ export default function NbaClient() {
     return computed;
   }, [games]);
 
-  function HeatLegend() {
-    return (
-      <div className="flex flex-wrap items-center gap-3 text-sm text-foreground/70">
-        <div className="flex items-center gap-2">
-          <span className="inline-block h-2.5 w-2.5 rounded-full bg-[color:var(--accent)]/80" />
-          <span>unusual move</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-300/80" />
-          <span>worth watching</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="inline-block h-2.5 w-2.5 rounded-full bg-white/30" />
-          <span>typical range</span>
-        </div>
-      </div>
-    );
-  }
+  const treemap = useMemo(() => {
+    // Container units: 1000x520 "virtual pixels", rendered with % via absolute positioning.
+    const W = 1000;
+    const H = 520;
+
+    // Weight by abs deviation, but keep the map readable:
+    // - give every game a baseline weight so small signals still show
+    // - cap the influence of very large values
+    const items: TreeItem[] = rows.map((r) => {
+      const capped = clamp(r.abs, 0, 2.2);
+      const weight = 1 + capped * 3.0; // baseline + scaled
+      return { id: r.key, value: weight, row: r };
+    });
+
+    const total = items.reduce((a, b) => a + b.value, 0);
+    if (total <= 0) return [];
+
+    // Convert weights into areas inside W*H
+    const area = W * H;
+    const scaled = items.map((it) => ({ ...it, value: (it.value / total) * area }));
+
+    const placed = squarify(scaled, { x: 0, y: 0, w: W, h: H });
+
+    // Convert to percentages for CSS positioning
+    return placed.map(({ item, rect }) => {
+      const left = (rect.x / W) * 100;
+      const top = (rect.y / H) * 100;
+      const width = (rect.w / W) * 100;
+      const height = (rect.h / H) * 100;
+
+      return { item, left, top, width, height };
+    });
+  }, [rows]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -227,39 +315,27 @@ export default function NbaClient() {
             </p>
           </div>
 
-          <div className="flex flex-col gap-3 sm:items-end">
-            <div className="inline-flex w-full sm:w-auto rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-1">
-              <button
-                type="button"
-                onClick={() => setView("heatmap")}
-                className={cn(
-                  "flex-1 sm:flex-none px-4 py-2 text-sm rounded-lg transition",
-                  view === "heatmap"
-                    ? "bg-white text-slate-950"
-                    : "text-foreground/80 hover:bg-white/5"
-                )}
-              >
-                Heat map
-              </button>
-              <button
-                type="button"
-                onClick={() => setView("table")}
-                className={cn(
-                  "flex-1 sm:flex-none px-4 py-2 text-sm rounded-lg transition",
-                  view === "table"
-                    ? "bg-white text-slate-950"
-                    : "text-foreground/80 hover:bg-white/5"
-                )}
-              >
-                Table
-              </button>
-            </div>
-
-            <div className="text-sm text-foreground/60">
-              <Tooltip label="View">
-                <ViewTip />
-              </Tooltip>
-            </div>
+          <div className="inline-flex w-full sm:w-auto rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-1">
+            <button
+              type="button"
+              onClick={() => setView("table")}
+              className={cn(
+                "flex-1 sm:flex-none px-4 py-2 text-sm rounded-lg transition",
+                view === "table" ? "bg-white text-slate-950" : "text-foreground/80 hover:bg-white/5"
+              )}
+            >
+              Table
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("treemap")}
+              className={cn(
+                "flex-1 sm:flex-none px-4 py-2 text-sm rounded-lg transition",
+                view === "treemap" ? "bg-white text-slate-950" : "text-foreground/80 hover:bg-white/5"
+              )}
+            >
+              Treemap
+            </button>
           </div>
         </div>
 
@@ -268,71 +344,7 @@ export default function NbaClient() {
             <div className="text-foreground/70">Loading…</div>
           ) : rows.length === 0 ? (
             <div className="text-foreground/70">{loadError ?? "No games available."}</div>
-          ) : view === "heatmap" ? (
-            <div className="space-y-5">
-              <HeatLegend />
-
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {rows.map((r) => {
-                  const tileClass =
-                    r.tileTone === "accent"
-                      ? "border-[color:var(--accent)]/30 bg-[color:var(--accent)]/8 shadow-[0_0_0_1px_rgba(43,203,119,0.08)]"
-                      : r.tileTone === "warn"
-                        ? "border-amber-800/50 bg-amber-900/10"
-                        : "border-[color:var(--border)] bg-white/2";
-
-                  return (
-                    <div
-                      key={r.key}
-                      className={cn(
-                        "rounded-2xl border p-5",
-                        "transition-transform duration-300 ease-out",
-                        "hover:-translate-y-0.5",
-                        tileClass
-                      )}
-                      style={{ transform: `scale(${r.scale})` }}
-                      title={`${r.matchup} • ${r.clock}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-base font-semibold tracking-tight text-foreground">
-                            {r.matchup}
-                          </div>
-                          <div className="mt-1 text-sm text-foreground/65">{r.clock}</div>
-                        </div>
-
-                        <div className={cn("text-sm font-semibold", r.toneText)}>
-                          {r.directionLabel}
-                        </div>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                        <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-2">
-                          <div className="text-xs text-foreground/60">Live (home)</div>
-                          <div className="mt-1 font-semibold text-foreground">{r.live}</div>
-                        </div>
-                        <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-2">
-                          <div className="text-xs text-foreground/60">Close (home)</div>
-                          <div className="mt-1 font-semibold text-foreground">{r.close}</div>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 flex items-center justify-between text-sm">
-                        <div className="text-foreground/60">
-                          <Tooltip label="Deviation">
-                            <DeviationTip />
-                          </Tooltip>
-                        </div>
-                        <div className={cn("font-semibold", r.toneText)}>{r.deviationText}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="text-sm text-foreground/55">Lab preview. All signals require review.</div>
-            </div>
-          ) : (
+          ) : view === "table" ? (
             <div className="overflow-x-auto">
               <table className="min-w-[960px] w-full text-[15px]">
                 <thead>
@@ -363,6 +375,102 @@ export default function NbaClient() {
               </table>
 
               <div className="mt-4 text-sm text-foreground/55">Lab preview. All signals require review.</div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3 text-sm text-foreground/70">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-[color:var(--accent)]/80" />
+                  <span>unusual move</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-300/80" />
+                  <span>worth watching</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full bg-white/30" />
+                  <span>typical range</span>
+                </div>
+              </div>
+
+              <div className="relative w-full overflow-hidden rounded-2xl border border-[color:var(--border)] bg-black/20">
+                {/* fixed height keeps layout stable; responsive on larger screens */}
+                <div className="relative h-[520px]">
+                  {treemap.map((t) => {
+                    const r = t.item.row;
+
+                    const tileClass =
+                      r.tone === "accent"
+                        ? "border-[color:var(--accent)]/30 bg-[color:var(--accent)]/10 shadow-[0_0_0_1px_rgba(43,203,119,0.08)]"
+                        : r.tone === "warn"
+                          ? "border-amber-800/50 bg-amber-900/10"
+                          : "border-white/10 bg-white/5";
+
+                    // Hide extra detail if the tile is too small
+                    const showDetails = t.width >= 14 && t.height >= 14;
+
+                    return (
+                      <div
+                        key={t.item.id}
+                        className={cn(
+                          "absolute rounded-xl border",
+                          "p-3",
+                          "transition-[filter,transform] duration-200",
+                          "hover:brightness-110"
+                        )}
+                        style={{
+                          left: `${t.left}%`,
+                          top: `${t.top}%`,
+                          width: `${t.width}%`,
+                          height: `${t.height}%`,
+                        }}
+                        title={`${r.matchup} • ${r.clock} • ${r.directionLabel}`}
+                      >
+                        <div className={cn("h-full w-full", tileClass, "rounded-xl")}>
+                          <div className="h-full w-full p-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold text-foreground">
+                                  {r.matchup}
+                                </div>
+                                <div className="mt-1 text-xs text-foreground/65">{r.clock}</div>
+                              </div>
+
+                              <div className={cn("text-xs font-semibold", r.toneText)}>
+                                {r.directionLabel}
+                              </div>
+                            </div>
+
+                            {showDetails ? (
+                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                                <div className="rounded-lg border border-white/10 bg-black/10 px-2 py-1.5">
+                                  <div className="text-foreground/60">Live</div>
+                                  <div className="mt-0.5 font-semibold text-foreground">{r.live}</div>
+                                </div>
+                                <div className="rounded-lg border border-white/10 bg-black/10 px-2 py-1.5">
+                                  <div className="text-foreground/60">Close</div>
+                                  <div className="mt-0.5 font-semibold text-foreground">{r.close}</div>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            <div className="mt-3 flex items-center justify-between text-xs">
+                              <div className="text-foreground/60">
+                                <Tooltip label="Deviation">
+                                  <DeviationTip />
+                                </Tooltip>
+                              </div>
+                              <div className={cn("font-semibold", r.toneText)}>{r.deviationText}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="text-sm text-foreground/55">Lab preview. All signals require review.</div>
             </div>
           )}
         </section>
