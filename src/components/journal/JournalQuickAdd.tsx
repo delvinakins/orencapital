@@ -77,6 +77,12 @@ function StopTipBody() {
   );
 }
 
+type ApiErrorPayload = {
+  error?: string;
+  code?: string;
+  requestId?: string;
+};
+
 export default function JournalQuickAdd() {
   const [text, setText] = useState("");
   const [parsing, setParsing] = useState(false);
@@ -87,11 +93,16 @@ export default function JournalQuickAdd() {
   const [error, setError] = useState<string | null>(null);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
 
+  // NEW: user-safe reference id from server
+  const [refId, setRefId] = useState<string | null>(null);
+
   const prefillUrl = useMemo(() => (trade ? buildJournalPrefillUrl(trade) : "/journal"), [trade]);
 
   async function onParse() {
     setError(null);
     setSavedMsg(null);
+    setRefId(null);
+
     setParsing(true);
     setWarnings([]);
     setTrade(null);
@@ -103,19 +114,28 @@ export default function JournalQuickAdd() {
         body: JSON.stringify({ text }),
       });
 
-      const j = await res.json().catch(() => null);
+      const j = (await res.json().catch(() => null)) as any;
 
       if (!res.ok) {
-        setError(j?.error ?? "Parse failed");
+        const payload = (j ?? {}) as ApiErrorPayload;
+
+        // Prefer server-safe message; fallback only if needed.
+        setError(payload.error ?? "AI parsing failed. Please try again.");
+
+        if (payload.requestId) setRefId(payload.requestId);
+
         setParsing(false);
         return;
       }
 
-      setTrade(j.trade ?? null);
-      setWarnings(Array.isArray(j.warnings) ? j.warnings : []);
+      setTrade(j?.trade ?? null);
+      setWarnings(Array.isArray(j?.warnings) ? j.warnings : []);
+      if (j?.requestId) setRefId(String(j.requestId));
+
       setParsing(false);
     } catch (e: any) {
-      setError(e?.message ?? "Parse failed");
+      // Network-level / browser-level error — keep it calm.
+      setError("Could not reach AI parsing service. Please try again.");
       setParsing(false);
     }
   }
@@ -125,6 +145,7 @@ export default function JournalQuickAdd() {
 
     setError(null);
     setSavedMsg(null);
+    setRefId(null);
     setSaving(true);
 
     try {
@@ -143,18 +164,20 @@ export default function JournalQuickAdd() {
         }),
       });
 
-      const j = await res.json().catch(() => null);
+      const j = (await res.json().catch(() => null)) as any;
 
       if (!res.ok) {
-        setError(j?.error ?? "Save failed");
+        const payload = (j ?? {}) as ApiErrorPayload;
+        setError(payload.error ?? "Save failed");
+        if (payload.requestId) setRefId(payload.requestId);
         setSaving(false);
         return;
       }
 
       setSavedMsg("Saved to Journal.");
       setSaving(false);
-    } catch (e: any) {
-      setError(e?.message ?? "Save failed");
+    } catch {
+      setError("Save failed. Please try again.");
       setSaving(false);
     }
   }
@@ -173,12 +196,8 @@ export default function JournalQuickAdd() {
           <Tooltip label="Parsing rules">
             <div className="space-y-2 max-w-sm">
               <div className="font-semibold">Conservative parsing</div>
-              <div className="text-foreground/70">
-                If a value isn’t explicitly stated, it will be left blank. No guessing.
-              </div>
-              <div className="text-foreground/70">
-                Tip: include symbol, side, entry, stop, and optionally exit.
-              </div>
+              <div className="text-foreground/70">If a value isn’t explicitly stated, it will be left blank. No guessing.</div>
+              <div className="text-foreground/70">Tip: include symbol, side, entry, stop, and optionally exit.</div>
             </div>
           </Tooltip>
         </div>
@@ -230,12 +249,15 @@ export default function JournalQuickAdd() {
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {error && (
               <div className="rounded-lg border border-amber-800/60 bg-[color:var(--card)] px-4 py-3 text-sm text-amber-200">
-                {error}
+                <div>{error}</div>
+                {refId && <div className="mt-1 text-[11px] text-foreground/60">Ref: {refId}</div>}
               </div>
             )}
+
             {savedMsg && (
               <div className="rounded-lg border border-[color:var(--accent)]/45 bg-[color:var(--card)] px-4 py-3 text-sm text-[color:var(--accent)]">
-                {savedMsg}
+                <div>{savedMsg}</div>
+                {refId && <div className="mt-1 text-[11px] text-foreground/60">Ref: {refId}</div>}
               </div>
             )}
           </div>
@@ -308,6 +330,8 @@ export default function JournalQuickAdd() {
                 </div>
               </div>
             )}
+
+            {refId && <div className="mt-3 text-[11px] text-foreground/50">Ref: {refId}</div>}
           </div>
         )}
       </div>

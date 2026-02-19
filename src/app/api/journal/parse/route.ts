@@ -42,7 +42,51 @@ function normalizeNumber(x: unknown): number | null {
   return n;
 }
 
+function reqId() {
+  // short, log-friendly request id
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function classifyOpenAIError(err: any): { code: string; status: number; message: string } {
+  const status = Number(err?.status ?? err?.response?.status ?? 500);
+
+  // OpenAI SDK often includes `status` and sometimes `code`/`type`.
+  // We never pass provider text to the client.
+  if (status === 401) {
+    return {
+      code: "OPENAI_AUTH",
+      status: 500,
+      message: "AI service configuration error. Please try again later.",
+    };
+  }
+
+  if (status === 429) {
+    // Could be rate-limit OR quota. Treat it as capacity for the user.
+    return {
+      code: "OPENAI_LIMIT",
+      status: 503,
+      message: "AI parsing is temporarily unavailable. Please try again in a few minutes.",
+    };
+  }
+
+  if (status >= 500) {
+    return {
+      code: "OPENAI_UPSTREAM",
+      status: 503,
+      message: "AI service is temporarily unavailable. Please try again shortly.",
+    };
+  }
+
+  return {
+    code: "OPENAI_ERROR",
+    status: 500,
+    message: "AI parsing failed. Please try again.",
+  };
+}
+
 export async function POST(req: Request) {
+  const requestId = reqId();
+
   // Auth gate
   const supabase = await createSupabaseServerClient();
   const {
@@ -68,7 +112,6 @@ export async function POST(req: Request) {
 
   const openai = getOpenAI();
 
-  // Structured Outputs via Responses API (strict JSON schema)
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -124,14 +167,20 @@ export async function POST(req: Request) {
 
     const raw = (resp.output_text ?? "").trim();
     if (!raw) {
-      return NextResponse.json({ error: "Empty model response" }, { status: 502 });
+      return NextResponse.json(
+        { error: "Empty model response", code: "OPENAI_EMPTY", requestId },
+        { status: 502 }
+      );
     }
 
     let parsed: ParsedTrade;
     try {
       parsed = JSON.parse(raw) as ParsedTrade;
     } catch {
-      return NextResponse.json({ error: "Failed to parse structured output", raw }, { status: 502 });
+      return NextResponse.json(
+        { error: "Failed to parse AI output", code: "OPENAI_PARSE", requestId },
+        { status: 502 }
+      );
     }
 
     const out: ParsedTrade = {
@@ -151,9 +200,21 @@ export async function POST(req: Request) {
     if (out.entry_price == null) warnings.push("No entry price detected.");
     if (out.stop_price == null) warnings.push("No stop price detected.");
 
-    return NextResponse.json({ trade: out, warnings });
+    return NextResponse.json({ trade: out, warnings, requestId });
   } catch (err: any) {
-    const msg = typeof err?.message === "string" ? err.message : "OpenAI request failed";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    // Log full details server-side only (Vercel logs)
+    console.error("[journal/parse] OpenAI error", {
+      requestId,
+      status: err?.status ?? err?.response?.status,
+      code: err?.code,
+      type: err?.type,
+      message: err?.message,
+    });
+
+    const safe = classifyOpenAIError(err);
+    return NextResponse.json(
+      { error: safe.message, code: safe.code, requestId },
+      { status: safe.status }
+    );
   }
 }
