@@ -1,5 +1,68 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isUserPro } from "@/lib/pro/isPro";
+
+type TradeSide = "long" | "short" | null;
+
+type JournalTradeRow = {
+  id: string;
+  user_id: string;
+  symbol: string | null;
+  instrument: string | null;
+  side: TradeSide;
+  entry_price: number | null;
+  stop_price: number | null;
+  exit_price: number | null;
+  result_r: number | null;
+  strategy: string | null;
+  notes: string | null;
+  created_at: string | null;
+  closed_at: string | null;
+};
+
+function n(x: any): number | null {
+  const v = typeof x === "number" ? x : x == null ? null : Number(x);
+  return Number.isFinite(v as number) ? (v as number) : null;
+}
+
+function cleanStrategy(s: any): string | null {
+  if (typeof s !== "string") return null;
+  const t = s.trim();
+  if (!t) return null;
+  // keep it calm; avoid insane lengths
+  return t.length > 80 ? t.slice(0, 80) : t;
+}
+
+function computeResultR(row: Pick<JournalTradeRow, "result_r" | "entry_price" | "stop_price" | "exit_price" | "side">): number | null {
+  const rr = n(row.result_r);
+  if (rr !== null) return rr;
+
+  const entry = n(row.entry_price);
+  const stop = n(row.stop_price);
+  const exit = n(row.exit_price);
+  const side = row.side;
+
+  if (entry === null || stop === null || exit === null) return null;
+  if (side !== "long" && side !== "short") return null;
+
+  const risk = Math.abs(entry - stop);
+  if (!Number.isFinite(risk) || risk <= 0) return null;
+
+  const pnl = side === "long" ? exit - entry : entry - exit;
+  const r = pnl / risk;
+  return Number.isFinite(r) ? r : null;
+}
+
+type StrategyStat = {
+  strategy: string;
+  trades: number;         // total trades with this strategy (all)
+  tracked: number;        // trades included in R stats (has result_r or computable)
+  winRate: number | null; // tracked only
+  avgR: number | null;    // tracked only
+  totalR: number | null;  // tracked only
+  expectancy: number | null; // tracked only (same as avgR)
+  largestLoss: number | null; // tracked only (min R)
+};
 
 export async function GET(req: Request) {
   const supabase = await createSupabaseServerClient();
@@ -13,33 +76,106 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { searchParams } = new URL(req.url);
+  // server-truth Pro check
+  let isPro = false;
+  try {
+    const pro = await isUserPro(user.id);
+    isPro = !!pro.isPro;
+  } catch {
+    isPro = false;
+  }
 
-  const limitRaw = Number(searchParams.get("limit") ?? 50);
-  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
+  // Optional: allow simple pagination later; for now pull recent
+  const url = new URL(req.url);
+  const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 200), 1), 1000);
 
-  // Cursor is an ISO timestamp string (created_at). If provided, fetch older than this.
-  const cursor = searchParams.get("cursor");
-
-  let q = supabase
+  const { data, error } = await supabase
     .from("journal_trades")
-    .select("*")
+    .select(
+      "id,user_id,symbol,instrument,side,entry_price,stop_price,exit_price,result_r,strategy,notes,created_at,closed_at"
+    )
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(limit);
 
-  if (cursor) {
-    q = q.lt("created_at", cursor);
-  }
-
-  const { data, error } = await q;
-
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return NextResponse.json({ error: error.message || "Failed to list trades" }, { status: 500 });
   }
 
-  const trades = data ?? [];
-  const nextCursor = trades.length ? trades[trades.length - 1].created_at : null;
+  const trades = (data ?? []) as JournalTradeRow[];
 
-  return NextResponse.json({ trades, nextCursor });
+  // Strategy stats (Pro only)
+  let strategyStats: StrategyStat[] | null = null;
+
+  if (isPro) {
+    const map = new Map<
+      string,
+      {
+        trades: number;
+        tracked: number;
+        sumR: number;
+        wins: number;
+        minR: number | null;
+      }
+    >();
+
+    for (const t of trades) {
+      const strategy = cleanStrategy(t.strategy);
+      if (!strategy) continue;
+
+      const cur =
+        map.get(strategy) ??
+        ({
+          trades: 0,
+          tracked: 0,
+          sumR: 0,
+          wins: 0,
+          minR: null,
+        } as const);
+
+      const next = { ...cur };
+      next.trades += 1;
+
+      const r = computeResultR(t);
+      if (r !== null) {
+        next.tracked += 1;
+        next.sumR += r;
+        if (r > 0) next.wins += 1;
+        next.minR = next.minR === null ? r : Math.min(next.minR, r);
+      }
+
+      map.set(strategy, next);
+    }
+
+    strategyStats = Array.from(map.entries()).map(([strategy, v]) => {
+      const avg = v.tracked > 0 ? v.sumR / v.tracked : null;
+      const winRate = v.tracked > 0 ? v.wins / v.tracked : null;
+      const totalR = v.tracked > 0 ? v.sumR : null;
+
+      return {
+        strategy,
+        trades: v.trades,
+        tracked: v.tracked,
+        winRate,
+        avgR: avg,
+        totalR,
+        expectancy: avg, // calm: expectancy == avg R per trade in this model
+        largestLoss: v.minR,
+      };
+    });
+
+    // Sort: highest Total R first, then by trades
+    strategyStats.sort((a, b) => {
+      const at = a.totalR ?? -Infinity;
+      const bt = b.totalR ?? -Infinity;
+      if (bt !== at) return bt - at;
+      return (b.trades ?? 0) - (a.trades ?? 0);
+    });
+  }
+
+  return NextResponse.json({
+    items: trades,
+    pro: { isPro },
+    strategyStats, // null for free
+  });
 }
