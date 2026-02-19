@@ -83,11 +83,14 @@ type Row = {
 
 /** -------- Treemap (squarify) layout (no deps) -------- */
 type Rect = { x: number; y: number; w: number; h: number };
+
 type TreeItem = {
   id: string;
   value: number; // area weight
   row: Row;
 };
+
+type Placed = { item: TreeItem; rect: Rect };
 
 function sum(items: TreeItem[]) {
   return items.reduce((a, b) => a + b.value, 0);
@@ -96,52 +99,71 @@ function sum(items: TreeItem[]) {
 function worstAspect(row: TreeItem[], side: number) {
   if (row.length === 0) return Infinity;
   const s = sum(row);
+  if (s <= 0) return Infinity;
+
   let minV = Infinity;
   let maxV = 0;
   for (const it of row) {
     minV = Math.min(minV, it.value);
     maxV = Math.max(maxV, it.value);
   }
-  // standard squarify heuristic
+  if (!Number.isFinite(minV) || minV <= 0) return Infinity;
+
   const s2 = s * s;
   const side2 = side * side;
   return Math.max((side2 * maxV) / s2, s2 / (side2 * minV));
 }
 
-function layoutRow(row: TreeItem[], rect: Rect) {
-  const out: Array<{ item: TreeItem; rect: Rect }> = [];
+function layoutRow(row: TreeItem[], rect: Rect): { placed: Placed[]; remaining: Rect } {
+  const placed: Placed[] = [];
   const s = sum(row);
-  if (s <= 0) return out;
 
-  const horizontal = rect.w >= rect.h; // lay along the shorter side
+  if (row.length === 0 || s <= 0 || rect.w <= 0 || rect.h <= 0) {
+    return { placed, remaining: rect };
+  }
+
+  const horizontal = rect.w >= rect.h;
+
   if (horizontal) {
-    // row height
+    // Row: constant height
     const h = s / rect.w;
     let x = rect.x;
+
     for (const it of row) {
       const w = it.value / h;
-      out.push({ item: it, rect: { x, y: rect.y, w, h } });
+      placed.push({ item: it, rect: { x, y: rect.y, w, h } });
       x += w;
     }
-    return { placed: out, remaining: { x: rect.x, y: rect.y + h, w: rect.w, h: rect.h - h } };
+
+    return {
+      placed,
+      remaining: { x: rect.x, y: rect.y + h, w: rect.w, h: rect.h - h },
+    };
   } else {
-    // column width
+    // Column: constant width
     const w = s / rect.h;
     let y = rect.y;
+
     for (const it of row) {
       const h = it.value / w;
-      out.push({ item: it, rect: { x: rect.x, y, w, h } });
+      placed.push({ item: it, rect: { x: rect.x, y, w, h } });
       y += h;
     }
-    return { placed: out, remaining: { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h } };
+
+    return {
+      placed,
+      remaining: { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h },
+    };
   }
 }
 
-function squarify(items: TreeItem[], rect: Rect) {
-  const placed: Array<{ item: TreeItem; rect: Rect }> = [];
-  const remaining = [...items].sort((a, b) => b.value - a.value);
+function squarify(items: TreeItem[], rect: Rect): Placed[] {
+  const placed: Placed[] = [];
+  const remaining = [...items]
+    .filter((it) => Number.isFinite(it.value) && it.value > 0)
+    .sort((a, b) => b.value - a.value);
 
-  let r = { ...rect };
+  let r: Rect = { ...rect };
   let row: TreeItem[] = [];
 
   while (remaining.length > 0) {
@@ -165,10 +187,12 @@ function squarify(items: TreeItem[], rect: Rect) {
       placed.push(...res.placed);
       r = res.remaining;
       row = [];
+      // If the remaining rect is degenerate, stop
+      if (r.w <= 0 || r.h <= 0) break;
     }
   }
 
-  if (row.length > 0) {
+  if (row.length > 0 && r.w > 0 && r.h > 0) {
     const res = layoutRow(row, r);
     placed.push(...res.placed);
   }
@@ -238,7 +262,11 @@ export default function NbaClient() {
 
       const tone: Row["tone"] = abs >= 1.5 ? "accent" : abs >= 1.0 ? "warn" : "neutral";
       const toneText =
-        tone === "accent" ? "text-[color:var(--accent)]" : tone === "warn" ? "text-amber-200" : "text-foreground/80";
+        tone === "accent"
+          ? "text-[color:var(--accent)]"
+          : tone === "warn"
+            ? "text-amber-200"
+            : "text-foreground/80";
 
       const mm = Math.floor((Number(g.secondsRemaining) || 0) / 60);
       const ss = String((Number(g.secondsRemaining) || 0) % 60).padStart(2, "0");
@@ -266,35 +294,32 @@ export default function NbaClient() {
   }, [games]);
 
   const treemap = useMemo(() => {
-    // Container units: 1000x520 "virtual pixels", rendered with % via absolute positioning.
     const W = 1000;
     const H = 520;
 
-    // Weight by abs deviation, but keep the map readable:
-    // - give every game a baseline weight so small signals still show
-    // - cap the influence of very large values
+    const baseArea = W * H;
+
     const items: TreeItem[] = rows.map((r) => {
       const capped = clamp(r.abs, 0, 2.2);
-      const weight = 1 + capped * 3.0; // baseline + scaled
+      const weight = 1 + capped * 3.0;
       return { id: r.key, value: weight, row: r };
     });
 
     const total = items.reduce((a, b) => a + b.value, 0);
-    if (total <= 0) return [];
+    if (!Number.isFinite(total) || total <= 0) return [];
 
-    // Convert weights into areas inside W*H
-    const area = W * H;
-    const scaled = items.map((it) => ({ ...it, value: (it.value / total) * area }));
+    const scaled: TreeItem[] = items.map((it) => ({
+      ...it,
+      value: (it.value / total) * baseArea,
+    }));
 
     const placed = squarify(scaled, { x: 0, y: 0, w: W, h: H });
 
-    // Convert to percentages for CSS positioning
     return placed.map(({ item, rect }) => {
       const left = (rect.x / W) * 100;
       const top = (rect.y / H) * 100;
       const width = (rect.w / W) * 100;
       const height = (rect.h / H) * 100;
-
       return { item, left, top, width, height };
     });
   }, [rows]);
@@ -394,7 +419,6 @@ export default function NbaClient() {
               </div>
 
               <div className="relative w-full overflow-hidden rounded-2xl border border-[color:var(--border)] bg-black/20">
-                {/* fixed height keeps layout stable; responsive on larger screens */}
                 <div className="relative h-[520px]">
                   {treemap.map((t) => {
                     const r = t.item.row;
@@ -406,18 +430,12 @@ export default function NbaClient() {
                           ? "border-amber-800/50 bg-amber-900/10"
                           : "border-white/10 bg-white/5";
 
-                    // Hide extra detail if the tile is too small
                     const showDetails = t.width >= 14 && t.height >= 14;
 
                     return (
                       <div
                         key={t.item.id}
-                        className={cn(
-                          "absolute rounded-xl border",
-                          "p-3",
-                          "transition-[filter,transform] duration-200",
-                          "hover:brightness-110"
-                        )}
+                        className={cn("absolute rounded-xl border p-3 transition-[filter] duration-200 hover:brightness-110")}
                         style={{
                           left: `${t.left}%`,
                           top: `${t.top}%`,
@@ -426,19 +444,15 @@ export default function NbaClient() {
                         }}
                         title={`${r.matchup} • ${r.clock} • ${r.directionLabel}`}
                       >
-                        <div className={cn("h-full w-full", tileClass, "rounded-xl")}>
+                        <div className={cn("h-full w-full rounded-xl", tileClass)}>
                           <div className="h-full w-full p-3">
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
-                                <div className="truncate text-sm font-semibold text-foreground">
-                                  {r.matchup}
-                                </div>
+                                <div className="truncate text-sm font-semibold text-foreground">{r.matchup}</div>
                                 <div className="mt-1 text-xs text-foreground/65">{r.clock}</div>
                               </div>
 
-                              <div className={cn("text-xs font-semibold", r.toneText)}>
-                                {r.directionLabel}
-                              </div>
+                              <div className={cn("text-xs font-semibold", r.toneText)}>{r.directionLabel}</div>
                             </div>
 
                             {showDetails ? (
