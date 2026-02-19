@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Tooltip } from "@/components/Tooltip";
 import { computeDeviation } from "@/lib/labs/nba/heatmap";
 import { buildDistributionIndex } from "@/lib/nba/deviation-engine";
 
-type GameClockState = any; // matches API route shape
+type GameClockState = any;
 
 function makeStubIndex() {
-  // Very small synthetic index for now.
   const samples = Array.from({ length: 1200 }).map((_, i) => {
     const spread = [-8, -6, -4, -2, 0, 2, 4, 6][i % 8];
     return {
@@ -29,6 +29,26 @@ function makeStubIndex() {
 
 const spreadIndex = makeStubIndex();
 
+function fmtNum(x: any, digits = 1) {
+  const v = typeof x === "number" ? x : x == null ? null : Number(x);
+  if (typeof v !== "number" || !Number.isFinite(v)) return "—";
+  return v.toFixed(digits);
+}
+
+function DeviationTip() {
+  return (
+    <div className="max-w-sm space-y-2">
+      <div className="font-semibold">Deviation</div>
+      <div className="text-foreground/70">
+        Measures how far the live performance has moved from market expectation.
+      </div>
+      <div className="text-foreground/70">
+        Higher values indicate a more unusual move.
+      </div>
+    </div>
+  );
+}
+
 export default function NbaClient() {
   const [games, setGames] = useState<GameClockState[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,12 +59,12 @@ export default function NbaClient() {
         cache: "no-store",
       });
 
-      const json = await res.json();
+      const json = await res.json().catch(() => null);
       if (json?.ok && Array.isArray(json.items)) {
         setGames(json.items);
       }
     } catch {
-      // Calm failure: do nothing noisy
+      // silent failure — preserve last good state
     } finally {
       setLoading(false);
     }
@@ -52,14 +72,45 @@ export default function NbaClient() {
 
   useEffect(() => {
     load();
-
-    const interval = setInterval(load, 90 * 1000); // 90 seconds
+    const interval = setInterval(load, 90 * 1000);
     return () => clearInterval(interval);
   }, []);
 
+  const rows = useMemo(() => {
+    return games.map((g: any) => {
+      const result = computeDeviation(g, { spreadIndex });
+
+      const deviation = Number.isFinite(result.zSpread)
+        ? result.zSpread
+        : 0;
+
+      const abs = Math.abs(deviation);
+
+      const tone =
+        abs >= 1.5
+          ? "text-[color:var(--accent)]"
+          : abs >= 1.0
+          ? "text-amber-200"
+          : "text-foreground/80";
+
+      const mm = Math.floor((Number(g.secondsRemaining) || 0) / 60);
+      const ss = String((Number(g.secondsRemaining) || 0) % 60).padStart(2, "0");
+
+      return {
+        key: String(g.gameId ?? `${g.awayTeam}-${g.homeTeam}`),
+        matchup: `${g.awayTeam ?? "—"} @ ${g.homeTeam ?? "—"}`,
+        clock: `P${g.period ?? "—"} • ${mm}:${ss}`,
+        live: fmtNum(g.liveSpreadHome, 1),
+        close: fmtNum(g.closingSpreadHome, 1),
+        deviationText: fmtNum(deviation, 2),
+        tone,
+      };
+    });
+  }, [games]);
+
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto max-w-5xl px-6 py-16 space-y-8">
+      <div className="mx-auto max-w-5xl space-y-8 px-6 py-16">
         <div>
           <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-2 text-sm text-foreground/80">
             Labs • NBA
@@ -70,61 +121,58 @@ export default function NbaClient() {
           </h1>
 
           <p className="mt-4 max-w-3xl text-lg text-foreground/75">
-            Games refresh every 90 seconds. Statistical deviation is computed
-            versus historical conditional distributions.
+            Highlights games performing materially above or below market expectation.
           </p>
         </div>
 
         <section className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-6">
           {loading ? (
             <div className="text-foreground/70">Loading…</div>
-          ) : games.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div className="text-foreground/70">No games available.</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-[880px] w-full text-[15px]">
+              <table className="min-w-[960px] w-full text-[15px]">
                 <thead>
                   <tr className="text-left text-foreground/60">
-                    <th className="px-4 py-3">Matchup</th>
-                    <th className="px-4 py-3">Clock</th>
-                    <th className="px-4 py-3">Live (Home)</th>
-                    <th className="px-4 py-3">Close (Home)</th>
-                    <th className="px-4 py-3">zSpread</th>
+                    <th className="px-4 py-3 font-medium">Matchup</th>
+                    <th className="px-4 py-3 font-medium">Clock</th>
+                    <th className="px-4 py-3 font-medium">Live Spread (Home)</th>
+                    <th className="px-4 py-3 font-medium">Closing Spread (Home)</th>
+                    <th className="px-4 py-3 font-medium">
+                      <Tooltip label="Deviation">
+                        <DeviationTip />
+                      </Tooltip>
+                    </th>
                   </tr>
                 </thead>
+
                 <tbody>
-                  {games.map((g: any) => {
-                    const result = computeDeviation(g, { spreadIndex });
-
-                    const absZ = Math.abs(result.zSpread);
-                    const tone =
-                      absZ >= 1.5
-                        ? "text-[color:var(--accent)]"
-                        : absZ >= 1.0
-                        ? "text-amber-200"
-                        : "text-foreground/80";
-
-                    const mm = Math.floor(g.secondsRemaining / 60);
-                    const ss = String(g.secondsRemaining % 60).padStart(2, "0");
-
-                    return (
-                      <tr key={g.gameId} className="border-t border-[color:var(--border)]">
-                        <td className="px-4 py-3 font-medium">
-                          {g.awayTeam} @ {g.homeTeam}
-                        </td>
-                        <td className="px-4 py-3">
-                          P{g.period} • {mm}:{ss}
-                        </td>
-                        <td className="px-4 py-3">{g.liveSpreadHome ?? "—"}</td>
-                        <td className="px-4 py-3">{g.closingSpreadHome}</td>
-                        <td className={`px-4 py-3 font-medium ${tone}`}>
-                          {result.zSpread.toFixed(2)}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {rows.map((r) => (
+                    <tr key={r.key} className="border-t border-[color:var(--border)]">
+                      <td className="px-4 py-3 font-medium text-foreground">
+                        {r.matchup}
+                      </td>
+                      <td className="px-4 py-3 text-foreground/80">
+                        {r.clock}
+                      </td>
+                      <td className="px-4 py-3 text-foreground/80">
+                        {r.live}
+                      </td>
+                      <td className="px-4 py-3 text-foreground/80">
+                        {r.close}
+                      </td>
+                      <td className={`px-4 py-3 font-medium ${r.tone}`}>
+                        {r.deviationText}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
+
+              <div className="mt-4 text-sm text-foreground/55">
+                Lab preview. All signals require review.
+              </div>
             </div>
           )}
         </section>
