@@ -53,11 +53,39 @@ function formatSpread(x: any, digits = 1) {
   return "0";
 }
 
+function safeInt(x: any): number | null {
+  const v = typeof x === "number" ? x : x == null ? null : Number(x);
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  return Math.trunc(v);
+}
+
+// Supports either your current mock shape (homeScore/awayScore)
+// or possible alternates (home_score/away_score).
+function getLiveScore(g: any): { away: number | null; home: number | null } {
+  const away =
+    safeInt(g?.awayScore) ??
+    safeInt(g?.away_score) ??
+    safeInt(g?.score?.away) ??
+    safeInt(g?.away?.score) ??
+    null;
+
+  const home =
+    safeInt(g?.homeScore) ??
+    safeInt(g?.home_score) ??
+    safeInt(g?.score?.home) ??
+    safeInt(g?.home?.score) ??
+    null;
+
+  return { away, home };
+}
+
 function DeviationTip() {
   return (
     <div className="max-w-sm space-y-2">
       <div className="font-semibold">Deviation</div>
-      <div className="text-foreground/70">Measures how far live performance has moved from market expectation.</div>
+      <div className="text-foreground/70">
+        Measures how far live performance has moved from market expectation.
+      </div>
       <div className="text-foreground/70">Higher values indicate a more unusual move.</div>
     </div>
   );
@@ -69,10 +97,20 @@ type Row = {
   key: string;
   abs: number;
   deviation: number;
+
+  awayTeam: string;
+  homeTeam: string;
+
+  // score is optional (depends on feed)
+  awayScore: number | null;
+  homeScore: number | null;
+
   matchup: string;
   clock: string;
+
   live: string;
   close: string;
+
   deviationText: string;
   toneText: string;
   directionLabel: string;
@@ -269,11 +307,22 @@ export default function NbaClient() {
       const directionLabel =
         deviation >= 0.35 ? "above expectation" : deviation <= -0.35 ? "below expectation" : "near expectation";
 
+      const awayTeam = String(g?.awayTeam ?? "—");
+      const homeTeam = String(g?.homeTeam ?? "—");
+
+      const s = getLiveScore(g);
+
       return {
-        key: String(g.gameId ?? `${g.awayTeam}-${g.homeTeam}`),
+        key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
         abs,
         deviation,
-        matchup: `${g.awayTeam ?? "—"} @ ${g.homeTeam ?? "—"}`,
+
+        awayTeam,
+        homeTeam,
+        awayScore: s.away,
+        homeScore: s.home,
+
+        matchup: `${awayTeam} @ ${homeTeam}`,
         clock: `P${g.period ?? "—"} • ${mm}:${ss}`,
         live: formatSpread(g.liveSpreadHome, 1),
         close: formatSpread(g.closingSpreadHome, 1),
@@ -293,7 +342,6 @@ export default function NbaClient() {
     const H = 520;
     const area = W * H;
 
-    // Cleaner map: baseline weight + capped influence.
     const items: TreeItem[] = rows.map((r) => {
       const capped = clamp(r.abs, 0, 2.2);
       const weight = 1 + capped * 3.0;
@@ -306,7 +354,6 @@ export default function NbaClient() {
     const scaled: TreeItem[] = items.map((it) => ({ ...it, value: (it.value / total) * area }));
     const placed = squarify(scaled, { x: 0, y: 0, w: W, h: H });
 
-    // Add gutters (space between tiles) using CSS calc().
     const gutterPx = 6;
 
     return placed.map(({ item, rect }) => {
@@ -315,14 +362,12 @@ export default function NbaClient() {
       const widthPct = (rect.w / W) * 100;
       const heightPct = (rect.h / H) * 100;
 
-      // If a tile is extremely tiny, we still render it, but we shrink content inside.
       return {
         item,
         left: `calc(${leftPct}% + ${gutterPx / 2}px)`,
         top: `calc(${topPct}% + ${gutterPx / 2}px)`,
         width: `calc(${widthPct}% - ${gutterPx}px)`,
         height: `calc(${heightPct}% - ${gutterPx}px)`,
-        // For content rules (percent thresholds)
         widthPct,
         heightPct,
       };
@@ -392,15 +437,36 @@ export default function NbaClient() {
                 </thead>
 
                 <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.key} className="border-t border-[color:var(--border)]">
-                      <td className="px-4 py-3 font-medium text-foreground">{r.matchup}</td>
-                      <td className="px-4 py-3 text-foreground/80">{r.clock}</td>
-                      <td className="px-4 py-3 text-foreground/80">{r.live}</td>
-                      <td className="px-4 py-3 text-foreground/80">{r.close}</td>
-                      <td className={cn("px-4 py-3 font-medium", r.toneText)}>{r.deviationText}</td>
-                    </tr>
-                  ))}
+                  {rows.map((r) => {
+                    const hasScore = typeof r.awayScore === "number" && typeof r.homeScore === "number";
+
+                    return (
+                      <tr key={r.key} className="border-t border-[color:var(--border)]">
+                        {/* Matchup cell now includes score on a second line */}
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-foreground">{r.matchup}</div>
+                          <div className="mt-1 text-sm text-foreground/70">
+                            {hasScore ? (
+                              <span>
+                                <span className="text-foreground/65">{r.awayTeam}</span>{" "}
+                                <span className="font-semibold text-foreground">{r.awayScore}</span>
+                                <span className="text-foreground/55"> — </span>
+                                <span className="font-semibold text-foreground">{r.homeScore}</span>{" "}
+                                <span className="text-foreground/65">{r.homeTeam}</span>
+                              </span>
+                            ) : (
+                              <span className="text-foreground/55">Score unavailable</span>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="px-4 py-3 text-foreground/80">{r.clock}</td>
+                        <td className="px-4 py-3 text-foreground/80">{r.live}</td>
+                        <td className="px-4 py-3 text-foreground/80">{r.close}</td>
+                        <td className={cn("px-4 py-3 font-medium", r.toneText)}>{r.deviationText}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
 
@@ -435,7 +501,6 @@ export default function NbaClient() {
                           ? "border-amber-800/45 bg-amber-900/10"
                           : "border-white/10 bg-white/5";
 
-                    // Progressive disclosure:
                     const isLarge = t.widthPct >= 22 && t.heightPct >= 22;
                     const isMedium = t.widthPct >= 14 && t.heightPct >= 14;
 
@@ -456,7 +521,6 @@ export default function NbaClient() {
                         title={`${r.matchup} • ${r.clock} • ${r.directionLabel}`}
                       >
                         <div className={cn("h-full w-full", isLarge ? "p-4" : isMedium ? "p-3" : "p-2")}>
-                          {/* Header */}
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div
@@ -476,7 +540,6 @@ export default function NbaClient() {
                             ) : null}
                           </div>
 
-                          {/* Body */}
                           {isLarge ? (
                             <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                               <div className="rounded-lg border border-white/10 bg-black/10 px-2 py-1.5">
@@ -490,7 +553,6 @@ export default function NbaClient() {
                             </div>
                           ) : null}
 
-                          {/* Footer */}
                           <div className={cn("mt-3 flex items-center justify-between", isLarge ? "text-xs" : "text-[11px]")}>
                             {isLarge ? (
                               <div className="text-foreground/60">
