@@ -478,11 +478,7 @@ export default function JournalClient() {
             <div className="mt-1 text-[15px] text-foreground/70">Structured input. Calm defaults.</div>
           </div>
 
-          <div className="text-sm text-foreground/60">
-            <Tooltip label="Stop">
-              <StopTipBody />
-            </Tooltip>
-          </div>
+        
         </div>
 
         <div className="grid gap-4 sm:grid-cols-3">
