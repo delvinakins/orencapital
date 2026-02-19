@@ -35,6 +35,19 @@ function fmtNum(x: any, digits = 1) {
   return v.toFixed(digits);
 }
 
+function formatSpread(x: any, digits = 1) {
+  if (x == null) return "—";
+
+  // accept numbers or numeric strings
+  const v = typeof x === "number" ? x : Number(String(x).trim());
+  if (!Number.isFinite(v)) return "—";
+
+  const s = v.toFixed(digits);
+  if (v > 0) return `+${s}`;
+  if (v < 0) return s; // already includes "-"
+  return "0";
+}
+
 function DeviationTip() {
   return (
     <div className="max-w-sm space-y-2">
@@ -114,8 +127,8 @@ export default function NbaClient() {
         abs,
         matchup: `${g.awayTeam ?? "—"} @ ${g.homeTeam ?? "—"}`,
         clock: `P${g.period ?? "—"} • ${mm}:${ss}`,
-        live: fmtNum(g.liveSpreadHome, 1),
-        close: fmtNum(g.closingSpreadHome, 1),
+        live: formatSpread(g.liveSpreadHome, 1),
+        close: formatSpread(g.closingSpreadHome, 1),
         deviationText: fmtNum(deviation, 2),
         tone,
       };
