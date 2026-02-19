@@ -101,7 +101,7 @@ function Field({
   required,
   className,
 }: {
-  label: string;
+  label: ReactNode;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -113,9 +113,7 @@ function Field({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-foreground/70">
-        {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
-      </label>
+      <label className="text-sm text-foreground/70">{tip ? <Tooltip label={label as any}>{tip}</Tooltip> : label}</label>
       <input
         type={type}
         inputMode={inputMode}
@@ -246,7 +244,6 @@ export default function JournalClient() {
       entry_price: parseNum(entryPrice),
       stop_price: parseNum(stopPrice),
       exit_price: parseNum(exitPrice),
-      // result_r omitted: API computes when possible
     };
 
     const res = await fetch("/api/journal/save", {
@@ -297,17 +294,15 @@ export default function JournalClient() {
     };
   }, [trades]);
 
-  const stopTooltip = (
-    <div className="space-y-2">
+  const stopTipBody = (
+    <div className="space-y-2 max-w-xs">
       <div>
         <span className="font-semibold">Stop</span>: the price level that invalidates your trade idea.
       </div>
+      <div className="text-foreground/70">It defines where you are wrong and prevents small losses from becoming large ones.</div>
       <div className="text-foreground/70">
-        It defines where you are wrong and prevents small losses from becoming large ones.
-      </div>
-      <div className="text-foreground/70">
-        It also defines <span className="font-semibold">1R</span> (your risk per trade), so Oren can measure expectancy
-        and consistency.
+        It also defines <span className="font-semibold">1R</span> (your risk per trade), so Oren can measure expectancy and
+        consistency.
       </div>
     </div>
   );
@@ -335,9 +330,7 @@ export default function JournalClient() {
             <span className="inline-flex items-center gap-2">
               Avg R
               <span className="text-foreground/70">
-                <Tooltip label="Avg R">
-                  Average realized R across closed trades (requires Entry + Stop + Exit for auto-calculation).
-                </Tooltip>
+                <Tooltip label="Avg R">Average realized R across closed trades.</Tooltip>
               </span>
             </span>
           }
@@ -417,7 +410,16 @@ export default function JournalClient() {
         <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
           <form onSubmit={saveTrade} className="grid gap-4 sm:grid-cols-6">
             <div className="sm:col-span-2">
-              <Field label="Symbol" value={symbol} onChange={setSymbol} placeholder="AAPL, ES, SPY…" required />
+              <div className="flex flex-col gap-2">
+                <label className="text-sm text-foreground/70">Symbol</label>
+                <input
+                  value={symbol}
+                  onChange={(e) => setSymbol(e.target.value)}
+                  placeholder="AAPL, ES, SPY…"
+                  required
+                  className="h-12 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none placeholder:text-foreground/30"
+                />
+              </div>
             </div>
 
             <div className="sm:col-span-2">
@@ -461,18 +463,21 @@ export default function JournalClient() {
               />
             </div>
 
-            {/* STOP: subtle highlight + simplified tooltip */}
+            {/* Stop: subtle highlight + correct Tooltip usage (short label, rich hover content) */}
             <div className="sm:col-span-2">
-              <Field
-                label="Stop (Risk Anchor)"
-                value={stopPrice}
-                onChange={setStopPrice}
-                placeholder="e.g. 498.75"
-                type="number"
-                inputMode="decimal"
-                tip={stopTooltip}
-                className="border-[color:var(--accent)]/45 focus:border-[color:var(--accent)]"
-              />
+              <div className="flex flex-col gap-2">
+                <label className="text-sm text-foreground/70">
+                  <Tooltip label="Stop">{stopTipBody}</Tooltip>
+                </label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  value={stopPrice}
+                  onChange={(e) => setStopPrice(e.target.value)}
+                  placeholder="e.g. 498.75"
+                  className="h-12 rounded-lg border border-[color:var(--accent)]/45 bg-[color:var(--card)] px-4 text-foreground outline-none placeholder:text-foreground/30 focus:border-[color:var(--accent)]"
+                />
+              </div>
             </div>
 
             <div className="sm:col-span-2">
@@ -515,11 +520,9 @@ export default function JournalClient() {
                   <th className="px-4 py-3">Side</th>
                   <th className="px-4 py-3">Entry</th>
 
-                  {/* STOP header tooltip + subtle accent */}
+                  {/* Stop header: show only "Stop" inline, tooltip content on hover */}
                   <th className="px-4 py-3 text-[color:var(--accent)]">
-                    <Tooltip label="Stop = the price level that invalidates your trade idea. It anchors risk (1R).">
-                      Stop
-                    </Tooltip>
+                    <Tooltip label="Stop">{stopTipBody}</Tooltip>
                   </th>
 
                   <th className="px-4 py-3">Exit</th>
@@ -552,7 +555,7 @@ export default function JournalClient() {
                       <td className="px-4 py-3 text-foreground/80">{t.side}</td>
                       <td className="px-4 py-3 text-foreground/80">{t.entry_price == null ? "—" : fmt(t.entry_price, 2)}</td>
 
-                      {/* STOP cell subtle highlight */}
+                      {/* Stop cell subtle highlight */}
                       <td className="px-4 py-3 text-[color:var(--accent)]">
                         {t.stop_price == null ? "—" : fmt(t.stop_price, 2)}
                       </td>
