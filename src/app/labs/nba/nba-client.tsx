@@ -50,20 +50,50 @@ function DeviationTip() {
 export default function NbaClient() {
   const [games, setGames] = useState<GameClockState[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   async function load() {
+    setLoadError(null);
+
     try {
-      const res = await fetch("/api/labs/nba/mock-games", {
-        cache: "no-store",
-      });
+      const res = await fetch("/api/labs/nba/mock-games", { cache: "no-store" });
+
+      // If middleware redirects or blocks, this often returns HTML (not JSON).
+      const contentType = res.headers.get("content-type") || "";
+
+      if (!contentType.includes("application/json")) {
+        setGames([]);
+        setLoadError("Unable to load games right now.");
+        setLoading(false);
+
+        // Dev-only hint (not shown in UI)
+        console.warn(
+          "[NBA labs] mock-games returned non-JSON response. Likely middleware/auth redirect.",
+          { status: res.status, contentType }
+        );
+        return;
+      }
 
       const json = await res.json().catch(() => null);
-      if (json?.ok && Array.isArray(json.items)) {
-        setGames(json.items);
+
+      if (!res.ok || !json?.ok || !Array.isArray(json.items)) {
+        setGames([]);
+        setLoadError("Unable to load games right now.");
+        setLoading(false);
+
+        console.warn("[NBA labs] mock-games JSON shape unexpected.", {
+          status: res.status,
+          ok: json?.ok,
+          hasItems: Array.isArray(json?.items),
+        });
+        return;
       }
+
+      setGames(json.items);
+      setLoading(false);
     } catch {
-      // silent failure — preserve last good state
-    } finally {
+      setGames([]);
+      setLoadError("Unable to load games right now.");
       setLoading(false);
     }
   }
@@ -72,6 +102,7 @@ export default function NbaClient() {
     load();
     const interval = setInterval(load, 90 * 1000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const rows = useMemo(() => {
@@ -103,7 +134,7 @@ export default function NbaClient() {
       };
     });
 
-    // Strongest deviation first (calm sorting, no extra UI controls yet)
+    // Strongest deviation first
     computed.sort((a, b) => b.abs - a.abs);
 
     return computed;
@@ -130,7 +161,7 @@ export default function NbaClient() {
           {loading ? (
             <div className="text-foreground/70">Loading…</div>
           ) : rows.length === 0 ? (
-            <div className="text-foreground/70">No games available.</div>
+            <div className="text-foreground/70">{loadError ?? "No games available."}</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-[960px] w-full text-[15px]">
