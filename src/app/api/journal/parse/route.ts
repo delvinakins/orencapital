@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import getOpenAI from "@/lib/openai/server";
+import { isUserPro } from "@/lib/pro/isPro";
 
 type InstrumentType = "stock" | "option" | "future" | "crypto" | "fx" | "other";
 type TradeSide = "long" | "short";
@@ -80,11 +81,9 @@ function classifyOpenAIError(err: any): { code: string; status: number; message:
   };
 }
 
-// Rate limit config (Free-tier safe defaults)
-// Later: we can tier by Pro (e.g., Free 30/hr, Pro 300/hr)
-const RL_KEY = "journal_parse_v1";
-const RL_LIMIT = 60; // requests per window
 const RL_WINDOW_SECONDS = 60 * 60; // 1 hour
+const RL_FREE_LIMIT = 30; // /hour
+const RL_PRO_LIMIT = 300; // /hour
 
 function toIsoOrNull(x: any): string | null {
   try {
@@ -111,30 +110,44 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Pro tier check (server truth)
+  let pro = { isPro: false as boolean, status: "inactive" as string };
+  try {
+    const res = await isUserPro(user.id);
+    pro = { isPro: !!res.isPro, status: String(res.status ?? "inactive") };
+  } catch (e: any) {
+    console.error("[journal/parse] isUserPro error", { requestId, message: e?.message });
+  }
+
+  // Tiered rate limit key
+  const rlKey = pro.isPro ? "journal_parse_v1_pro" : "journal_parse_v1_free";
+  const rlLimit = pro.isPro ? RL_PRO_LIMIT : RL_FREE_LIMIT;
+
   // Rate limit (atomic, per-user)
   try {
     const { data, error } = await supabase.rpc("check_rate_limit", {
       p_user_id: user.id,
-      p_key: RL_KEY,
-      p_limit: RL_LIMIT,
+      p_key: rlKey,
+      p_limit: rlLimit,
       p_window_seconds: RL_WINDOW_SECONDS,
     });
 
     if (error) {
       // If RL fails, do NOT block user; log and continue.
-      console.error("[journal/parse] rate limit rpc error", { requestId, error: error.message });
+      console.error("[journal/parse] rate limit rpc error", { requestId, message: error.message });
     } else {
       const row = Array.isArray(data) ? data[0] : data;
       const allowed = !!row?.allowed;
-      const remaining = Number(row?.remaining ?? RL_LIMIT);
+      const remaining = Number(row?.remaining ?? rlLimit);
       const resetAtIso = toIsoOrNull(row?.reset_at);
 
-      if (!allowed) {
-        const headers = new Headers();
-        headers.set("X-RateLimit-Limit", String(RL_LIMIT));
-        headers.set("X-RateLimit-Remaining", String(remaining));
-        if (resetAtIso) headers.set("X-RateLimit-Reset", resetAtIso);
+      const headers = new Headers();
+      headers.set("X-RateLimit-Limit", String(rlLimit));
+      headers.set("X-RateLimit-Remaining", String(remaining));
+      headers.set("X-RateLimit-Tier", pro.isPro ? "pro" : "free");
+      if (resetAtIso) headers.set("X-RateLimit-Reset", resetAtIso);
 
+      if (!allowed) {
         if (resetAtIso) {
           const retryAfterSeconds = Math.max(
             1,
@@ -149,11 +162,9 @@ export async function POST(req: Request) {
             code: "RATE_LIMITED",
             requestId,
             resetAt: resetAtIso,
+            tier: pro.isPro ? "pro" : "free",
           }),
-          {
-            status: 429,
-            headers,
-          }
+          { status: 429, headers }
         );
       }
     }
@@ -264,7 +275,7 @@ export async function POST(req: Request) {
     if (out.entry_price == null) warnings.push("No entry price detected.");
     if (out.stop_price == null) warnings.push("No stop price detected.");
 
-    return NextResponse.json({ trade: out, warnings, requestId });
+    return NextResponse.json({ trade: out, warnings, requestId, tier: pro.isPro ? "pro" : "free" });
   } catch (err: any) {
     console.error("[journal/parse] OpenAI error", {
       requestId,
