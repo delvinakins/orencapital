@@ -1,9 +1,10 @@
 // src/app/api/labs/nba/live-games/route.ts
+
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { fetchSportsDataIoScores } from "@/lib/labs/nba/providers/scores-sportsdataio";
 import { fetchTheOddsApiSpreads } from "@/lib/labs/nba/providers/odds-theoddsapi";
-import { makeMatchKey, canonicalTeamName } from "@/lib/labs/nba/providers/normalize";
+import { makeMatchKey } from "@/lib/labs/nba/providers/normalize";
 import { inPollingWindow } from "@/lib/labs/nba/poll-window";
 
 type LiveGameItem = {
@@ -66,11 +67,14 @@ async function ensureClosingLines(candidates: Array<{ gameKey: string; closingHo
   }
 
   if (rows.length === 0) return;
+
+  // Idempotent: first write wins, later writes do nothing harmful
   await sb.from("nba_closing_lines").upsert(rows, { onConflict: "game_key" });
 }
 
 /** -------------------------------
  *  In-memory cache + lock
+ *  (prevents N concurrent requests from triggering N provider polls)
  ---------------------------------*/
 const CACHE_TTL_MS = 90_000;
 const STALE_GRACE_MS = 10_000;
@@ -81,54 +85,43 @@ let inflight: Promise<LiveResponse> | null = null;
 function nowMs() {
   return Date.now();
 }
+
 function isFresh(ts: number) {
   return nowMs() - ts <= CACHE_TTL_MS + STALE_GRACE_MS;
 }
 
 /** -------------------------------
- *  Provider poll + normalization
+ *  Provider poll + join
  ---------------------------------*/
 async function pollProviders(): Promise<LiveResponse> {
-  const [scoresRaw, oddsRaw] = await Promise.all([fetchSportsDataIoScores(), fetchTheOddsApiSpreads()]);
+  const [scores, odds] = await Promise.all([fetchSportsDataIoScores(), fetchTheOddsApiSpreads()]);
 
-  // Odds map by best key: laDateKey|away@home
+  // odds key: laDateKey|away@home
   const oddsByKey = new Map<string, { liveHomeSpread: number | null }>();
-  // Fallback odds map: away@home
+  // fallback: away@home (if laDateKey missing)
   const oddsByMatch = new Map<string, { liveHomeSpread: number | null }>();
 
-  for (const o of oddsRaw) {
-    const away = canonicalTeamName(o.awayTeam);
-    const home = canonicalTeamName(o.homeTeam);
-    const match = `${away}@${home}`;
-
+  for (const o of odds) {
+    const match = `${o.awayTeam}@${o.homeTeam}`;
     oddsByMatch.set(match, { liveHomeSpread: o.liveHomeSpread });
-
-    if (o.laDateKey) {
-      oddsByKey.set(`${o.laDateKey}|${match}`, { liveHomeSpread: o.liveHomeSpread });
-    }
+    if (o.laDateKey) oddsByKey.set(`${o.laDateKey}|${match}`, { liveHomeSpread: o.liveHomeSpread });
   }
 
-  // Build game keys from scores using their LA dateKey (we’ll add this in scores provider next step if missing)
-  // For now, scores provider already returns dateKey; we treat it as the slate dateKey. (Good enough.)
+  const items: LiveGameItem[] = [];
   const gameKeys: string[] = [];
   const closingCandidates: Array<{ gameKey: string; closingHomeSpread: number }> = [];
 
-  const items: LiveGameItem[] = [];
+  for (const s of scores) {
+    const match = `${s.awayTeam}@${s.homeTeam}`;
+    const gameKey = makeMatchKey(s.awayTeam, s.homeTeam, s.laDateKey);
 
-  for (const s of scoresRaw) {
-    const away = canonicalTeamName(s.awayTeam);
-    const home = canonicalTeamName(s.homeTeam);
-
-    const match = `${away}@${home}`;
-    const gameKey = makeMatchKey(away, home, s.dateKey);
     gameKeys.push(gameKey);
 
-    // Prefer dateKey-aware odds, fallback to away@home
-    const o1 = oddsByKey.get(`${s.dateKey}|${match}`);
+    const o1 = oddsByKey.get(`${s.laDateKey}|${match}`);
     const o2 = oddsByMatch.get(match);
     const liveSpreadHome = o1?.liveHomeSpread ?? o2?.liveHomeSpread ?? null;
 
-    // Persist “closing” as first pre-tip spread observed (if scheduled)
+    // Record "closing" as the first pre-tip spread we observe (simple baseline).
     if (s.status === "scheduled" && typeof liveSpreadHome === "number" && Number.isFinite(liveSpreadHome)) {
       closingCandidates.push({ gameKey, closingHomeSpread: liveSpreadHome });
     }
@@ -144,8 +137,8 @@ async function pollProviders(): Promise<LiveResponse> {
     items.push({
       gameId: gameKey,
 
-      awayTeam: away,
-      homeTeam: home,
+      awayTeam: s.awayTeam,
+      homeTeam: s.homeTeam,
 
       awayScore: s.awayScore,
       homeScore: s.homeScore,
@@ -154,14 +147,13 @@ async function pollProviders(): Promise<LiveResponse> {
       secondsRemaining: s.secondsRemainingInPeriod,
 
       liveSpreadHome,
-      closingSpreadHome: null, // filled after DB fetch
+      closingSpreadHome: null, // fill from DB
     });
   }
 
   await ensureClosingLines(closingCandidates);
 
   const closingMap = await getClosingMap(gameKeys);
-
   const finalItems = items.map((it) => ({
     ...it,
     closingSpreadHome: closingMap.get(it.gameId) ?? null,
@@ -178,6 +170,7 @@ async function getLiveData(): Promise<LiveResponse> {
 
   const within = inPollingWindow(new Date());
   if (!within) {
+    // Outside window: do not spend. Serve last good snapshot if present.
     if (cached?.payload?.ok) return cached.payload;
     return { ok: false };
   }

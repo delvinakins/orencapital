@@ -13,6 +13,8 @@ export function normTeamName(x: string) {
 /**
  * Canonical team names for joining across providers.
  * Keys are normalized via normTeamName().
+ *
+ * Values are the canonical names used throughout the app.
  */
 const ALIASES: Record<string, string> = {
   // Atlanta Hawks
@@ -90,13 +92,13 @@ const ALIASES: Record<string, string> = {
   "ind": "indiana pacers",
   "pacers": "indiana pacers",
 
-  // LA Clippers
+  // Los Angeles Clippers
   "los angeles clippers": "los angeles clippers",
   "la clippers": "los angeles clippers",
   "lac": "los angeles clippers",
   "clippers": "los angeles clippers",
 
-  // LA Lakers
+  // Los Angeles Lakers
   "los angeles lakers": "los angeles lakers",
   "la lakers": "los angeles lakers",
   "lal": "los angeles lakers",
@@ -218,12 +220,11 @@ export function canonicalTeamName(x: string) {
   return ALIASES[n] ?? n;
 }
 
-export function makeMatchKey(awayTeam: string, homeTeam: string, dateKey: string) {
-  return `${dateKey}|${canonicalTeamName(awayTeam)}@${canonicalTeamName(homeTeam)}`;
+export function makeMatchKey(awayTeam: string, homeTeam: string, laDateKey: string) {
+  return `${laDateKey}|${canonicalTeamName(awayTeam)}@${canonicalTeamName(homeTeam)}`;
 }
 
 export function parseClockToSecondsRemaining(clock: any): number | null {
-  // Accept "MM:SS" or { minutes, seconds }
   if (typeof clock === "string") {
     const m = clock.match(/^(\d{1,2}):(\d{2})$/);
     if (!m) return null;
@@ -242,7 +243,7 @@ export function parseClockToSecondsRemaining(clock: any): number | null {
 
 /**
  * Compute YYYY-MM-DD in America/Los_Angeles from an ISO datetime string.
- * This stabilizes cross-provider joins (prevents UTC date boundary mismatches).
+ * This prevents UTC date boundary join bugs.
  */
 export function dateKeyLosAngelesFromIso(iso: string | null | undefined): string | null {
   if (!iso) return null;

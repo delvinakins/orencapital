@@ -5,13 +5,13 @@ import { canonicalTeamName, dateKeyLosAngelesFromIso } from "./normalize";
 export type OddsGame = {
   providerGameId: string;
   commenceTimeIso: string | null;
+
   laDateKey: string | null;
 
   awayTeam: string; // canonical
   homeTeam: string; // canonical
 
-  // Consensus live spread for HOME (negative = home favored)
-  liveHomeSpread: number | null;
+  liveHomeSpread: number | null; // consensus
 };
 
 function toNum(x: any): number | null {
@@ -45,8 +45,8 @@ export async function fetchTheOddsApiSpreads(): Promise<OddsGame[]> {
     const commenceTimeIso = typeof g?.commence_time === "string" ? g.commence_time : null;
     const laDateKey = dateKeyLosAngelesFromIso(commenceTimeIso);
 
-    const homeRaw = String(g?.home_team ?? "").trim();
-    const awayRaw = String(g?.away_team ?? "").trim();
+    const homeRaw = String(g?.home_team ?? g?.homeTeam ?? "").trim();
+    const awayRaw = String(g?.away_team ?? g?.awayTeam ?? "").trim();
     if (!homeRaw || !awayRaw) continue;
 
     const homeTeam = canonicalTeamName(homeRaw);
