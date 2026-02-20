@@ -99,12 +99,19 @@ function formatUpdatedAtPT(iso?: string): string | null {
 
 function formatTodayPT(): string {
   const now = new Date();
-  return new Intl.DateTimeFormat("en-US", {
+  const weekday = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
     weekday: "short",
+  }).format(now);
+
+  const monthDay = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
     month: "short",
     day: "2-digit",
   }).format(now);
+
+  // Fri • Feb 20
+  return `${weekday} • ${monthDay}`;
 }
 
 function isAfter2pmPT(now: Date): boolean {
@@ -116,6 +123,70 @@ function isAfter2pmPT(now: Date): boolean {
 
   const h = Number(hourStr);
   return Number.isFinite(h) ? h >= 14 : false;
+}
+
+/**
+ * Derive the slate date label from the returned games:
+ * - pick the most common PT calendar date among game start times
+ * - format as: Fri • Feb 20
+ * - do NOT fall back to “today” unless no date can be derived
+ */
+function deriveSlateDatePTFromGames(games: any[]): string | null {
+  if (!Array.isArray(games) || games.length === 0) return null;
+
+  // try a few plausible fields across providers
+  const startCandidates = (g: any) =>
+    g?.startTime ??
+    g?.start_time ??
+    g?.scheduled ??
+    g?.commence_time ??
+    g?.gameTime ??
+    g?.dateTime ??
+    g?.tipoff ??
+    g?.tipoffTime ??
+    g?.timestamp ??
+    null;
+
+  const counts = new Map<string, { count: number; sample: Date }>();
+
+  for (const g of games) {
+    const raw = startCandidates(g);
+    if (!raw) continue;
+
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) continue;
+
+    // PT calendar date key (YYYY-MM-DD)
+    const key = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Los_Angeles",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
+
+    const prev = counts.get(key);
+    if (prev) counts.set(key, { count: prev.count + 1, sample: prev.sample });
+    else counts.set(key, { count: 1, sample: d });
+  }
+
+  let best: { key: string; count: number; sample: Date } | null = null;
+  for (const [key, v] of counts.entries()) {
+    if (!best || v.count > best.count) best = { key, count: v.count, sample: v.sample };
+  }
+  if (!best) return null;
+
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    weekday: "short",
+  }).format(best.sample);
+
+  const monthDay = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    month: "short",
+    day: "2-digit",
+  }).format(best.sample);
+
+  return `${weekday} • ${monthDay}`;
 }
 
 function MoveGapTip() {
@@ -319,7 +390,13 @@ export default function NbaClient() {
   }, []);
 
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
-  const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
+
+  // Derive slate date from returned games (most common PT date).
+  // Fallback to "today" only if we cannot derive a date from the payload.
+  const headerDate = useMemo(() => {
+    const derived = deriveSlateDatePTFromGames(games as any[]);
+    return derived ?? formatTodayPT();
+  }, [games, nowTick]);
 
   async function load() {
     setLoadError(null);
@@ -404,9 +481,11 @@ export default function NbaClient() {
         matchup: `${awayTeam} @ ${homeTeam}`,
         clock: `P${g.period ?? "—"} • ${mm}:${ss}`,
 
+        // Pre-2pm gating: spreads display as em dash.
         live: after2pm ? formatSpread(g.liveSpreadHome, 1) : "—",
         close: after2pm ? formatSpread(g.closingSpreadHome, 1) : "—",
 
+        // Pre-2pm gating: move-gap number also hidden.
         scoreText: after2pm ? formatSigned(moveGapPts, 1) : "—",
         tone,
         absZ,
@@ -530,7 +609,9 @@ export default function NbaClient() {
           ) : rows.length === 0 ? (
             <div className="space-y-2 text-foreground/70">
               <div>{loadError ?? "Live feed is offline right now."}</div>
-              <div className="text-sm text-foreground/55">If you checked after hours, the last available snapshot will appear once it exists.</div>
+              <div className="text-sm text-foreground/55">
+                If you checked after hours, the last available snapshot will appear once it exists.
+              </div>
             </div>
           ) : view === "slate" ? (
             <div className="overflow-x-auto">
@@ -588,9 +669,7 @@ export default function NbaClient() {
               <div className="mt-4 text-sm text-foreground/55">Lab preview. All signals require review.</div>
 
               {!after2pm ? (
-                <div className="mt-2 text-sm text-foreground/55">
-                  Spread-based signals are hidden before 2pm PT.
-                </div>
+                <div className="mt-2 text-sm text-foreground/55">Spread-based signals are hidden before 2pm PT.</div>
               ) : null}
             </div>
           ) : (
@@ -736,9 +815,7 @@ export default function NbaClient() {
               ) : null}
 
               {!after2pm ? (
-                <div className="text-sm text-foreground/55">
-                  Spread-based tiles and rankings start at 2pm PT.
-                </div>
+                <div className="text-sm text-foreground/55">Spread-based tiles and rankings start at 2pm PT.</div>
               ) : null}
             </div>
           )}
