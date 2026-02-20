@@ -7,6 +7,8 @@ import { fetchTheOddsApiSpreads } from "@/lib/labs/nba/providers/odds-theoddsapi
 import { makeMatchKey } from "@/lib/labs/nba/providers/normalize";
 import { inPollingWindow } from "@/lib/labs/nba/poll-window";
 
+type Phase = "pregame" | "live" | "final" | "unknown";
+
 type LiveGameItem = {
   gameId: string;
 
@@ -21,9 +23,20 @@ type LiveGameItem = {
 
   liveSpreadHome: number | null;
   closingSpreadHome: number | null;
+
+  phase: Phase;
 };
 
-type LiveOk = { ok: true; items: LiveGameItem[]; meta?: { stale?: boolean; updatedAt?: string } };
+type LiveOk = {
+  ok: true;
+  items: LiveGameItem[];
+  meta: {
+    stale: boolean;
+    updatedAt: string; // ISO
+    window: "active" | "offhours";
+  };
+};
+
 type LiveResponse = LiveOk | { ok: false };
 
 function supabaseAdmin() {
@@ -71,9 +84,7 @@ async function ensureClosingLines(candidates: Array<{ gameKey: string; closingHo
   await sb.from("nba_closing_lines").upsert(rows, { onConflict: "game_key" });
 }
 
-/** -------------------------------
- *  Snapshot persistence (Supabase)
- ---------------------------------*/
+/** Snapshot persistence */
 async function writeSnapshot(payload: LiveOk) {
   const sb = supabaseAdmin();
   await sb
@@ -94,23 +105,22 @@ async function readSnapshot(): Promise<LiveOk | null> {
   const payload = data.payload as any;
   if (!payload?.ok || !Array.isArray(payload.items)) return null;
 
+  const updatedAt = String(data.updated_at ?? "");
+  const meta = payload.meta ?? {};
   return {
     ok: true,
-    items: payload.items as LiveGameItem[],
-    meta: { stale: true, updatedAt: String(data.updated_at ?? "") },
+    items: payload.items,
+    meta: {
+      stale: true,
+      updatedAt: updatedAt || String(meta.updatedAt ?? new Date(0).toISOString()),
+      window: String(meta.window ?? "offhours") === "active" ? "active" : "offhours",
+    },
   };
 }
 
-/** -------------------------------
- *  Cache + refresh policy
- ---------------------------------*/
-// Active window: 90s target refresh (matches your UI interval)
+/** Cache policy */
 const ACTIVE_REFRESH_MS = 90_000;
-
-// Off-hours: 15 min target refresh
 const OFFHOURS_REFRESH_MS = 15 * 60_000;
-
-// small grace so we don't thrash right at boundaries
 const GRACE_MS = 5_000;
 
 let cached: { at: number; payload: LiveOk } | null = null;
@@ -124,10 +134,21 @@ function isFresh(ts: number, ttlMs: number) {
   return nowMs() - ts <= ttlMs + GRACE_MS;
 }
 
-/** -------------------------------
- *  Provider poll + join
- ---------------------------------*/
-async function pollProviders(): Promise<LiveOk> {
+function classifyPhase(it: {
+  period: number | null;
+  awayScore: number | null;
+  homeScore: number | null;
+}) : Phase {
+  const hasScore = typeof it.awayScore === "number" && typeof it.homeScore === "number";
+  const p = typeof it.period === "number" ? it.period : null;
+
+  if (p != null && p >= 1 && hasScore) return "live";
+  if (p != null && p >= 1 && !hasScore) return "unknown";
+  // If we don't have period yet, treat it as pregame (line-only display still useful)
+  return "pregame";
+}
+
+async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
   const [scores, odds] = await Promise.all([fetchApiSportsScores(), fetchTheOddsApiSpreads()]);
 
   const oddsByKey = new Map<string, { liveHomeSpread: number | null }>();
@@ -143,6 +164,7 @@ async function pollProviders(): Promise<LiveOk> {
   const gameKeys: string[] = [];
   const closingCandidates: Array<{ gameKey: string; closingHomeSpread: number }> = [];
 
+  // Build from scores feed first (preferred)
   for (const s of scores) {
     const match = `${s.awayTeam}@${s.homeTeam}`;
     const gameKey = makeMatchKey(s.awayTeam, s.homeTeam, s.laDateKey);
@@ -153,6 +175,7 @@ async function pollProviders(): Promise<LiveOk> {
     const o2 = oddsByMatch.get(match);
     const liveSpreadHome = o1?.liveHomeSpread ?? o2?.liveHomeSpread ?? null;
 
+    // Capture a "closing baseline" when pregame & we see a line (conservative)
     if (s.status === "scheduled" && typeof liveSpreadHome === "number" && Number.isFinite(liveSpreadHome)) {
       closingCandidates.push({ gameKey, closingHomeSpread: liveSpreadHome });
     }
@@ -164,6 +187,8 @@ async function pollProviders(): Promise<LiveOk> {
 
     if (!hasAny) continue;
 
+    const phase = s.status === "final" ? "final" : classifyPhase(s);
+
     items.push({
       gameId: gameKey,
       awayTeam: s.awayTeam,
@@ -174,7 +199,33 @@ async function pollProviders(): Promise<LiveOk> {
       secondsRemaining: s.secondsRemainingInPeriod,
       liveSpreadHome,
       closingSpreadHome: null,
+      phase,
     });
+  }
+
+  // If scores feed is empty but odds exist, still show something (pregame line-only cards)
+  if (items.length === 0 && odds.length > 0) {
+    for (const o of odds) {
+      const gameKey = makeMatchKey(o.awayTeam, o.homeTeam, o.laDateKey || "");
+      gameKeys.push(gameKey);
+
+      if (typeof o.liveHomeSpread === "number" && Number.isFinite(o.liveHomeSpread)) {
+        closingCandidates.push({ gameKey, closingHomeSpread: o.liveHomeSpread });
+      }
+
+      items.push({
+        gameId: gameKey,
+        awayTeam: o.awayTeam,
+        homeTeam: o.homeTeam,
+        awayScore: null,
+        homeScore: null,
+        period: null,
+        secondsRemaining: null,
+        liveSpreadHome: o.liveHomeSpread ?? null,
+        closingSpreadHome: null,
+        phase: "pregame",
+      });
+    }
   }
 
   await ensureClosingLines(closingCandidates);
@@ -182,46 +233,48 @@ async function pollProviders(): Promise<LiveOk> {
   const closingMap = await getClosingMap(gameKeys);
   const finalItems = items.map((it) => ({
     ...it,
-    closingSpreadHome: closingMap.get(it.gameId) ?? null,
+    closingSpreadHome: closingMap.get(it.gameId) ?? it.closingSpreadHome ?? null,
   }));
 
-  return { ok: true, items: finalItems, meta: { stale: false, updatedAt: new Date().toISOString() } };
+  return {
+    ok: true,
+    items: finalItems,
+    meta: {
+      stale: !withinActiveWindow,
+      updatedAt: new Date().toISOString(),
+      window: withinActiveWindow ? "active" : "offhours",
+    },
+  };
 }
 
-/** -------------------------------
- *  Refresh logic (active vs off-hours)
- ---------------------------------*/
 async function getData(): Promise<LiveResponse> {
   const withinActiveWindow = inPollingWindow(new Date());
   const ttl = withinActiveWindow ? ACTIVE_REFRESH_MS : OFFHOURS_REFRESH_MS;
 
-  // If we have fresh in-memory cache for the relevant mode, use it.
+  // Fresh in-memory cache for current mode
   if (cached && isFresh(cached.at, ttl)) {
-    // mark stale if off-hours (even if we refreshed recently)
-    return withinActiveWindow ? cached.payload : { ...cached.payload, meta: { ...(cached.payload.meta ?? {}), stale: true } };
+    return withinActiveWindow
+      ? cached.payload
+      : { ...cached.payload, meta: { ...cached.payload.meta, stale: true, window: "offhours" } };
   }
 
   if (inflight) return inflight;
 
   inflight = (async () => {
     try {
-      const payload = await pollProviders();
+      const payload = await pollProviders(withinActiveWindow);
 
       cached = { at: nowMs(), payload };
       await writeSnapshot(payload);
 
-      // If we're off-hours, mark stale in response even though it's refreshed
-      return withinActiveWindow
-        ? payload
-        : { ...payload, meta: { ...(payload.meta ?? {}), stale: true } };
+      return payload;
     } catch (err: any) {
       console.error("[nba/live-games] poll error:", err?.message ?? err);
 
-      // fall back to in-memory then persisted snapshot
       if (cached) {
         return withinActiveWindow
           ? cached.payload
-          : { ...cached.payload, meta: { ...(cached.payload.meta ?? {}), stale: true } };
+          : { ...cached.payload, meta: { ...cached.payload.meta, stale: true, window: "offhours" } };
       }
 
       const snap = await readSnapshot();
@@ -237,6 +290,8 @@ async function getData(): Promise<LiveResponse> {
 export async function GET() {
   try {
     const payload = await getData();
+    // If we have ANY snapshot, we should never show "No games available" in the UI.
+    // Worst-case, payload is ok:false only when nothing exists yet.
     return NextResponse.json(payload, { status: 200 });
   } catch (err: any) {
     console.error("[nba/live-games] handler error:", err?.message ?? err);

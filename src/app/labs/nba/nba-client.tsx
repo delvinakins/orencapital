@@ -8,6 +8,8 @@ import { buildDistributionIndex } from "@/lib/nba/deviation-engine";
 
 type GameClockState = any;
 
+type LiveMeta = { stale?: boolean; updatedAt?: string; window?: "active" | "offhours" } | undefined;
+
 function makeStubIndex() {
   const samples = Array.from({ length: 1200 }).map((_, i) => {
     const spread = [-8, -6, -4, -2, 0, 2, 4, 6][i % 8];
@@ -80,6 +82,19 @@ function formatSigned(x: number, digits = 1) {
   if (v > 0) return `+${s}`;
   if (v < 0) return `-${s}`;
   return `0.${"0".repeat(Math.max(0, digits))}`;
+}
+
+function formatUpdatedAtPT(iso?: string): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    month: "short",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(d);
 }
 
 function MoveGapTip() {
@@ -270,6 +285,7 @@ export default function NbaClient() {
   const [games, setGames] = useState<GameClockState[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [meta, setMeta] = useState<LiveMeta>(undefined);
 
   const [view, setView] = useState<ViewMode>("slate");
 
@@ -277,19 +293,12 @@ export default function NbaClient() {
     setLoadError(null);
 
     try {
-      // ✅ LIVE feed (replaces mock feed)
       const res = await fetch("/api/labs/nba/live-games", { cache: "no-store" });
-
-      if (res.status === 404) {
-        setGames([]);
-        setLoadError("Live feed endpoint not found.");
-        setLoading(false);
-        return;
-      }
 
       const contentType = res.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
         setGames([]);
+        setMeta(undefined);
         setLoadError("Unable to load games right now.");
         setLoading(false);
         return;
@@ -297,17 +306,19 @@ export default function NbaClient() {
 
       const json = await res.json().catch(() => null);
 
-      if (!json?.ok || !Array.isArray(json.items)) {
-        setGames([]);
-        setLoadError("Unable to load games right now.");
+      if (json?.ok && Array.isArray(json.items)) {
+        setGames(json.items);
+        setMeta(json.meta);
         setLoading(false);
         return;
       }
 
-      setGames(json.items);
+      // If ok:false, show a calm message but keep any previously loaded snapshot on screen
+      setMeta(undefined);
+      setLoadError("Live feed is offline right now.");
       setLoading(false);
     } catch {
-      setGames([]);
+      setMeta(undefined);
       setLoadError("Unable to load games right now.");
       setLoading(false);
     }
@@ -319,6 +330,9 @@ export default function NbaClient() {
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const updatedAtLabel = useMemo(() => formatUpdatedAtPT(meta?.updatedAt), [meta?.updatedAt]);
+  const isStale = Boolean(meta?.stale);
 
   const rows = useMemo<Row[]>(() => {
     const computed = games.map((g: any) => {
@@ -371,7 +385,6 @@ export default function NbaClient() {
     return computed;
   }, [games]);
 
-  // Keep the heat map readable: hide low-signal noise
   const heatRows = useMemo(() => rows.filter((r) => r.abs >= 0.6), [rows]);
 
   const treemap = useMemo(() => {
@@ -421,8 +434,11 @@ export default function NbaClient() {
                 Labs • NBA
               </div>
               <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
-                Live feed
+                {isStale ? "Snapshot" : "Live"}
               </div>
+              {updatedAtLabel ? (
+                <div className="text-xs text-foreground/55">Last updated {updatedAtLabel} PT</div>
+              ) : null}
             </div>
 
             <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">Live Deviation Heat Map</h1>
@@ -460,7 +476,12 @@ export default function NbaClient() {
           {loading ? (
             <div className="text-foreground/70">Loading…</div>
           ) : rows.length === 0 ? (
-            <div className="text-foreground/70">{loadError ?? "No games available."}</div>
+            <div className="space-y-2 text-foreground/70">
+              <div>{loadError ?? "Live feed is offline right now."}</div>
+              <div className="text-sm text-foreground/55">
+                If you checked after hours, the last available snapshot will appear once it exists.
+              </div>
+            </div>
           ) : view === "slate" ? (
             <div className="overflow-x-auto">
               <table className="min-w-[960px] w-full text-[15px]">
@@ -580,12 +601,7 @@ export default function NbaClient() {
                         <div className={cn("h-full w-full", isLarge ? "p-4" : isMedium ? "p-3" : "p-2")}>
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <div
-                                className={cn(
-                                  "truncate font-semibold text-foreground",
-                                  isLarge ? "text-base" : "text-sm"
-                                )}
-                              >
+                              <div className={cn("truncate font-semibold text-foreground", isLarge ? "text-base" : "text-sm")}>
                                 {r.matchup}
                               </div>
 
@@ -640,12 +656,6 @@ export default function NbaClient() {
               </div>
 
               <div className="text-sm text-foreground/55">Lab preview. All signals require review.</div>
-
-              {rows.length !== heatRows.length ? (
-                <div className="text-sm text-foreground/55">
-                  Showing {heatRows.length} games on the heat map (low-signal games are hidden).
-                </div>
-              ) : null}
             </div>
           )}
         </section>
