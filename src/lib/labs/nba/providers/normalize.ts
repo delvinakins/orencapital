@@ -4,17 +4,15 @@ export function normTeamName(x: string) {
   return String(x || "")
     .toLowerCase()
     .replace(/\./g, "")
-    .replace(/[^a-z\s]/g, "")
+    // Keep digits for "76ers"
+    .replace(/[^a-z0-9\s]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 /**
  * Canonical team names for joining across providers.
- * Keys are normalized (see normTeamName).
- *
- * Goal: accept common feed variants + broadcast abbreviations.
- * Values are the canonical names you will use everywhere downstream.
+ * Keys are normalized via normTeamName().
  */
 const ALIASES: Record<string, string> = {
   // Atlanta Hawks
@@ -92,13 +90,13 @@ const ALIASES: Record<string, string> = {
   "ind": "indiana pacers",
   "pacers": "indiana pacers",
 
-  // Los Angeles Clippers
+  // LA Clippers
   "los angeles clippers": "los angeles clippers",
   "la clippers": "los angeles clippers",
   "lac": "los angeles clippers",
   "clippers": "los angeles clippers",
 
-  // Los Angeles Lakers
+  // LA Lakers
   "los angeles lakers": "los angeles lakers",
   "la lakers": "los angeles lakers",
   "lal": "los angeles lakers",
@@ -159,16 +157,17 @@ const ALIASES: Record<string, string> = {
   "orl": "orlando magic",
   "magic": "orlando magic",
 
-  // Philadelphia 76ers
+  // Philadelphia 76ers (digits must survive normalization)
   "philadelphia 76ers": "philadelphia 76ers",
   "philadelphia sixers": "philadelphia 76ers",
   "phi 76ers": "philadelphia 76ers",
   "phi sixers": "philadelphia 76ers",
   "phi": "philadelphia 76ers",
   "sixers": "philadelphia 76ers",
+  "76ers": "philadelphia 76ers",
+  "76 ers": "philadelphia 76ers",
   "seventysixers": "philadelphia 76ers",
   "seventy sixers": "philadelphia 76ers",
-  "76ers": "philadelphia 76ers",
 
   // Phoenix Suns
   "phoenix suns": "phoenix suns",
@@ -246,6 +245,5 @@ export function parseClockToSecondsRemaining(clock: any): number | null {
   const ss = typeof clock?.seconds === "number" ? clock.seconds : Number(clock?.seconds);
   if (!Number.isFinite(mm) || !Number.isFinite(ss)) return null;
 
-  // clamp to regulation quarter length; OT will still fit if provider supplies <= 720
   return Math.max(0, Math.min(12 * 60, Math.trunc(mm) * 60 + Math.trunc(ss)));
 }
