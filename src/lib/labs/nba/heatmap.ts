@@ -48,7 +48,8 @@ export type DeviationResult = {
   // Positive means more points than expected vs close (proxy).
   totalDelta: number;
 
-  // Statistical z-scores (spread uses conditional model if provided; total still stubbed).
+  // Internal numeric scores used for ranking + coloring
+  // (UI should describe them in plain language; not “z-score”.)
   zSpread: number;
   zTotal: number;
 
@@ -65,6 +66,12 @@ export type DeviationResult = {
     stdevUsed?: number;
     tier?: string;
     label?: string;
+
+    // Fallback (non-model) context — safe + non-proprietary
+    progress01?: number;
+    spreadScale?: number;
+    totalScale?: number;
+    expectedPointsSoFar?: number;
   };
 };
 
@@ -81,46 +88,93 @@ export type DeviationEngineContext = {
   totalIndex?: DistributionIndex;
 };
 
-function heatFromAbsZ(absZ: number): DeviationResult["heat"] {
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function safeNum(x: any): number | null {
+  const v = typeof x === "number" ? x : x == null ? null : Number(x);
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/**
+ * We treat regulation as 48 minutes:
+ * - 4 quarters * 12 minutes * 60 seconds
+ * OT is clamped to “late game” behavior.
+ */
+function estimateRegulationSecondsRemaining(period: number, secondsRemainingInPeriod: number) {
+  const p = Number.isFinite(period) ? period : 1;
+  const s = Number.isFinite(secondsRemainingInPeriod) ? secondsRemainingInPeriod : 0;
+
+  if (p >= 5) return 0; // OT => effectively "late"
+
+  const periodsAfter = clamp(4 - p, 0, 3);
+  const total = periodsAfter * 12 * 60 + clamp(s, 0, 12 * 60);
+  return clamp(total, 0, 48 * 60);
+}
+
+function progress01(period: number, secondsRemainingInPeriod: number) {
+  const remaining = estimateRegulationSecondsRemaining(period, secondsRemainingInPeriod);
+  const total = 48 * 60;
+  const elapsed = total - remaining;
+  return clamp(elapsed / total, 0, 1);
+}
+
+function heatFromAbsScore(abs: number): DeviationResult["heat"] {
   // Calm defaults: "RED" means "within expected range" (UI should not render harsh red blocks).
-  if (!Number.isFinite(absZ)) return "RED";
-  if (absZ >= 1.5) return "GREEN";
-  if (absZ >= 1.0) return "YELLOW";
+  if (!Number.isFinite(abs)) return "RED";
+  if (abs >= 1.5) return "GREEN";
+  if (abs >= 1.0) return "YELLOW";
   return "RED";
 }
 
 /**
  * Deviation engine:
- * - Spread: use conditional model when we have liveSpreadHome + a spreadIndex
- * - Total: still proxy (until we build a totals model)
+ * - Spread:
+ *    - If we have liveSpreadHome + spreadIndex => use conditional model (scoreDeviation)
+ *    - Else => fallback to a time-adjusted “unusual move” score based on the scoreboard
+ * - Total:
+ *    - Time-adjusted expectation from closingTotal (simple + stable)
  *
  * IMPORTANT:
  * This module stays pure (no fetch, no env).
- * You can pass in the index from server code or a cached module later.
  */
 export function computeDeviation(
   game: GameClockState,
   ctx: DeviationEngineContext = {}
 ): DeviationResult {
-  const homeMargin = game.homeScore - game.awayScore;
+  const homeScore = safeNum(game.homeScore) ?? 0;
+  const awayScore = safeNum(game.awayScore) ?? 0;
+
+  const closingSpreadHome = safeNum(game.closingSpreadHome) ?? 0;
+  const closingTotal = safeNum(game.closingTotal) ?? 0;
+
+  const period = safeNum(game.period) ?? 1;
+  const secondsRemaining = safeNum(game.secondsRemaining) ?? 0;
+
+  const homeMargin = homeScore - awayScore;
 
   // closingSpreadHome is negative if home favored (home -4.5 => -4.5)
   // expected “final margin” proxy = -closingSpreadHome
-  const expectedFinalHomeMargin = -game.closingSpreadHome;
+  const expectedFinalHomeMargin = -closingSpreadHome;
 
-  // Proxy until we have a proper time/pace model for "expected margin so far"
+  // Proxy (kept for UX continuity): “how far margin is from close”
   const spreadDelta = homeMargin - expectedFinalHomeMargin;
 
-  const liveTotalPoints = game.homeScore + game.awayScore;
+  const liveTotalPoints = homeScore + awayScore;
 
-  // Proxy: compare live points to closing total (not time-adjusted)
-  const totalDelta = liveTotalPoints - game.closingTotal;
+  // Time-adjusted totals expectation (simple, non-secret):
+  // expected points so far ≈ closingTotal * progress
+  const prog = progress01(period, secondsRemaining);
+  const expectedPointsSoFar = closingTotal * prog;
 
-  // Default stubs
+  // Proxy (improved): points vs expected points so far
+  const totalDelta = liveTotalPoints - expectedPointsSoFar;
+
+  // Default
   let zSpread = 0;
   let zTotal = 0;
 
-  // Keep existing behavior unless we can compute a real spread z-score
   const canModelSpread =
     typeof game.liveSpreadHome === "number" &&
     Number.isFinite(game.liveSpreadHome) &&
@@ -140,7 +194,6 @@ export function computeDeviation(
       closingHomeSpread: game.closingSpreadHome,
     };
 
-    // Conservative defaults baked into scoreDeviation; you can tune later.
     score = scoreDeviation(ctx.spreadIndex as DistributionIndex, state, market, {
       priorWeight: 40,
       stdevFloor: 0.6,
@@ -150,21 +203,38 @@ export function computeDeviation(
     });
 
     zSpread = Number.isFinite(score.z) ? score.z : 0;
+  } else {
+    /**
+     * Fallback spread score (non-model):
+     * - early game swings are “noisier” => we down-weight early
+     * - late game swings matter more => we up-weight late
+     * - larger spreads get a slightly wider “normal range”
+     */
+    const timeWeight = 0.75 + 1.25 * prog; // 0.75 early -> 2.0 late
+    const spreadScale = (3.75 + Math.abs(closingSpreadHome) * 0.15) / timeWeight; // points per unit
+
+    zSpread = spreadScale > 0 ? spreadDelta / spreadScale : 0;
   }
 
-  // Heat: if model present, use absZ; else use proxy-based thresholds (your current logic)
-  const heat: DeviationResult["heat"] = score
-    ? heatFromAbsZ(score.absZ)
-    : Math.abs(spreadDelta) >= 10 || Math.abs(totalDelta) >= 12
-      ? "GREEN"
-      : Math.abs(spreadDelta) >= 6
-        ? "YELLOW"
-        : "RED";
+  /**
+   * Total score (simple + stable):
+   * - use time-adjusted expectation from close
+   * - normalize by a gentle scale that tightens late game
+   */
+  const timeWeightForTotal = 0.75 + 1.25 * prog;
+  const totalScale = (10.0 + Math.abs(closingTotal - 220) * 0.02) / timeWeightForTotal;
+
+  zTotal = totalScale > 0 ? totalDelta / totalScale : 0;
+  if (!Number.isFinite(zTotal)) zTotal = 0;
+
+  // Heat uses whichever score is “more unusual” right now
+  const abs = Math.max(Math.abs(zSpread), Math.abs(zTotal));
+  const heat = heatFromAbsScore(abs);
 
   return {
     spreadDelta,
     totalDelta,
-    zSpread,
+    zSpread: Number.isFinite(zSpread) ? zSpread : 0,
     zTotal,
     heat,
     meta: score
@@ -178,6 +248,12 @@ export function computeDeviation(
           tier: score.tier,
           label: score.label,
         }
-      : { usedModel: false },
+      : {
+          usedModel: false,
+          progress01: prog,
+          spreadScale: (3.75 + Math.abs(closingSpreadHome) * 0.15) / (0.75 + 1.25 * prog),
+          totalScale,
+          expectedPointsSoFar,
+        },
   };
 }
