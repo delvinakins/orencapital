@@ -277,11 +277,12 @@ export default function NbaClient() {
     setLoadError(null);
 
     try {
-      const res = await fetch("/api/labs/nba/mock-games", { cache: "no-store" });
+      // ✅ LIVE feed (replaces mock feed)
+      const res = await fetch("/api/labs/nba/live-games", { cache: "no-store" });
 
       if (res.status === 404) {
         setGames([]);
-        setLoadError("Feed endpoint not found.");
+        setLoadError("Live feed endpoint not found.");
         setLoading(false);
         return;
       }
@@ -415,8 +416,13 @@ export default function NbaClient() {
       <div className="mx-auto max-w-5xl space-y-8 px-6 py-16">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-2 text-sm text-foreground/80">
-              Labs • NBA
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-2 text-sm text-foreground/80">
+                Labs • NBA
+              </div>
+              <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
+                Live feed
+              </div>
             </div>
 
             <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">Live Deviation Heat Map</h1>
@@ -552,7 +558,6 @@ export default function NbaClient() {
                     const hasScore = typeof r.awayScore === "number" && typeof r.homeScore === "number";
                     const showScoreLine = isLarge && hasScore;
 
-                    // Show "Move/Normal" chips only in large tiles
                     const showMoveNormal = isLarge;
 
                     return (
