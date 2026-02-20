@@ -1,23 +1,27 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import ProLock from "@/components/ProLock";
 
-type ProStatus =
-  | { ok: true; pro: true }
-  | { ok: true; pro: false }
-  | { ok: false; reason?: "unauthorized" | "offline" | "error" };
+type Mode = "overlay" | "inline" | "card" | "minimal" | string;
 
 type Props = {
-  children: React.ReactNode;
-  /** Optional: change lock copy per page */
+  children?: ReactNode;
+
+  // ✅ New API (recommended)
   lockTitle?: string;
   lockSubtitle?: string;
-  /** Optional: where to send user for upgrade/sign-in */
+
   pricingHref?: string;
   loginHref?: string;
-  /** If you want to show something else while checking */
-  loadingFallback?: React.ReactNode;
+
+  mode?: Mode;
+  loadingFallback?: ReactNode;
+
+  // ✅ Back-compat (if older callsites used these names)
+  feature?: string;
+  description?: string;
 };
 
 function isJsonResponse(res: Response) {
@@ -31,49 +35,43 @@ export default function ProGate({
   lockSubtitle,
   pricingHref = "/pricing",
   loginHref = "/login",
+  mode = "overlay",
   loadingFallback,
+
+  // back-compat
+  feature,
+  description,
 }: Props) {
-  const [status, setStatus] = useState<"loading" | "pro" | "locked" | "error">("loading");
-  const [detail, setDetail] = useState<ProStatus | null>(null);
+  const [status, setStatus] = useState<"loading" | "pro" | "locked" | "unauthorized" | "error">("loading");
 
   async function check() {
     setStatus("loading");
-
     try {
       const res = await fetch("/api/pro/status", { cache: "no-store" });
 
-      // Server truth:
-      // - 200 => pro
-      // - 402 => not pro
-      // - 401/403 => not signed in (treat as locked)
-      // Anything else => error
+      // ✅ Server truth contract
       if (res.status === 200) {
-        setDetail({ ok: true, pro: true });
         setStatus("pro");
         return;
       }
 
       if (res.status === 402) {
-        setDetail({ ok: true, pro: false });
         setStatus("locked");
         return;
       }
 
       if (res.status === 401 || res.status === 403) {
-        setDetail({ ok: false, reason: "unauthorized" });
-        setStatus("locked");
+        setStatus("unauthorized");
         return;
       }
 
-      // If it returns JSON, try to parse but never show raw details to users
+      // Don't leak details; just attempt parse so runtime doesn't explode
       if (isJsonResponse(res)) {
         await res.json().catch(() => null);
       }
 
-      setDetail({ ok: false, reason: "error" });
       setStatus("error");
     } catch {
-      setDetail({ ok: false, reason: "offline" });
       setStatus("error");
     }
   }
@@ -84,13 +82,29 @@ export default function ProGate({
   }, []);
 
   const lockCopy = useMemo(() => {
-    // Default copy stays calm & aligned with brand
+    // Prefer new props; fall back to legacy ones
+    const baseTitle = lockTitle ?? feature ?? "Pro required";
+    const baseSubtitle =
+      lockSubtitle ??
+      description ??
+      "This section is available on Pro. Upgrade to unlock advanced risk tools and market labs.";
+
+    if (status === "unauthorized") {
+      return {
+        title: "Sign in required",
+        subtitle:
+          "Please sign in to continue. If you already have Pro, sign in with the email linked to your subscription.",
+        primaryHref: loginHref,
+        primaryLabel: "Sign in",
+        secondaryHref: pricingHref,
+        secondaryLabel: "View Pricing",
+      };
+    }
+
     if (status === "error") {
       return {
-        title: lockTitle ?? "Unable to verify access",
-        subtitle:
-          lockSubtitle ??
-          "We couldn’t verify Pro access right now. Please refresh or try again in a moment.",
+        title: "Unable to verify access",
+        subtitle: "We couldn’t verify Pro access right now. Please refresh or try again in a moment.",
         primaryHref: pricingHref,
         primaryLabel: "View Pricing",
         secondaryHref: loginHref,
@@ -98,21 +112,16 @@ export default function ProGate({
       };
     }
 
-    // locked
-    const unauthorized = detail?.ok === false && detail.reason === "unauthorized";
+    // locked (not pro)
     return {
-      title: lockTitle ?? (unauthorized ? "Sign in required" : "Pro required"),
-      subtitle:
-        lockSubtitle ??
-        (unauthorized
-          ? "Please sign in to continue. If you already have Pro, sign in with the email linked to your subscription."
-          : "This section is available on Pro. Upgrade to unlock advanced risk tools and market labs."),
-      primaryHref: unauthorized ? loginHref : pricingHref,
-      primaryLabel: unauthorized ? "Sign in" : "View Pricing",
-      secondaryHref: unauthorized ? pricingHref : loginHref,
-      secondaryLabel: unauthorized ? "View Pricing" : "Sign in",
+      title: baseTitle,
+      subtitle: baseSubtitle,
+      primaryHref: pricingHref,
+      primaryLabel: "View Pricing",
+      secondaryHref: loginHref,
+      secondaryLabel: "Sign in",
     };
-  }, [status, detail, lockTitle, lockSubtitle, pricingHref, loginHref]);
+  }, [status, lockTitle, lockSubtitle, feature, description, pricingHref, loginHref]);
 
   if (status === "loading") {
     return (
@@ -126,15 +135,18 @@ export default function ProGate({
 
   if (status === "pro") return <>{children}</>;
 
+  // locked / unauthorized / error
   return (
     <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] overflow-hidden">
       <ProLock
+        // ✅ Back-compat: ProLock supports both title/subtitle and feature/description
         title={lockCopy.title}
         subtitle={lockCopy.subtitle}
         primaryHref={lockCopy.primaryHref}
         primaryLabel={lockCopy.primaryLabel}
         secondaryHref={lockCopy.secondaryHref}
         secondaryLabel={lockCopy.secondaryLabel}
+        mode={mode}
       />
     </div>
   );
