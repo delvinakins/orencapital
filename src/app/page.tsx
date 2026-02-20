@@ -12,13 +12,12 @@ export default function Home() {
       <div className="mx-auto max-w-4xl px-6 py-16">
         <div className="space-y-6">
           <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-2 text-sm text-foreground/80">
-            Oren Capital • Risk discipline for retail traders
+            Oren Capital • Risk discipline across markets
           </div>
 
           <h1 className="text-4xl font-semibold tracking-tight sm:text-6xl">
-            Turn{" "}
             <span className="oren-accent relative inline-block align-baseline">
-              <span className="relative z-10 text-[color:var(--accent)]">variance</span>
+              <span className="relative z-10 text-[color:var(--accent)]">Discipline</span>
 
               <span
                 key={`underline-${pathname}`}
@@ -31,12 +30,12 @@ export default function Home() {
                 className="pointer-events-none absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-[0.10]"
               />
             </span>{" "}
-            into structured growth.
+            across markets.
           </h1>
 
           <p className="max-w-2xl text-lg leading-relaxed text-foreground/75">
-            Institutional risk tools built for serious retail swing and options traders: position sizing, drawdown
-            tracking, expectancy, and portfolio heat — without hype.
+            Institutional risk systems for disciplined market participants: position sizing, bankroll management,
+            drawdown tracking, expectancy modeling, and exposure heat — across stocks, options, and sports.
           </p>
 
           <div className="flex flex-col gap-3 sm:flex-row">
@@ -57,9 +56,9 @@ export default function Home() {
 
           <div className="mt-10 grid gap-4 sm:grid-cols-3">
             {[
-              { title: "Position Sizing", desc: "Size trades like a pro. Risk first, entry second." },
+              { title: "Position Sizing", desc: "Size decisions with discipline. Risk first, entry second." },
               { title: "Variance Simulator", desc: "See realistic drawdowns and losing streaks before they happen." },
-              { title: "Portfolio Heat", desc: "Avoid correlated stacking and hidden exposure." },
+              { title: "Exposure Heat", desc: "Avoid correlated stacking and hidden concentration." },
             ].map((f) => (
               <div
                 key={f.title}
