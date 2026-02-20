@@ -2,7 +2,7 @@
 
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { fetchSportsDataIoScores } from "@/lib/labs/nba/providers/scores-sportsdataio";
+import { fetchApiSportsScores } from "@/lib/labs/nba/providers/scores-apisports";
 import { fetchTheOddsApiSpreads } from "@/lib/labs/nba/providers/odds-theoddsapi";
 import { makeMatchKey } from "@/lib/labs/nba/providers/normalize";
 import { inPollingWindow } from "@/lib/labs/nba/poll-window";
@@ -68,13 +68,11 @@ async function ensureClosingLines(candidates: Array<{ gameKey: string; closingHo
 
   if (rows.length === 0) return;
 
-  // Idempotent: first write wins, later writes do nothing harmful
   await sb.from("nba_closing_lines").upsert(rows, { onConflict: "game_key" });
 }
 
 /** -------------------------------
  *  In-memory cache + lock
- *  (prevents N concurrent requests from triggering N provider polls)
  ---------------------------------*/
 const CACHE_TTL_MS = 90_000;
 const STALE_GRACE_MS = 10_000;
@@ -94,11 +92,11 @@ function isFresh(ts: number) {
  *  Provider poll + join
  ---------------------------------*/
 async function pollProviders(): Promise<LiveResponse> {
-  const [scores, odds] = await Promise.all([fetchSportsDataIoScores(), fetchTheOddsApiSpreads()]);
+  const [scores, odds] = await Promise.all([fetchApiSportsScores(), fetchTheOddsApiSpreads()]);
 
   // odds key: laDateKey|away@home
   const oddsByKey = new Map<string, { liveHomeSpread: number | null }>();
-  // fallback: away@home (if laDateKey missing)
+  // fallback: away@home
   const oddsByMatch = new Map<string, { liveHomeSpread: number | null }>();
 
   for (const o of odds) {
@@ -126,7 +124,6 @@ async function pollProviders(): Promise<LiveResponse> {
       closingCandidates.push({ gameKey, closingHomeSpread: liveSpreadHome });
     }
 
-    // Skip games with literally no useful info
     const hasAny =
       typeof liveSpreadHome === "number" ||
       typeof s.homeScore === "number" ||
@@ -147,7 +144,7 @@ async function pollProviders(): Promise<LiveResponse> {
       secondsRemaining: s.secondsRemainingInPeriod,
 
       liveSpreadHome,
-      closingSpreadHome: null, // fill from DB
+      closingSpreadHome: null,
     });
   }
 
@@ -170,7 +167,6 @@ async function getLiveData(): Promise<LiveResponse> {
 
   const within = inPollingWindow(new Date());
   if (!within) {
-    // Outside window: do not spend. Serve last good snapshot if present.
     if (cached?.payload?.ok) return cached.payload;
     return { ok: false };
   }
