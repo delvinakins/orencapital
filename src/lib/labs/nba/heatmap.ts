@@ -1,259 +1,269 @@
-import type {
-  DistributionIndex,
-  NBAGameState,
-  MarketSnapshot,
-  DeviationScore,
-} from "@/lib/nba/deviation-engine";
-import { scoreDeviation } from "@/lib/nba/deviation-engine";
+// src/lib/labs/nba/heatmap.ts
+/**
+ * NBA "Expectation Gap" signal
+ *
+ * Goal: point out outlier performance vs the market line in a calm, institutional way.
+ *
+ * We compute:
+ *  - impliedFinalHomeMargin = -liveHomeSpread
+ *  - expectedFinalHomeMargin = E[FinalHomeMargin | current game state, market context]
+ *  - expectationGap = expectedFinalHomeMargin - impliedFinalHomeMargin
+ *
+ * This file is PURE. No fetch, no UI, no console. Safe to run on server/client.
+ */
 
-export type GameClockState = {
-  gameId: string;
-  homeTeam: string;
-  awayTeam: string;
+export type DeviationState = {
+  period: number | null;
+  secondsRemainingInPeriod: number | null;
+  scoreDiff: number | null; // home - away
+};
 
-  // live scoreboard state
-  homeScore: number;
-  awayScore: number;
-  period: number; // 1-4, 5+ for OT
-  secondsRemaining: number; // remaining in current period (recommended)
-  possession?: "HOME" | "AWAY" | "UNKNOWN";
+export type DeviationMarket = {
+  closingHomeSpread: number | null;
+  liveHomeSpread: number | null;
+};
 
-  // close (consensus)
-  closingSpreadHome: number; // e.g. home -4.5 => -4.5 (home is favored)
-  closingTotal: number; // e.g. 232.5
-
-  /**
-   * OPTIONAL (recommended when feed is ready):
-   * Live spread for home, same convention as closingSpreadHome.
-   * Example: home -2.5 => -2.5
-   */
-  liveSpreadHome?: number;
-
-  /**
-   * OPTIONAL (later):
-   * Live total line (if you want to model totals similarly).
-   */
-  liveTotal?: number;
-
-  // optional later
-  strengthBucket?: "ELITE" | "GOOD" | "AVG" | "WEAK";
+export type ComputeDeviationOptions = {
+  spreadIndex?: any;
 };
 
 export type DeviationResult = {
-  // Signed “margin vs expectation” proxy (kept for continuity + UX even after z-score exists).
-  // Positive means home performing better than expected vs close (proxy).
-  spreadDelta: number;
+  // Primary signal (pts)
+  expectedFinalHomeMargin: number | null;
+  impliedFinalHomeMargin: number | null;
+  expectationGap: number; // expected - implied (0 if unknown)
+  absGap: number;
 
-  // Signed “points vs expectation” proxy.
-  // Positive means more points than expected vs close (proxy).
-  totalDelta: number;
+  // Optional normalizations (best-effort)
+  gapStdDev: number | null;
+  zGap: number; // expectationGap / std (0 if unknown)
 
-  // Internal numeric scores used for ranking + coloring
-  // (UI should describe them in plain language; not “z-score”.)
+  // Back-compat fields (kept so old callers don't explode)
   zSpread: number;
   zTotal: number;
 
-  // For UI coloring (existing enum; UI can render calmly)
-  heat: "GREEN" | "YELLOW" | "RED";
-
-  // Optional debug metadata for dev tools / inspect panels (not required by UI)
-  meta?: {
-    usedModel: boolean;
-    keyUsed?: string;
-    nUsed?: number;
-    expectedDeviation?: number;
-    observedDeviation?: number;
-    stdevUsed?: number;
-    tier?: string;
-    label?: string;
-
-    // Fallback (non-model) context — safe + non-proprietary
-    progress01?: number;
-    spreadScale?: number;
-    totalScale?: number;
-    expectedPointsSoFar?: number;
-  };
+  // Debug-safe metadata (numbers only)
+  state: DeviationState;
+  market: DeviationMarket;
 };
 
-export type DeviationEngineContext = {
-  /**
-   * Conditional distribution index for spread deviation:
-   * deviation = (liveHomeSpread - closingHomeSpread)
-   */
-  spreadIndex?: DistributionIndex;
+function toNum(x: any): number | null {
+  const v = typeof x === "number" ? x : x == null ? null : Number(x);
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
 
-  /**
-   * Reserved for later: conditional distribution index for totals deviation.
-   */
-  totalIndex?: DistributionIndex;
-};
+function toInt(x: any): number | null {
+  const v = toNum(x);
+  return v == null ? null : Math.trunc(v);
+}
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-function safeNum(x: any): number | null {
-  const v = typeof x === "number" ? x : x == null ? null : Number(x);
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
+function getScores(g: any): { home: number | null; away: number | null } {
+  const away =
+    toInt(g?.awayScore) ??
+    toInt(g?.away_score) ??
+    toInt(g?.score?.away) ??
+    toInt(g?.away?.score) ??
+    null;
+
+  const home =
+    toInt(g?.homeScore) ??
+    toInt(g?.home_score) ??
+    toInt(g?.score?.home) ??
+    toInt(g?.home?.score) ??
+    null;
+
+  return { home, away };
 }
 
-/**
- * We treat regulation as 48 minutes:
- * - 4 quarters * 12 minutes * 60 seconds
- * OT is clamped to “late game” behavior.
- */
-function estimateRegulationSecondsRemaining(period: number, secondsRemainingInPeriod: number) {
-  const p = Number.isFinite(period) ? period : 1;
-  const s = Number.isFinite(secondsRemainingInPeriod) ? secondsRemainingInPeriod : 0;
+function buildState(g: any): DeviationState {
+  const period =
+    toInt(g?.period) ??
+    toInt(g?.state?.period) ??
+    toInt(g?.gameState?.period) ??
+    null;
 
-  if (p >= 5) return 0; // OT => effectively "late"
+  // Your feed uses `secondsRemaining`
+  const secondsRemainingInPeriod =
+    toInt(g?.secondsRemaining) ??
+    toInt(g?.secondsRemainingInPeriod) ??
+    toInt(g?.state?.secondsRemainingInPeriod) ??
+    toInt(g?.gameState?.secondsRemainingInPeriod) ??
+    null;
 
-  const periodsAfter = clamp(4 - p, 0, 3);
-  const total = periodsAfter * 12 * 60 + clamp(s, 0, 12 * 60);
-  return clamp(total, 0, 48 * 60);
-}
+  // Prefer explicit scoreDiff if present; else compute from score
+  const scoreDiffExplicit =
+    toInt(g?.scoreDiff) ??
+    toInt(g?.state?.scoreDiff) ??
+    toInt(g?.gameState?.scoreDiff) ??
+    null;
 
-function progress01(period: number, secondsRemainingInPeriod: number) {
-  const remaining = estimateRegulationSecondsRemaining(period, secondsRemainingInPeriod);
-  const total = 48 * 60;
-  const elapsed = total - remaining;
-  return clamp(elapsed / total, 0, 1);
-}
-
-function heatFromAbsScore(abs: number): DeviationResult["heat"] {
-  // Calm defaults: "RED" means "within expected range" (UI should not render harsh red blocks).
-  if (!Number.isFinite(abs)) return "RED";
-  if (abs >= 1.5) return "GREEN";
-  if (abs >= 1.0) return "YELLOW";
-  return "RED";
-}
-
-/**
- * Deviation engine:
- * - Spread:
- *    - If we have liveSpreadHome + spreadIndex => use conditional model (scoreDeviation)
- *    - Else => fallback to a time-adjusted “unusual move” score based on the scoreboard
- * - Total:
- *    - Time-adjusted expectation from closingTotal (simple + stable)
- *
- * IMPORTANT:
- * This module stays pure (no fetch, no env).
- */
-export function computeDeviation(
-  game: GameClockState,
-  ctx: DeviationEngineContext = {}
-): DeviationResult {
-  const homeScore = safeNum(game.homeScore) ?? 0;
-  const awayScore = safeNum(game.awayScore) ?? 0;
-
-  const closingSpreadHome = safeNum(game.closingSpreadHome) ?? 0;
-  const closingTotal = safeNum(game.closingTotal) ?? 0;
-
-  const period = safeNum(game.period) ?? 1;
-  const secondsRemaining = safeNum(game.secondsRemaining) ?? 0;
-
-  const homeMargin = homeScore - awayScore;
-
-  // closingSpreadHome is negative if home favored (home -4.5 => -4.5)
-  // expected “final margin” proxy = -closingSpreadHome
-  const expectedFinalHomeMargin = -closingSpreadHome;
-
-  // Proxy (kept for UX continuity): “how far margin is from close”
-  const spreadDelta = homeMargin - expectedFinalHomeMargin;
-
-  const liveTotalPoints = homeScore + awayScore;
-
-  // Time-adjusted totals expectation (simple, non-secret):
-  // expected points so far ≈ closingTotal * progress
-  const prog = progress01(period, secondsRemaining);
-  const expectedPointsSoFar = closingTotal * prog;
-
-  // Proxy (improved): points vs expected points so far
-  const totalDelta = liveTotalPoints - expectedPointsSoFar;
-
-  // Default
-  let zSpread = 0;
-  let zTotal = 0;
-
-  const canModelSpread =
-    typeof game.liveSpreadHome === "number" &&
-    Number.isFinite(game.liveSpreadHome) &&
-    !!ctx.spreadIndex;
-
-  let score: DeviationScore | null = null;
-
-  if (canModelSpread) {
-    const state: NBAGameState = {
-      period: game.period,
-      secondsRemainingInPeriod: game.secondsRemaining,
-      scoreDiff: homeMargin,
-    };
-
-    const market: MarketSnapshot = {
-      liveHomeSpread: game.liveSpreadHome as number,
-      closingHomeSpread: game.closingSpreadHome,
-    };
-
-    score = scoreDeviation(ctx.spreadIndex as DistributionIndex, state, market, {
-      priorWeight: 40,
-      stdevFloor: 0.6,
-      mildZ: 1.0,
-      elevatedZ: 1.5,
-      extremeZ: 2.0,
-    });
-
-    zSpread = Number.isFinite(score.z) ? score.z : 0;
-  } else {
-    /**
-     * Fallback spread score (non-model):
-     * - early game swings are “noisier” => we down-weight early
-     * - late game swings matter more => we up-weight late
-     * - larger spreads get a slightly wider “normal range”
-     */
-    const timeWeight = 0.75 + 1.25 * prog; // 0.75 early -> 2.0 late
-    const spreadScale = (3.75 + Math.abs(closingSpreadHome) * 0.15) / timeWeight; // points per unit
-
-    zSpread = spreadScale > 0 ? spreadDelta / spreadScale : 0;
+  if (scoreDiffExplicit != null) {
+    return { period, secondsRemainingInPeriod, scoreDiff: scoreDiffExplicit };
   }
 
-  /**
-   * Total score (simple + stable):
-   * - use time-adjusted expectation from close
-   * - normalize by a gentle scale that tightens late game
-   */
-  const timeWeightForTotal = 0.75 + 1.25 * prog;
-  const totalScale = (10.0 + Math.abs(closingTotal - 220) * 0.02) / timeWeightForTotal;
+  const s = getScores(g);
+  const scoreDiff =
+    s.home != null && s.away != null ? s.home - s.away : null;
 
-  zTotal = totalScale > 0 ? totalDelta / totalScale : 0;
-  if (!Number.isFinite(zTotal)) zTotal = 0;
+  return { period, secondsRemainingInPeriod, scoreDiff };
+}
 
-  // Heat uses whichever score is “more unusual” right now
-  const abs = Math.max(Math.abs(zSpread), Math.abs(zTotal));
-  const heat = heatFromAbsScore(abs);
+function buildMarket(g: any): DeviationMarket {
+  const closingHomeSpread =
+    toNum(g?.closingSpreadHome) ??
+    toNum(g?.closingHomeSpread) ??
+    toNum(g?.closing_spread_home) ??
+    toNum(g?.market?.closingHomeSpread) ??
+    null;
+
+  const liveHomeSpread =
+    toNum(g?.liveSpreadHome) ??
+    toNum(g?.liveHomeSpread) ??
+    toNum(g?.live_spread_home) ??
+    toNum(g?.market?.liveHomeSpread) ??
+    null;
+
+  return { closingHomeSpread, liveHomeSpread };
+}
+
+/**
+ * Best-effort adapter around unknown spreadIndex shape.
+ * We try a few common method names and return:
+ *  - meanExpectedFinalMargin (home)
+ *  - stdDevFinalMargin
+ */
+function estimateFromIndex(
+  spreadIndex: any,
+  state: DeviationState,
+  market: DeviationMarket
+): { mean: number | null; std: number | null } {
+  if (!spreadIndex) return { mean: null, std: null };
+
+  const payload = { state, market };
+
+  // 1) expectedFinalMargin({state, market})
+  if (typeof spreadIndex.expectedFinalMargin === "function") {
+    try {
+      const out = spreadIndex.expectedFinalMargin(payload);
+      const mean =
+        toNum(out?.mean) ??
+        toNum(out?.expected) ??
+        toNum(out?.expectedFinalHomeMargin) ??
+        toNum(out);
+      const std = toNum(out?.std) ?? toNum(out?.stdev) ?? toNum(out?.sigma) ?? null;
+      return { mean, std };
+    } catch {
+      // ignore
+    }
+  }
+
+  // 2) predict({state, market})
+  if (typeof spreadIndex.predict === "function") {
+    try {
+      const out = spreadIndex.predict(payload);
+      const mean =
+        toNum(out?.mean) ??
+        toNum(out?.expected) ??
+        toNum(out?.expectedFinalHomeMargin) ??
+        toNum(out);
+      const std = toNum(out?.std) ?? toNum(out?.stdev) ?? toNum(out?.sigma) ?? null;
+      return { mean, std };
+    } catch {
+      // ignore
+    }
+  }
+
+  // 3) query(state, market) or lookup(state, market)
+  const maybeFn =
+    (typeof spreadIndex.query === "function" && spreadIndex.query) ||
+    (typeof spreadIndex.lookup === "function" && spreadIndex.lookup) ||
+    null;
+
+  if (maybeFn) {
+    try {
+      const out = maybeFn(state, market);
+
+      // If out looks like a distribution summary
+      const mean =
+        toNum(out?.mean) ??
+        toNum(out?.expected) ??
+        toNum(out?.expectedFinalHomeMargin) ??
+        null;
+
+      const std =
+        toNum(out?.std) ?? toNum(out?.stdev) ?? toNum(out?.sigma) ?? null;
+
+      if (mean != null || std != null) return { mean, std };
+
+      // If out is an array of samples, try to compute mean/std from `finalMargin` or similar
+      if (Array.isArray(out) && out.length > 0) {
+        const vals = out
+          .map((x: any) => toNum(x?.finalHomeMargin ?? x?.finalMargin ?? x?.y ?? x))
+          .filter((v: any) => typeof v === "number" && Number.isFinite(v)) as number[];
+
+        if (vals.length === 0) return { mean: null, std: null };
+
+        const m = vals.reduce((a, b) => a + b, 0) / vals.length;
+        const varSum = vals.reduce((a, b) => a + (b - m) * (b - m), 0);
+        const sd = Math.sqrt(varSum / Math.max(1, vals.length - 1));
+        return { mean: m, std: sd };
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return { mean: null, std: null };
+}
+
+export function computeDeviation(g: any, opts: ComputeDeviationOptions = {}): DeviationResult {
+  const state = buildState(g);
+  const market = buildMarket(g);
+
+  const impliedFinalHomeMargin =
+    market.liveHomeSpread != null ? -market.liveHomeSpread : null;
+
+  const est = estimateFromIndex(opts.spreadIndex, state, market);
+
+  // If we can't estimate, fall back to "no signal" rather than guessing.
+  const expectedFinalHomeMargin = est.mean;
+
+  const expectationGap =
+    expectedFinalHomeMargin != null && impliedFinalHomeMargin != null
+      ? expectedFinalHomeMargin - impliedFinalHomeMargin
+      : 0;
+
+  const absGap = Math.abs(expectationGap);
+
+  // Conservative std fallback if index doesn't provide one.
+  // Keep this mild; used only for zGap display/thresholding if desired.
+  const stdFallback = 7; // typical NBA margin variability scale
+  const gapStdDev =
+    est.std != null && Number.isFinite(est.std) && est.std > 0.25
+      ? est.std
+      : null;
+
+  const denom = gapStdDev ?? stdFallback;
+  const zGap = denom > 0 ? clamp(expectationGap / denom, -6, 6) : 0;
 
   return {
-    spreadDelta,
-    totalDelta,
-    zSpread: Number.isFinite(zSpread) ? zSpread : 0,
-    zTotal,
-    heat,
-    meta: score
-      ? {
-          usedModel: true,
-          keyUsed: score.keyUsed,
-          nUsed: score.nUsed,
-          expectedDeviation: score.expectedDeviation,
-          observedDeviation: score.observedDeviation,
-          stdevUsed: score.stdevUsed,
-          tier: score.tier,
-          label: score.label,
-        }
-      : {
-          usedModel: false,
-          progress01: prog,
-          spreadScale: (3.75 + Math.abs(closingSpreadHome) * 0.15) / (0.75 + 1.25 * prog),
-          totalScale,
-          expectedPointsSoFar,
-        },
+    expectedFinalHomeMargin,
+    impliedFinalHomeMargin,
+    expectationGap,
+    absGap,
+
+    gapStdDev,
+    zGap,
+
+    // Back-compat placeholders (we no longer use them as primary)
+    zSpread: 0,
+    zTotal: 0,
+
+    state,
+    market,
   };
 }

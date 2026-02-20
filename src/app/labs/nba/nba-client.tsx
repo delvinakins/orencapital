@@ -80,15 +80,23 @@ function getLiveScore(g: any): { away: number | null; home: number | null } {
   return { away, home };
 }
 
-function UnusualMoveTip() {
+function formatSignedPoints(x: number, digits = 1) {
+  const v = Number.isFinite(x) ? x : 0;
+  const s = Math.abs(v).toFixed(digits);
+  if (v > 0) return `+${s}`;
+  if (v < 0) return `-${s}`;
+  return "0.0";
+}
+
+function ExpectationGapTip() {
   return (
     <div className="max-w-sm space-y-2">
-      <div className="font-semibold">Unusual move</div>
+      <div className="font-semibold">Expectation gap</div>
       <div className="text-foreground/70">
-        A calm indicator of how “out of pattern” the live game looks compared to expectation.
+        A calm comparison between what similar game states usually finish at and what the current live spread implies.
       </div>
       <div className="text-foreground/70">
-        Higher values are more unusual. It’s a watchlist signal — not a bet button.
+        Larger gaps are more unusual and may require review. It’s a watchlist signal — not a bet button.
       </div>
     </div>
   );
@@ -98,8 +106,10 @@ type ViewMode = "slate" | "heatmap";
 
 type Row = {
   key: string;
-  abs: number;
-  score: number;
+
+  // Now in points, not z-score
+  abs: number; // |expectationGap|
+  gap: number; // expectationGap (signed)
 
   awayTeam: string;
   homeTeam: string;
@@ -233,9 +243,10 @@ function squarify(items: TreeItem[], rect: Rect): Placed[] {
   return placed;
 }
 
-function toneFromAbs(abs: number): Row["tone"] {
-  if (abs >= 1.5) return "accent";
-  if (abs >= 1.0) return "warn";
+function toneFromAbsPoints(absPts: number): Row["tone"] {
+  // Points-based thresholds (tuned for calm highlighting)
+  if (absPts >= 5.0) return "accent";
+  if (absPts >= 3.0) return "warn";
   return "neutral";
 }
 
@@ -315,13 +326,10 @@ export default function NbaClient() {
     const computed = games.map((g: any) => {
       const result = computeDeviation(g, { spreadIndex });
 
-      const spreadScore = Number.isFinite(result.zSpread) ? result.zSpread : 0;
-      const totalScore = Number.isFinite(result.zTotal) ? result.zTotal : 0;
+      const gap = Number.isFinite(result.expectationGap) ? result.expectationGap : 0;
+      const abs = Math.abs(gap);
 
-      const score = Math.abs(spreadScore) >= Math.abs(totalScore) ? spreadScore : totalScore;
-      const abs = Math.abs(score);
-
-      const tone = toneFromAbs(abs);
+      const tone = toneFromAbsPoints(abs);
 
       const mm = Math.floor((Number(g.secondsRemaining) || 0) / 60);
       const ss = String((Number(g.secondsRemaining) || 0) % 60).padStart(2, "0");
@@ -333,8 +341,9 @@ export default function NbaClient() {
 
       return {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
+
         abs,
-        score,
+        gap,
 
         awayTeam,
         homeTeam,
@@ -347,7 +356,7 @@ export default function NbaClient() {
         live: formatSpread(g.liveSpreadHome, 1),
         close: formatSpread(g.closingSpreadHome, 1),
 
-        scoreText: fmtNum(score, 2),
+        scoreText: formatSignedPoints(gap, 1),
         tone,
       };
     });
@@ -356,8 +365,8 @@ export default function NbaClient() {
     return computed;
   }, [games]);
 
-  // Keep heat map focused: hide low-signal games for readability
-  const heatRows = useMemo(() => rows.filter((r) => r.abs >= 0.35), [rows]);
+  // Keep heat map focused: hide low-signal games for readability (points-based)
+  const heatRows = useMemo(() => rows.filter((r) => r.abs >= 1.5), [rows]);
 
   const treemap = useMemo(() => {
     const W = 1000;
@@ -365,8 +374,10 @@ export default function NbaClient() {
     const area = W * H;
 
     const items: TreeItem[] = heatRows.map((r) => {
-      const capped = clamp(r.abs, 0, 2.2);
-      const weight = 1 + capped * 3.0; // grows gently with “unusual move”
+      // Cap so one extreme game doesn't swallow the map.
+      const capped = clamp(r.abs, 0, 10);
+      // Gentle growth; still emphasizes larger gaps.
+      const weight = 1 + capped * 2.2;
       return { id: r.key, value: weight, row: r };
     });
 
@@ -451,8 +462,8 @@ export default function NbaClient() {
                     <th className="px-4 py-3 font-medium">Live Spread (Home)</th>
                     <th className="px-4 py-3 font-medium">Closing Spread (Home)</th>
                     <th className="px-4 py-3 font-medium">
-                      <Tooltip label="Unusual move">
-                        <UnusualMoveTip />
+                      <Tooltip label="Expectation gap">
+                        <ExpectationGapTip />
                       </Tooltip>
                     </th>
                   </tr>
@@ -485,7 +496,10 @@ export default function NbaClient() {
                         <td className="px-4 py-3 text-foreground/80">{r.clock}</td>
                         <td className="px-4 py-3 text-foreground/80">{r.live}</td>
                         <td className="px-4 py-3 text-foreground/80">{r.close}</td>
-                        <td className={cn("px-4 py-3 font-medium", scoreClass)}>{r.scoreText}</td>
+
+                        <td className={cn("px-4 py-3 font-medium tabular-nums", scoreClass)}>
+                          {r.scoreText}
+                        </td>
                       </tr>
                     );
                   })}
@@ -500,7 +514,7 @@ export default function NbaClient() {
                 <div className="flex flex-wrap items-center gap-3 text-sm text-foreground/70">
                   <div className="flex items-center gap-2">
                     <span className="inline-block h-2.5 w-2.5 rounded-full bg-[color:var(--accent)]/80" />
-                    <span>unusual move</span>
+                    <span>larger gap</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-300/80" />
@@ -513,8 +527,8 @@ export default function NbaClient() {
                 </div>
 
                 <div className="text-sm text-foreground/60">
-                  <Tooltip label="Unusual move">
-                    <UnusualMoveTip />
+                  <Tooltip label="Expectation gap">
+                    <ExpectationGapTip />
                   </Tooltip>
                 </div>
               </div>
@@ -527,7 +541,8 @@ export default function NbaClient() {
                     const isLarge = t.widthPct >= 24 && t.heightPct >= 24;
                     const isMedium = t.widthPct >= 16 && t.heightPct >= 16;
 
-                    const intensity01 = clamp(r.abs / 2.0, 0, 1);
+                    // intensity based on points gap
+                    const intensity01 = clamp(r.abs / 8.0, 0, 1);
 
                     const bg = bgFromTone(r.tone, intensity01);
                     const border = borderFromTone(r.tone);
@@ -537,7 +552,6 @@ export default function NbaClient() {
                     const showClock = isMedium;
                     const showLiveClose = isLarge;
 
-                    // ✅ New: show score line ONLY in large tiles
                     const hasScore = typeof r.awayScore === "number" && typeof r.homeScore === "number";
                     const showScoreLine = isLarge && hasScore;
 
