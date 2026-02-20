@@ -97,6 +97,27 @@ function formatUpdatedAtPT(iso?: string): string | null {
   }).format(d);
 }
 
+function formatTodayPT(): string {
+  const now = new Date();
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    weekday: "short",
+    month: "short",
+    day: "2-digit",
+  }).format(now);
+}
+
+function isAfter2pmPT(now: Date): boolean {
+  const hourStr = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "numeric",
+    hour12: false,
+  }).format(now);
+
+  const h = Number(hourStr);
+  return Number.isFinite(h) ? h >= 14 : false;
+}
+
 function MoveGapTip() {
   return (
     <div className="max-w-sm space-y-2">
@@ -289,6 +310,17 @@ export default function NbaClient() {
 
   const [view, setView] = useState<ViewMode>("slate");
 
+  // Ticking clock so the "after 2pm PT" gating flips without a reload.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 60 * 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
+  const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
+
   async function load() {
     setLoadError(null);
 
@@ -313,7 +345,6 @@ export default function NbaClient() {
         return;
       }
 
-      // If ok:false, show a calm message but keep any previously loaded snapshot on screen
       setMeta(undefined);
       setLoadError("Live feed is offline right now.");
       setLoading(false);
@@ -336,16 +367,17 @@ export default function NbaClient() {
 
   const rows = useMemo<Row[]>(() => {
     const computed = games.map((g: any) => {
-      const result = computeDeviation(g, { spreadIndex });
+      // Only compute “signal” after 2pm PT (spreads are hidden before then).
+      const result = after2pm ? computeDeviation(g, { spreadIndex }) : null;
 
-      const abs = Number.isFinite(result.absDislocationPts) ? result.absDislocationPts : 0;
-      const moveGapPts = Number.isFinite(result.dislocationPts) ? result.dislocationPts : 0;
+      const abs = after2pm && result && Number.isFinite(result.absDislocationPts) ? result.absDislocationPts : 0;
+      const moveGapPts = after2pm && result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : 0;
 
-      const observedMove = Number.isFinite(result.observedMove) ? result.observedMove : 0;
-      const expectedMove = Number.isFinite(result.expectedMove) ? result.expectedMove : 0;
+      const observedMove = after2pm && result && Number.isFinite(result.observedMove) ? result.observedMove : 0;
+      const expectedMove = after2pm && result && Number.isFinite(result.expectedMove) ? result.expectedMove : 0;
 
-      const absZ = Number.isFinite(result.absZ) ? result.absZ : 0;
-      const tone = toneFromAbsZ(absZ);
+      const absZ = after2pm && result && Number.isFinite(result.absZ) ? result.absZ : 0;
+      const tone = after2pm ? toneFromAbsZ(absZ) : "neutral";
 
       const mm = Math.floor((Number(g.secondsRemaining) || 0) / 60);
       const ss = String((Number(g.secondsRemaining) || 0) % 60).padStart(2, "0");
@@ -372,20 +404,29 @@ export default function NbaClient() {
         matchup: `${awayTeam} @ ${homeTeam}`,
         clock: `P${g.period ?? "—"} • ${mm}:${ss}`,
 
-        live: formatSpread(g.liveSpreadHome, 1),
-        close: formatSpread(g.closingSpreadHome, 1),
+        live: after2pm ? formatSpread(g.liveSpreadHome, 1) : "—",
+        close: after2pm ? formatSpread(g.closingSpreadHome, 1) : "—",
 
-        scoreText: formatSigned(moveGapPts, 1),
+        scoreText: after2pm ? formatSigned(moveGapPts, 1) : "—",
         tone,
         absZ,
       };
     });
 
-    computed.sort((a, b) => b.abs - a.abs);
-    return computed;
-  }, [games]);
+    // Before 2pm, keep stable ordering by matchup; after 2pm, rank by abs move-gap.
+    if (after2pm) computed.sort((a, b) => b.abs - a.abs);
+    else computed.sort((a, b) => a.matchup.localeCompare(b.matchup));
 
-  const heatRows = useMemo(() => rows.filter((r) => r.abs >= 0.6), [rows]);
+    return computed;
+  }, [games, after2pm]);
+
+  // Heat map filtering:
+  // - After 2pm: hide low signal
+  // - Before 2pm: show all games (neutral tiles, equal weights)
+  const heatRows = useMemo(() => {
+    if (!after2pm) return rows;
+    return rows.filter((r) => r.abs >= 0.6);
+  }, [rows, after2pm]);
 
   const treemap = useMemo(() => {
     const W = 1000;
@@ -393,6 +434,11 @@ export default function NbaClient() {
     const area = W * H;
 
     const items: TreeItem[] = heatRows.map((r) => {
+      if (!after2pm) {
+        // Pre-2pm: equal weights; no implied “signal”
+        return { id: r.key, value: 1, row: r };
+      }
+
       const capped = clamp(r.abs, 0, 4.0);
       const weight = 1 + capped * 3.0;
       return { id: r.key, value: weight, row: r };
@@ -422,7 +468,7 @@ export default function NbaClient() {
         heightPct,
       };
     });
-  }, [heatRows]);
+  }, [heatRows, after2pm]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -433,11 +479,17 @@ export default function NbaClient() {
               <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-2 text-sm text-foreground/80">
                 Labs • NBA
               </div>
+
               <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
                 {isStale ? "Snapshot" : "Live"}
               </div>
-              {updatedAtLabel ? (
-                <div className="text-xs text-foreground/55">Last updated {updatedAtLabel} PT</div>
+
+              {updatedAtLabel ? <div className="text-xs text-foreground/55">Last updated {updatedAtLabel} PT</div> : null}
+
+              {!after2pm ? (
+                <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
+                  Spreads unlock at 2pm PT
+                </div>
               ) : null}
             </div>
 
@@ -478,16 +530,16 @@ export default function NbaClient() {
           ) : rows.length === 0 ? (
             <div className="space-y-2 text-foreground/70">
               <div>{loadError ?? "Live feed is offline right now."}</div>
-              <div className="text-sm text-foreground/55">
-                If you checked after hours, the last available snapshot will appear once it exists.
-              </div>
+              <div className="text-sm text-foreground/55">If you checked after hours, the last available snapshot will appear once it exists.</div>
             </div>
           ) : view === "slate" ? (
             <div className="overflow-x-auto">
               <table className="min-w-[960px] w-full text-[15px]">
                 <thead>
                   <tr className="text-left text-foreground/60">
-                    <th className="px-4 py-3 font-medium">Matchup</th>
+                    <th className="px-4 py-3 font-medium">
+                      Matchup <span className="text-foreground/40">({headerDate})</span>
+                    </th>
                     <th className="px-4 py-3 font-medium">Clock</th>
                     <th className="px-4 py-3 font-medium">Live Spread (Home)</th>
                     <th className="px-4 py-3 font-medium">Closing Spread (Home)</th>
@@ -534,6 +586,12 @@ export default function NbaClient() {
               </table>
 
               <div className="mt-4 text-sm text-foreground/55">Lab preview. All signals require review.</div>
+
+              {!after2pm ? (
+                <div className="mt-2 text-sm text-foreground/55">
+                  Spread-based signals are hidden before 2pm PT.
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="space-y-4">
@@ -541,11 +599,11 @@ export default function NbaClient() {
                 <div className="flex flex-wrap items-center gap-3 text-sm text-foreground/70">
                   <div className="flex items-center gap-2">
                     <span className="inline-block h-2.5 w-2.5 rounded-full bg-[color:var(--accent)]/80" />
-                    <span>larger move gap</span>
+                    <span>{after2pm ? "larger move gap" : "games"}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-300/80" />
-                    <span>worth watching</span>
+                    <span>{after2pm ? "worth watching" : "labels unlock at 2pm"}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="inline-block h-2.5 w-2.5 rounded-full bg-white/30" />
@@ -568,18 +626,25 @@ export default function NbaClient() {
                     const isLarge = t.widthPct >= 24 && t.heightPct >= 24;
                     const isMedium = t.widthPct >= 16 && t.heightPct >= 16;
 
-                    const intensity01 = clamp(r.abs / 3.0, 0, 1);
-                    const bg = bgFromTone(r.tone, intensity01);
-                    const border = borderFromTone(r.tone);
-                    const numClass = textToneClass(r.tone);
+                    const intensity01 = after2pm ? clamp(r.abs / 3.0, 0, 1) : 0;
+                    const tone: Row["tone"] = after2pm ? r.tone : "neutral";
+
+                    const bg = bgFromTone(tone, intensity01);
+                    const border = borderFromTone(tone);
+                    const numClass = textToneClass(tone);
 
                     const showClock = isMedium;
-                    const showLiveClose = isLarge;
+
+                    // Only show spread-derived details after 2pm PT
+                    const showLiveClose = after2pm && isLarge;
 
                     const hasScore = typeof r.awayScore === "number" && typeof r.homeScore === "number";
                     const showScoreLine = isLarge && hasScore;
 
-                    const showMoveNormal = isLarge;
+                    const showMoveNormal = after2pm && isLarge;
+
+                    // Before 2pm, hide the move-gap number too (it’s derived from spreads)
+                    const showMoveGapNumber = after2pm;
 
                     return (
                       <div
@@ -601,7 +666,12 @@ export default function NbaClient() {
                         <div className={cn("h-full w-full", isLarge ? "p-4" : isMedium ? "p-3" : "p-2")}>
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <div className={cn("truncate font-semibold text-foreground", isLarge ? "text-base" : "text-sm")}>
+                              <div
+                                className={cn(
+                                  "truncate font-semibold text-foreground",
+                                  isLarge ? "text-base" : "text-sm"
+                                )}
+                              >
                                 {r.matchup}
                               </div>
 
@@ -620,7 +690,9 @@ export default function NbaClient() {
                           </div>
 
                           <div className={cn("mt-3", isLarge ? "text-2xl" : isMedium ? "text-xl" : "text-lg")}>
-                            <div className={cn("font-semibold tabular-nums", numClass)}>{r.scoreText}</div>
+                            <div className={cn("font-semibold tabular-nums", numClass)}>
+                              {showMoveGapNumber ? r.scoreText : "—"}
+                            </div>
                           </div>
 
                           {showMoveNormal ? (
@@ -656,6 +728,18 @@ export default function NbaClient() {
               </div>
 
               <div className="text-sm text-foreground/55">Lab preview. All signals require review.</div>
+
+              {after2pm && rows.length !== heatRows.length ? (
+                <div className="text-sm text-foreground/55">
+                  Showing {heatRows.length} games on the heat map (low-signal games are hidden).
+                </div>
+              ) : null}
+
+              {!after2pm ? (
+                <div className="text-sm text-foreground/55">
+                  Spread-based tiles and rankings start at 2pm PT.
+                </div>
+              ) : null}
             </div>
           )}
         </section>
