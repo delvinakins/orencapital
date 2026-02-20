@@ -3,7 +3,7 @@
 
 import type { CSSProperties } from "react";
 import { useMemo, useState } from "react";
-import OrenLoginOverlay from "@/components/auth/OrenLoginOverlay";
+import ProGate from "@/components/ProGate";
 
 type ViewMode = "overview" | "positions" | "exposure";
 
@@ -36,10 +36,6 @@ type PositionRow = {
 
 export default function PortfolioPage() {
   const accentStyle = { "--accent": "#2BCB77" } as CSSProperties;
-
-  // TODO: replace with your real auth state (supabase session, etc.)
-  // For now, set this to true once you wire your auth hook.
-  const isAuthed = false;
 
   const [view, setView] = useState<ViewMode>("overview");
 
@@ -89,37 +85,6 @@ export default function PortfolioPage() {
       dailyLossFill: clamp01(dailyLossPct / dailyLossLimitPct),
     };
   }, [openRiskPct, dailyLossPct, dailyLossLimitPct]);
-
-  if (!isAuthed) {
-    return (
-      <main className="min-h-screen bg-background text-foreground" style={accentStyle}>
-        <div className="mx-auto max-w-5xl px-6 py-16">
-          <div className="space-y-6">
-            <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-2 text-sm text-foreground/80">
-              Portfolio • Discipline across markets
-            </div>
-
-            <h1 className="text-4xl font-semibold tracking-tight sm:text-6xl">Portfolio</h1>
-
-            <p className="max-w-2xl text-lg leading-relaxed text-foreground/75">
-              A calm view of your risk state: exposure, drawdown, and concentration — designed to prevent overreach.
-            </p>
-
-            <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)]">
-              <OrenLoginOverlay
-                title="Sign in to view Portfolio"
-                subtitle="Portfolio is a protected view. Sign in to see your risk state, exposure heat, and position discipline."
-                ctaPrimaryHref="/login"
-                ctaPrimaryLabel="Sign in"
-                ctaSecondaryHref="/pricing"
-                ctaSecondaryLabel="View Pricing"
-              />
-            </div>
-          </div>
-        </div>
-      </main>
-    );
-  }
 
   return (
     <main className="min-h-screen bg-background text-foreground" style={accentStyle}>
@@ -171,129 +136,135 @@ export default function PortfolioPage() {
           </div>
         </div>
 
-        <section className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-6">
-          {/* Risk state */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <CardStat label="Account Value" value={formatMoney(accountValue)} />
-            <CardStat label="Max Risk / Position" value={formatPct(maxRiskPerPositionPct)} />
-            <CardStat label="Open Risk" value={formatPct(openRiskPct)} />
-            <CardStat label="Drawdown" value={`-${formatPct(drawdownPct)}`} />
-          </div>
-
-          <div className="mt-6 grid gap-4 lg:grid-cols-3">
-            <div className="rounded-xl border border-[color:var(--border)] bg-black/20 p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm text-foreground/70">Discipline status</div>
-                <div
-                  className={cn(
-                    "rounded-full border px-3 py-1 text-xs",
-                    disciplineState.tone === "good"
-                      ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
-                      : disciplineState.tone === "warn"
-                      ? "border-amber-200/20 bg-amber-400/10 text-amber-200"
-                      : "border-red-200/20 bg-red-400/10 text-red-200"
-                  )}
-                >
-                  {disciplineState.label}
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                <BarRow label="Open risk vs soft cap" value={`${formatPct(openRiskPct)} of 4.0%`} fill={riskBars.openRiskFill} />
-                <BarRow
-                  label="Daily loss vs limit"
-                  value={`${formatPct(dailyLossPct)} of ${formatPct(dailyLossLimitPct)}`}
-                  fill={riskBars.dailyLossFill}
-                />
-              </div>
-
-              <div className="mt-4 text-xs text-foreground/55">This page is for awareness and control — not performance bragging.</div>
+        <ProGate lockTitle="Portfolio is Pro" lockSubtitle="Upgrade to Pro to view portfolio exposure, drawdown context, and discipline metrics.">
+          <section className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-6">
+            {/* Risk state */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <CardStat label="Account Value" value={formatMoney(accountValue)} />
+              <CardStat label="Max Risk / Position" value={formatPct(maxRiskPerPositionPct)} />
+              <CardStat label="Open Risk" value={formatPct(openRiskPct)} />
+              <CardStat label="Drawdown" value={`-${formatPct(drawdownPct)}`} />
             </div>
 
-            {/* View body */}
-            <div className="lg:col-span-2">
-              {view === "overview" ? (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Panel
-                    title="Variance context"
-                    desc="Wire to your variance simulator next. Keep it calm: expected drawdown range, streak expectations, percentile context."
-                    lines={[
-                      "Expected 30D drawdown range: —",
-                      "Current drawdown percentile: —",
-                      "Expected losing streak (baseline): —",
-                    ]}
-                  />
-                  <Panel
-                    title="Behavioral discipline"
-                    desc="Wire to journal signals next: oversizing after wins/losses, % above cap, drift from baseline."
-                    lines={[
-                      "Avg risk per decision (last 20): —",
-                      "Decisions above cap: —",
-                      "Size escalation after loss: —",
-                    ]}
+            <div className="mt-6 grid gap-4 lg:grid-cols-3">
+              <div className="rounded-xl border border-[color:var(--border)] bg-black/20 p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm text-foreground/70">Discipline status</div>
+                  <div
+                    className={cn(
+                      "rounded-full border px-3 py-1 text-xs",
+                      disciplineState.tone === "good"
+                        ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
+                        : disciplineState.tone === "warn"
+                        ? "border-amber-200/20 bg-amber-400/10 text-amber-200"
+                        : "border-red-200/20 bg-red-400/10 text-red-200"
+                    )}
+                  >
+                    {disciplineState.label}
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  <BarRow label="Open risk vs soft cap" value={`${formatPct(openRiskPct)} of 4.0%`} fill={riskBars.openRiskFill} />
+                  <BarRow
+                    label="Daily loss vs limit"
+                    value={`${formatPct(dailyLossPct)} of ${formatPct(dailyLossLimitPct)}`}
+                    fill={riskBars.dailyLossFill}
                   />
                 </div>
-              ) : null}
 
-              {view === "positions" ? (
-                <div className="overflow-x-auto rounded-xl border border-[color:var(--border)] bg-black/20">
-                  <table className="min-w-[860px] w-full text-[15px]">
-                    <thead>
-                      <tr className="text-left text-foreground/60">
-                        <th className="px-4 py-3 font-medium">Symbol</th>
-                        <th className="px-4 py-3 font-medium">Side</th>
-                        <th className="px-4 py-3 font-medium">Size</th>
-                        <th className="px-4 py-3 font-medium">Risk</th>
-                        <th className="px-4 py-3 font-medium">Stop</th>
-                        <th className="px-4 py-3 font-medium">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {positions.map((p) => (
-                        <tr key={p.symbol} className="border-t border-[color:var(--border)]">
-                          <td className="px-4 py-3 font-medium text-foreground">{p.symbol}</td>
-                          <td className="px-4 py-3 text-foreground/80">{p.side}</td>
-                          <td className="px-4 py-3 text-foreground/80">{formatMoney(p.sizeUsd)}</td>
-                          <td className="px-4 py-3 text-foreground/80">{formatPct(p.riskPct)}</td>
-                          <td className="px-4 py-3 text-foreground/80">{p.stop ?? "—"}</td>
-                          <td className="px-4 py-3 text-foreground/70">{p.notes ?? "—"}</td>
+                <div className="mt-4 text-xs text-foreground/55">
+                  This page is for awareness and control — not performance bragging.
+                </div>
+              </div>
+
+              {/* View body */}
+              <div className="lg:col-span-2">
+                {view === "overview" ? (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Panel
+                      title="Variance context"
+                      desc="Wire to your variance simulator next. Keep it calm: expected drawdown range, streak expectations, percentile context."
+                      lines={[
+                        "Expected 30D drawdown range: —",
+                        "Current drawdown percentile: —",
+                        "Expected losing streak (baseline): —",
+                      ]}
+                    />
+                    <Panel
+                      title="Behavioral discipline"
+                      desc="Wire to journal signals next: oversizing after wins/losses, % above cap, drift from baseline."
+                      lines={[
+                        "Avg risk per decision (last 20): —",
+                        "Decisions above cap: —",
+                        "Size escalation after loss: —",
+                      ]}
+                    />
+                  </div>
+                ) : null}
+
+                {view === "positions" ? (
+                  <div className="overflow-x-auto rounded-xl border border-[color:var(--border)] bg-black/20">
+                    <table className="min-w-[860px] w-full text-[15px]">
+                      <thead>
+                        <tr className="text-left text-foreground/60">
+                          <th className="px-4 py-3 font-medium">Symbol</th>
+                          <th className="px-4 py-3 font-medium">Side</th>
+                          <th className="px-4 py-3 font-medium">Size</th>
+                          <th className="px-4 py-3 font-medium">Risk</th>
+                          <th className="px-4 py-3 font-medium">Stop</th>
+                          <th className="px-4 py-3 font-medium">Notes</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : null}
-
-              {view === "exposure" ? (
-                <div className="rounded-xl border border-[color:var(--border)] bg-black/20 p-5">
-                  <div className="text-sm font-medium text-foreground">Exposure heat</div>
-                  <div className="mt-1 text-sm text-foreground/70">
-                    Simple and disciplined: concentration by symbol. (Add sector + correlation later.)
+                      </thead>
+                      <tbody>
+                        {positions.map((p) => (
+                          <tr key={p.symbol} className="border-t border-[color:var(--border)]">
+                            <td className="px-4 py-3 font-medium text-foreground">{p.symbol}</td>
+                            <td className="px-4 py-3 text-foreground/80">{p.side}</td>
+                            <td className="px-4 py-3 text-foreground/80">{formatMoney(p.sizeUsd)}</td>
+                            <td className="px-4 py-3 text-foreground/80">{formatPct(p.riskPct)}</td>
+                            <td className="px-4 py-3 text-foreground/80">{p.stop ?? "—"}</td>
+                            <td className="px-4 py-3 text-foreground/70">{p.notes ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
+                ) : null}
 
-                  <div className="mt-5 space-y-3">
-                    {exposureBySymbol.map((x) => (
-                      <div key={x.symbol} className="flex items-center gap-3">
-                        <div className="w-14 text-sm text-foreground/80">{x.symbol}</div>
-                        <div className="flex-1 rounded-full border border-[color:var(--border)] bg-black/20 p-1">
-                          <div
-                            className="h-2 rounded-full bg-[color:var(--accent)]/80"
-                            style={{ width: `${Math.round(x.share * 100)}%` }}
-                          />
+                {view === "exposure" ? (
+                  <div className="rounded-xl border border-[color:var(--border)] bg-black/20 p-5">
+                    <div className="text-sm font-medium text-foreground">Exposure heat</div>
+                    <div className="mt-1 text-sm text-foreground/70">
+                      Simple and disciplined: concentration by symbol. (Add sector + correlation later.)
+                    </div>
+
+                    <div className="mt-5 space-y-3">
+                      {exposureBySymbol.map((x) => (
+                        <div key={x.symbol} className="flex items-center gap-3">
+                          <div className="w-14 text-sm text-foreground/80">{x.symbol}</div>
+                          <div className="flex-1 rounded-full border border-[color:var(--border)] bg-black/20 p-1">
+                            <div
+                              className="h-2 rounded-full bg-[color:var(--accent)]/80"
+                              style={{ width: `${Math.round(x.share * 100)}%` }}
+                            />
+                          </div>
+                          <div className="w-16 text-right text-sm text-foreground/70">
+                            {(x.share * 100).toFixed(0)}%
+                          </div>
                         </div>
-                        <div className="w-16 text-right text-sm text-foreground/70">{(x.share * 100).toFixed(0)}%</div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
 
-                  <div className="mt-5 text-xs text-foreground/55">
-                    Next: flag correlated stacking (theme concentration), then unify with sports bankroll exposure.
+                    <div className="mt-5 text-xs text-foreground/55">
+                      Next: flag correlated stacking (theme concentration), then unify with sports bankroll exposure.
+                    </div>
                   </div>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        </ProGate>
       </div>
     </main>
   );
