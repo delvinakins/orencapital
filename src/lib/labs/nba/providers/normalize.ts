@@ -134,7 +134,6 @@ const ALIASES: Record<string, string> = {
   "new orleans pelicans": "new orleans pelicans",
   "no pelicans": "new orleans pelicans",
   "nop": "new orleans pelicans",
-  "no": "new orleans pelicans",
   "pelicans": "new orleans pelicans",
   "pels": "new orleans pelicans",
 
@@ -142,7 +141,6 @@ const ALIASES: Record<string, string> = {
   "new york knicks": "new york knicks",
   "ny knicks": "new york knicks",
   "nyk": "new york knicks",
-  "ny": "new york knicks",
   "knicks": "new york knicks",
 
   // Oklahoma City Thunder
@@ -157,7 +155,7 @@ const ALIASES: Record<string, string> = {
   "orl": "orlando magic",
   "magic": "orlando magic",
 
-  // Philadelphia 76ers (digits must survive normalization)
+  // Philadelphia 76ers
   "philadelphia 76ers": "philadelphia 76ers",
   "philadelphia sixers": "philadelphia 76ers",
   "phi 76ers": "philadelphia 76ers",
@@ -194,7 +192,6 @@ const ALIASES: Record<string, string> = {
   "san antonio spurs": "san antonio spurs",
   "sa spurs": "san antonio spurs",
   "sas": "san antonio spurs",
-  "sa": "san antonio spurs",
   "spurs": "san antonio spurs",
 
   // Toronto Raptors
@@ -216,17 +213,12 @@ const ALIASES: Record<string, string> = {
   "wizards": "washington wizards",
 };
 
-/**
- * Returns canonical team name for joins.
- * If unknown, falls back to normalized input.
- */
 export function canonicalTeamName(x: string) {
   const n = normTeamName(x);
   return ALIASES[n] ?? n;
 }
 
 export function makeMatchKey(awayTeam: string, homeTeam: string, dateKey: string) {
-  // dateKey: YYYY-MM-DD
   return `${dateKey}|${canonicalTeamName(awayTeam)}@${canonicalTeamName(homeTeam)}`;
 }
 
@@ -246,4 +238,28 @@ export function parseClockToSecondsRemaining(clock: any): number | null {
   if (!Number.isFinite(mm) || !Number.isFinite(ss)) return null;
 
   return Math.max(0, Math.min(12 * 60, Math.trunc(mm) * 60 + Math.trunc(ss)));
+}
+
+/**
+ * Compute YYYY-MM-DD in America/Los_Angeles from an ISO datetime string.
+ * This stabilizes cross-provider joins (prevents UTC date boundary mismatches).
+ */
+export function dateKeyLosAngelesFromIso(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return null;
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+
+  const y = parts.find((p) => p.type === "year")?.value;
+  const m = parts.find((p) => p.type === "month")?.value;
+  const day = parts.find((p) => p.type === "day")?.value;
+
+  if (!y || !m || !day) return null;
+  return `${y}-${m}-${day}`;
 }
