@@ -1,3 +1,4 @@
+// src/app/labs/nba/nba-client.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -45,8 +46,10 @@ function fmtNum(x: any, digits = 2) {
 
 function formatSpread(x: any, digits = 1) {
   if (x == null) return "—";
+
   const v = typeof x === "number" ? x : Number(String(x).trim());
   if (!Number.isFinite(v)) return "—";
+
   const s = v.toFixed(digits);
   if (v > 0) return `+${s}`;
   if (v < 0) return s;
@@ -77,14 +80,16 @@ function getLiveScore(g: any): { away: number | null; home: number | null } {
   return { away, home };
 }
 
-function DeviationTip() {
+function UnusualMoveTip() {
   return (
     <div className="max-w-sm space-y-2">
-      <div className="font-semibold">Deviation</div>
+      <div className="font-semibold">Unusual move</div>
       <div className="text-foreground/70">
-        A simple indicator of how unusual this game looks compared to expectation.
+        A calm indicator of how “out of pattern” the live game looks compared to expectation.
       </div>
-      <div className="text-foreground/70">Higher absolute values are more unusual.</div>
+      <div className="text-foreground/70">
+        Higher values are more unusual. It’s a watchlist signal — not a bet button.
+      </div>
     </div>
   );
 }
@@ -94,7 +99,7 @@ type ViewMode = "slate" | "heatmap";
 type Row = {
   key: string;
   abs: number;
-  deviation: number;
+  score: number;
 
   awayTeam: string;
   homeTeam: string;
@@ -108,7 +113,7 @@ type Row = {
   live: string;
   close: string;
 
-  deviationText: string;
+  scoreText: string;
   tone: "accent" | "warn" | "neutral";
 };
 
@@ -236,13 +241,8 @@ function toneFromAbs(abs: number): Row["tone"] {
 
 function bgFromTone(tone: Row["tone"], intensity01: number) {
   const a = clamp(intensity01, 0, 1);
-
-  if (tone === "accent") {
-    return `rgba(43, 203, 119, ${0.10 + 0.22 * a})`;
-  }
-  if (tone === "warn") {
-    return `rgba(245, 158, 11, ${0.08 + 0.18 * a})`;
-  }
+  if (tone === "accent") return `rgba(43, 203, 119, ${0.10 + 0.22 * a})`;
+  if (tone === "warn") return `rgba(245, 158, 11, ${0.08 + 0.18 * a})`;
   return `rgba(255, 255, 255, ${0.03 + 0.06 * a})`;
 }
 
@@ -315,8 +315,11 @@ export default function NbaClient() {
     const computed = games.map((g: any) => {
       const result = computeDeviation(g, { spreadIndex });
 
-      const deviation = Number.isFinite(result.zSpread) ? result.zSpread : 0;
-      const abs = Math.abs(deviation);
+      const spreadScore = Number.isFinite(result.zSpread) ? result.zSpread : 0;
+      const totalScore = Number.isFinite(result.zTotal) ? result.zTotal : 0;
+
+      const score = Math.abs(spreadScore) >= Math.abs(totalScore) ? spreadScore : totalScore;
+      const abs = Math.abs(score);
 
       const tone = toneFromAbs(abs);
 
@@ -331,7 +334,7 @@ export default function NbaClient() {
       return {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
         abs,
-        deviation,
+        score,
 
         awayTeam,
         homeTeam,
@@ -340,9 +343,11 @@ export default function NbaClient() {
 
         matchup: `${awayTeam} @ ${homeTeam}`,
         clock: `P${g.period ?? "—"} • ${mm}:${ss}`,
+
         live: formatSpread(g.liveSpreadHome, 1),
         close: formatSpread(g.closingSpreadHome, 1),
-        deviationText: fmtNum(deviation, 2),
+
+        scoreText: fmtNum(score, 2),
         tone,
       };
     });
@@ -351,6 +356,7 @@ export default function NbaClient() {
     return computed;
   }, [games]);
 
+  // Keep heat map focused: hide low-signal games for readability
   const heatRows = useMemo(() => rows.filter((r) => r.abs >= 0.35), [rows]);
 
   const treemap = useMemo(() => {
@@ -360,7 +366,7 @@ export default function NbaClient() {
 
     const items: TreeItem[] = heatRows.map((r) => {
       const capped = clamp(r.abs, 0, 2.2);
-      const weight = 1 + capped * 3.0;
+      const weight = 1 + capped * 3.0; // grows gently with “unusual move”
       return { id: r.key, value: weight, row: r };
     });
 
@@ -399,9 +405,7 @@ export default function NbaClient() {
               Labs • NBA
             </div>
 
-            <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">
-              Live Deviation Heat Map
-            </h1>
+            <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">Live Deviation Heat Map</h1>
 
             <p className="mt-4 max-w-3xl text-lg text-foreground/75">
               Highlights games performing materially above or below market expectation.
@@ -447,8 +451,8 @@ export default function NbaClient() {
                     <th className="px-4 py-3 font-medium">Live Spread (Home)</th>
                     <th className="px-4 py-3 font-medium">Closing Spread (Home)</th>
                     <th className="px-4 py-3 font-medium">
-                      <Tooltip label="Deviation">
-                        <DeviationTip />
+                      <Tooltip label="Unusual move">
+                        <UnusualMoveTip />
                       </Tooltip>
                     </th>
                   </tr>
@@ -457,7 +461,7 @@ export default function NbaClient() {
                 <tbody>
                   {rows.map((r) => {
                     const hasScore = typeof r.awayScore === "number" && typeof r.homeScore === "number";
-                    const devClass = textToneClass(r.tone);
+                    const scoreClass = textToneClass(r.tone);
 
                     return (
                       <tr key={r.key} className="border-t border-[color:var(--border)]">
@@ -481,16 +485,14 @@ export default function NbaClient() {
                         <td className="px-4 py-3 text-foreground/80">{r.clock}</td>
                         <td className="px-4 py-3 text-foreground/80">{r.live}</td>
                         <td className="px-4 py-3 text-foreground/80">{r.close}</td>
-                        <td className={cn("px-4 py-3 font-medium", devClass)}>{r.deviationText}</td>
+                        <td className={cn("px-4 py-3 font-medium", scoreClass)}>{r.scoreText}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
 
-              <div className="mt-4 text-sm text-foreground/55">
-                Lab preview. All signals require review.
-              </div>
+              <div className="mt-4 text-sm text-foreground/55">Lab preview. All signals require review.</div>
             </div>
           ) : (
             <div className="space-y-4">
@@ -511,8 +513,8 @@ export default function NbaClient() {
                 </div>
 
                 <div className="text-sm text-foreground/60">
-                  <Tooltip label="Deviation">
-                    <DeviationTip />
+                  <Tooltip label="Unusual move">
+                    <UnusualMoveTip />
                   </Tooltip>
                 </div>
               </div>
@@ -565,16 +567,10 @@ export default function NbaClient() {
                               </div>
                               {showClock ? <div className="mt-1 text-xs text-foreground/65">{r.clock}</div> : null}
                             </div>
-
-                            {isLarge ? (
-                              <div className={cn("text-xs font-semibold", numClass)}>
-                                {r.deviation >= 0 ? "above" : "below"}
-                              </div>
-                            ) : null}
                           </div>
 
                           <div className={cn("mt-3", isLarge ? "text-2xl" : isMedium ? "text-xl" : "text-lg")}>
-                            <div className={cn("font-semibold tabular-nums", numClass)}>{r.deviationText}</div>
+                            <div className={cn("font-semibold tabular-nums", numClass)}>{r.scoreText}</div>
                           </div>
 
                           {showLiveClose ? (
