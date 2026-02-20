@@ -23,7 +23,8 @@ type LiveGameItem = {
   closingSpreadHome: number | null;
 };
 
-type LiveResponse = { ok: true; items: LiveGameItem[] } | { ok: false };
+type LiveOk = { ok: true; items: LiveGameItem[]; meta?: { stale?: boolean; updatedAt?: string } };
+type LiveResponse = LiveOk | { ok: false };
 
 function supabaseAdmin() {
   const url = process.env.SUPABASE_URL;
@@ -67,36 +68,69 @@ async function ensureClosingLines(candidates: Array<{ gameKey: string; closingHo
   }
 
   if (rows.length === 0) return;
-
   await sb.from("nba_closing_lines").upsert(rows, { onConflict: "game_key" });
 }
 
 /** -------------------------------
- *  In-memory cache + lock
+ *  Snapshot persistence (Supabase)
  ---------------------------------*/
-const CACHE_TTL_MS = 90_000;
-const STALE_GRACE_MS = 10_000;
+async function writeSnapshot(payload: LiveOk) {
+  const sb = supabaseAdmin();
+  await sb
+    .from("nba_live_snapshots")
+    .upsert({ id: "latest", payload, updated_at: new Date().toISOString() }, { onConflict: "id" });
+}
 
-let cached: { at: number; payload: LiveResponse } | null = null;
-let inflight: Promise<LiveResponse> | null = null;
+async function readSnapshot(): Promise<LiveOk | null> {
+  const sb = supabaseAdmin();
+  const { data, error } = await sb
+    .from("nba_live_snapshots")
+    .select("updated_at, payload")
+    .eq("id", "latest")
+    .maybeSingle();
+
+  if (error || !data?.payload) return null;
+
+  const payload = data.payload as any;
+  if (!payload?.ok || !Array.isArray(payload.items)) return null;
+
+  return {
+    ok: true,
+    items: payload.items as LiveGameItem[],
+    meta: { stale: true, updatedAt: String(data.updated_at ?? "") },
+  };
+}
+
+/** -------------------------------
+ *  Cache + refresh policy
+ ---------------------------------*/
+// Active window: 90s target refresh (matches your UI interval)
+const ACTIVE_REFRESH_MS = 90_000;
+
+// Off-hours: 15 min target refresh
+const OFFHOURS_REFRESH_MS = 15 * 60_000;
+
+// small grace so we don't thrash right at boundaries
+const GRACE_MS = 5_000;
+
+let cached: { at: number; payload: LiveOk } | null = null;
+let inflight: Promise<LiveOk> | null = null;
 
 function nowMs() {
   return Date.now();
 }
 
-function isFresh(ts: number) {
-  return nowMs() - ts <= CACHE_TTL_MS + STALE_GRACE_MS;
+function isFresh(ts: number, ttlMs: number) {
+  return nowMs() - ts <= ttlMs + GRACE_MS;
 }
 
 /** -------------------------------
  *  Provider poll + join
  ---------------------------------*/
-async function pollProviders(): Promise<LiveResponse> {
+async function pollProviders(): Promise<LiveOk> {
   const [scores, odds] = await Promise.all([fetchApiSportsScores(), fetchTheOddsApiSpreads()]);
 
-  // odds key: laDateKey|away@home
   const oddsByKey = new Map<string, { liveHomeSpread: number | null }>();
-  // fallback: away@home
   const oddsByMatch = new Map<string, { liveHomeSpread: number | null }>();
 
   for (const o of odds) {
@@ -119,7 +153,6 @@ async function pollProviders(): Promise<LiveResponse> {
     const o2 = oddsByMatch.get(match);
     const liveSpreadHome = o1?.liveHomeSpread ?? o2?.liveHomeSpread ?? null;
 
-    // Record "closing" as the first pre-tip spread we observe (simple baseline).
     if (s.status === "scheduled" && typeof liveSpreadHome === "number" && Number.isFinite(liveSpreadHome)) {
       closingCandidates.push({ gameKey, closingHomeSpread: liveSpreadHome });
     }
@@ -133,16 +166,12 @@ async function pollProviders(): Promise<LiveResponse> {
 
     items.push({
       gameId: gameKey,
-
       awayTeam: s.awayTeam,
       homeTeam: s.homeTeam,
-
       awayScore: s.awayScore,
       homeScore: s.homeScore,
-
       period: s.period,
       secondsRemaining: s.secondsRemainingInPeriod,
-
       liveSpreadHome,
       closingSpreadHome: null,
     });
@@ -156,19 +185,20 @@ async function pollProviders(): Promise<LiveResponse> {
     closingSpreadHome: closingMap.get(it.gameId) ?? null,
   }));
 
-  return { ok: true, items: finalItems };
+  return { ok: true, items: finalItems, meta: { stale: false, updatedAt: new Date().toISOString() } };
 }
 
 /** -------------------------------
- *  Cached fetch with window control
+ *  Refresh logic (active vs off-hours)
  ---------------------------------*/
-async function getLiveData(): Promise<LiveResponse> {
-  if (cached && cached.payload.ok && isFresh(cached.at)) return cached.payload;
+async function getData(): Promise<LiveResponse> {
+  const withinActiveWindow = inPollingWindow(new Date());
+  const ttl = withinActiveWindow ? ACTIVE_REFRESH_MS : OFFHOURS_REFRESH_MS;
 
-  const within = inPollingWindow(new Date());
-  if (!within) {
-    if (cached?.payload?.ok) return cached.payload;
-    return { ok: false };
+  // If we have fresh in-memory cache for the relevant mode, use it.
+  if (cached && isFresh(cached.at, ttl)) {
+    // mark stale if off-hours (even if we refreshed recently)
+    return withinActiveWindow ? cached.payload : { ...cached.payload, meta: { ...(cached.payload.meta ?? {}), stale: true } };
   }
 
   if (inflight) return inflight;
@@ -176,12 +206,26 @@ async function getLiveData(): Promise<LiveResponse> {
   inflight = (async () => {
     try {
       const payload = await pollProviders();
+
       cached = { at: nowMs(), payload };
-      return payload;
+      await writeSnapshot(payload);
+
+      // If we're off-hours, mark stale in response even though it's refreshed
+      return withinActiveWindow
+        ? payload
+        : { ...payload, meta: { ...(payload.meta ?? {}), stale: true } };
     } catch (err: any) {
       console.error("[nba/live-games] poll error:", err?.message ?? err);
-      if (cached?.payload?.ok) return cached.payload;
-      return { ok: false };
+
+      // fall back to in-memory then persisted snapshot
+      if (cached) {
+        return withinActiveWindow
+          ? cached.payload
+          : { ...cached.payload, meta: { ...(cached.payload.meta ?? {}), stale: true } };
+      }
+
+      const snap = await readSnapshot();
+      return snap ?? ({ ok: false } as any);
     } finally {
       inflight = null;
     }
@@ -192,11 +236,12 @@ async function getLiveData(): Promise<LiveResponse> {
 
 export async function GET() {
   try {
-    const payload = await getLiveData();
+    const payload = await getData();
     return NextResponse.json(payload, { status: 200 });
   } catch (err: any) {
     console.error("[nba/live-games] handler error:", err?.message ?? err);
-    if (cached?.payload?.ok) return NextResponse.json(cached.payload, { status: 200 });
+    const snap = await readSnapshot();
+    if (snap) return NextResponse.json(snap, { status: 200 });
     return NextResponse.json({ ok: false }, { status: 200 });
   }
 }
