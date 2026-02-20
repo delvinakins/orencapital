@@ -537,6 +537,10 @@ export default function NbaClient() {
                     const showClock = isMedium;
                     const showLiveClose = isLarge;
 
+                    // ✅ New: show score line ONLY in large tiles
+                    const hasScore = typeof r.awayScore === "number" && typeof r.homeScore === "number";
+                    const showScoreLine = isLarge && hasScore;
+
                     return (
                       <div
                         key={t.item.id}
@@ -565,6 +569,17 @@ export default function NbaClient() {
                               >
                                 {r.matchup}
                               </div>
+
+                              {showScoreLine ? (
+                                <div className="mt-1 text-xs text-foreground/70 tabular-nums">
+                                  <span className="text-foreground/65">{r.awayTeam}</span>{" "}
+                                  <span className="font-semibold text-foreground">{r.awayScore}</span>
+                                  <span className="text-foreground/55"> — </span>
+                                  <span className="font-semibold text-foreground">{r.homeScore}</span>{" "}
+                                  <span className="text-foreground/65">{r.homeTeam}</span>
+                                </div>
+                              ) : null}
+
                               {showClock ? <div className="mt-1 text-xs text-foreground/65">{r.clock}</div> : null}
                             </div>
                           </div>
