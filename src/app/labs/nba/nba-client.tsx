@@ -38,12 +38,6 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-function fmtNum(x: any, digits = 2) {
-  const v = typeof x === "number" ? x : x == null ? null : Number(x);
-  if (typeof v !== "number" || !Number.isFinite(v)) return "—";
-  return v.toFixed(digits);
-}
-
 function formatSpread(x: any, digits = 1) {
   if (x == null) return "—";
 
@@ -80,23 +74,23 @@ function getLiveScore(g: any): { away: number | null; home: number | null } {
   return { away, home };
 }
 
-function formatSignedPoints(x: number, digits = 1) {
+function formatSigned(x: number, digits = 1) {
   const v = Number.isFinite(x) ? x : 0;
   const s = Math.abs(v).toFixed(digits);
   if (v > 0) return `+${s}`;
   if (v < 0) return `-${s}`;
-  return "0.0";
+  return `0.${"0".repeat(Math.max(0, digits))}`;
 }
 
-function ExpectationGapTip() {
+function MoveGapTip() {
   return (
     <div className="max-w-sm space-y-2">
-      <div className="font-semibold">Expectation gap</div>
+      <div className="font-semibold">Move gap</div>
       <div className="text-foreground/70">
-        A calm comparison between what similar game states usually finish at and what the current live spread implies.
+        Compares the current live-vs-close move to what typically happens in similar game states.
       </div>
       <div className="text-foreground/70">
-        Larger gaps are more unusual and may require review. It’s a watchlist signal — not a bet button.
+        Larger gaps may require review. It’s a watchlist signal — not a bet button.
       </div>
     </div>
   );
@@ -107,9 +101,11 @@ type ViewMode = "slate" | "heatmap";
 type Row = {
   key: string;
 
-  // Now in points, not z-score
-  abs: number; // |expectationGap|
-  gap: number; // expectationGap (signed)
+  abs: number; // |moveGapPts|
+  moveGapPts: number; // signed
+
+  observedMove: number; // live - close
+  expectedMove: number; // typical (model expected) live - close
 
   awayTeam: string;
   homeTeam: string;
@@ -125,6 +121,8 @@ type Row = {
 
   scoreText: string;
   tone: "accent" | "warn" | "neutral";
+
+  absZ: number;
 };
 
 /** -------- Treemap (squarify) layout (no deps) -------- */
@@ -243,10 +241,9 @@ function squarify(items: TreeItem[], rect: Rect): Placed[] {
   return placed;
 }
 
-function toneFromAbsPoints(absPts: number): Row["tone"] {
-  // Points-based thresholds (tuned for calm highlighting)
-  if (absPts >= 5.0) return "accent";
-  if (absPts >= 3.0) return "warn";
+function toneFromAbsZ(absZ: number): Row["tone"] {
+  if (absZ >= 1.5) return "accent";
+  if (absZ >= 1.0) return "warn";
   return "neutral";
 }
 
@@ -326,10 +323,14 @@ export default function NbaClient() {
     const computed = games.map((g: any) => {
       const result = computeDeviation(g, { spreadIndex });
 
-      const gap = Number.isFinite(result.expectationGap) ? result.expectationGap : 0;
-      const abs = Math.abs(gap);
+      const abs = Number.isFinite(result.absDislocationPts) ? result.absDislocationPts : 0;
+      const moveGapPts = Number.isFinite(result.dislocationPts) ? result.dislocationPts : 0;
 
-      const tone = toneFromAbsPoints(abs);
+      const observedMove = Number.isFinite(result.observedMove) ? result.observedMove : 0;
+      const expectedMove = Number.isFinite(result.expectedMove) ? result.expectedMove : 0;
+
+      const absZ = Number.isFinite(result.absZ) ? result.absZ : 0;
+      const tone = toneFromAbsZ(absZ);
 
       const mm = Math.floor((Number(g.secondsRemaining) || 0) / 60);
       const ss = String((Number(g.secondsRemaining) || 0) % 60).padStart(2, "0");
@@ -343,7 +344,10 @@ export default function NbaClient() {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
 
         abs,
-        gap,
+        moveGapPts,
+
+        observedMove,
+        expectedMove,
 
         awayTeam,
         homeTeam,
@@ -356,8 +360,9 @@ export default function NbaClient() {
         live: formatSpread(g.liveSpreadHome, 1),
         close: formatSpread(g.closingSpreadHome, 1),
 
-        scoreText: formatSignedPoints(gap, 1),
+        scoreText: formatSigned(moveGapPts, 1),
         tone,
+        absZ,
       };
     });
 
@@ -365,8 +370,8 @@ export default function NbaClient() {
     return computed;
   }, [games]);
 
-  // Keep heat map focused: hide low-signal games for readability (points-based)
-  const heatRows = useMemo(() => rows.filter((r) => r.abs >= 1.5), [rows]);
+  // Keep the heat map readable: hide low-signal noise
+  const heatRows = useMemo(() => rows.filter((r) => r.abs >= 0.6), [rows]);
 
   const treemap = useMemo(() => {
     const W = 1000;
@@ -374,10 +379,8 @@ export default function NbaClient() {
     const area = W * H;
 
     const items: TreeItem[] = heatRows.map((r) => {
-      // Cap so one extreme game doesn't swallow the map.
-      const capped = clamp(r.abs, 0, 10);
-      // Gentle growth; still emphasizes larger gaps.
-      const weight = 1 + capped * 2.2;
+      const capped = clamp(r.abs, 0, 4.0);
+      const weight = 1 + capped * 3.0;
       return { id: r.key, value: weight, row: r };
     });
 
@@ -419,7 +422,7 @@ export default function NbaClient() {
             <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">Live Deviation Heat Map</h1>
 
             <p className="mt-4 max-w-3xl text-lg text-foreground/75">
-              Highlights games performing materially above or below market expectation.
+              Highlights games where the live market move differs from what’s typical for similar game states.
             </p>
           </div>
 
@@ -462,8 +465,8 @@ export default function NbaClient() {
                     <th className="px-4 py-3 font-medium">Live Spread (Home)</th>
                     <th className="px-4 py-3 font-medium">Closing Spread (Home)</th>
                     <th className="px-4 py-3 font-medium">
-                      <Tooltip label="Expectation gap">
-                        <ExpectationGapTip />
+                      <Tooltip label="Move gap">
+                        <MoveGapTip />
                       </Tooltip>
                     </th>
                   </tr>
@@ -496,10 +499,7 @@ export default function NbaClient() {
                         <td className="px-4 py-3 text-foreground/80">{r.clock}</td>
                         <td className="px-4 py-3 text-foreground/80">{r.live}</td>
                         <td className="px-4 py-3 text-foreground/80">{r.close}</td>
-
-                        <td className={cn("px-4 py-3 font-medium tabular-nums", scoreClass)}>
-                          {r.scoreText}
-                        </td>
+                        <td className={cn("px-4 py-3 font-medium tabular-nums", scoreClass)}>{r.scoreText}</td>
                       </tr>
                     );
                   })}
@@ -514,7 +514,7 @@ export default function NbaClient() {
                 <div className="flex flex-wrap items-center gap-3 text-sm text-foreground/70">
                   <div className="flex items-center gap-2">
                     <span className="inline-block h-2.5 w-2.5 rounded-full bg-[color:var(--accent)]/80" />
-                    <span>larger gap</span>
+                    <span>larger move gap</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-300/80" />
@@ -527,8 +527,8 @@ export default function NbaClient() {
                 </div>
 
                 <div className="text-sm text-foreground/60">
-                  <Tooltip label="Expectation gap">
-                    <ExpectationGapTip />
+                  <Tooltip label="Move gap">
+                    <MoveGapTip />
                   </Tooltip>
                 </div>
               </div>
@@ -541,12 +541,9 @@ export default function NbaClient() {
                     const isLarge = t.widthPct >= 24 && t.heightPct >= 24;
                     const isMedium = t.widthPct >= 16 && t.heightPct >= 16;
 
-                    // intensity based on points gap
-                    const intensity01 = clamp(r.abs / 8.0, 0, 1);
-
+                    const intensity01 = clamp(r.abs / 3.0, 0, 1);
                     const bg = bgFromTone(r.tone, intensity01);
                     const border = borderFromTone(r.tone);
-
                     const numClass = textToneClass(r.tone);
 
                     const showClock = isMedium;
@@ -554,6 +551,9 @@ export default function NbaClient() {
 
                     const hasScore = typeof r.awayScore === "number" && typeof r.homeScore === "number";
                     const showScoreLine = isLarge && hasScore;
+
+                    // Show "Move/Normal" chips only in large tiles
+                    const showMoveNormal = isLarge;
 
                     return (
                       <div
@@ -601,6 +601,19 @@ export default function NbaClient() {
                           <div className={cn("mt-3", isLarge ? "text-2xl" : isMedium ? "text-xl" : "text-lg")}>
                             <div className={cn("font-semibold tabular-nums", numClass)}>{r.scoreText}</div>
                           </div>
+
+                          {showMoveNormal ? (
+                            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                              <div className="rounded-md border border-white/10 bg-black/10 px-2 py-1 tabular-nums">
+                                <span className="text-foreground/60">Move</span>{" "}
+                                <span className="font-semibold text-foreground">{formatSigned(r.observedMove, 1)}</span>
+                              </div>
+                              <div className="rounded-md border border-white/10 bg-black/10 px-2 py-1 tabular-nums">
+                                <span className="text-foreground/60">Normal</span>{" "}
+                                <span className="font-semibold text-foreground">{formatSigned(r.expectedMove, 1)}</span>
+                              </div>
+                            </div>
+                          ) : null}
 
                           {showLiveClose ? (
                             <div className="mt-3 grid grid-cols-2 gap-2 text-xs">

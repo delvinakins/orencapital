@@ -1,50 +1,39 @@
 // src/lib/labs/nba/heatmap.ts
 /**
- * NBA "Expectation Gap" signal
+ * NBA Heat Map signal (institutional, calm)
  *
- * Goal: point out outlier performance vs the market line in a calm, institutional way.
+ * Primary: "Market dislocation" = (live - close) - expectedMove
+ * where expectedMove comes from conditional distributions + shrinkage (deviation-engine).
  *
- * We compute:
- *  - impliedFinalHomeMargin = -liveHomeSpread
- *  - expectedFinalHomeMargin = E[FinalHomeMargin | current game state, market context]
- *  - expectationGap = expectedFinalHomeMargin - impliedFinalHomeMargin
+ * This keeps UI focused on: "is the market moving unusually vs what it typically does here?"
  *
- * This file is PURE. No fetch, no UI, no console. Safe to run on server/client.
+ * Pure functions only. Safe to import anywhere.
  */
 
-export type DeviationState = {
-  period: number | null;
-  secondsRemainingInPeriod: number | null;
-  scoreDiff: number | null; // home - away
-};
-
-export type DeviationMarket = {
-  closingHomeSpread: number | null;
-  liveHomeSpread: number | null;
-};
+import type { DistributionIndex, NBAGameState, MarketSnapshot } from "@/lib/nba/deviation-engine";
+import { scoreDeviation } from "@/lib/nba/deviation-engine";
 
 export type ComputeDeviationOptions = {
-  spreadIndex?: any;
+  spreadIndex: DistributionIndex;
 };
 
 export type DeviationResult = {
-  // Primary signal (pts)
-  expectedFinalHomeMargin: number | null;
-  impliedFinalHomeMargin: number | null;
-  expectationGap: number; // expected - implied (0 if unknown)
-  absGap: number;
+  // Core engine outputs
+  expectedMove: number;     // expected (live - close)
+  observedMove: number;     // actual (live - close)
+  stdevUsed: number;
+  z: number;
+  absZ: number;
+  tier: "none" | "mild" | "elevated" | "extreme";
+  label: string;
 
-  // Optional normalizations (best-effort)
-  gapStdDev: number | null;
-  zGap: number; // expectationGap / std (0 if unknown)
+  // Primary UI signal (points)
+  dislocationPts: number;   // (observed - expected)
+  absDislocationPts: number;
 
-  // Back-compat fields (kept so old callers don't explode)
-  zSpread: number;
-  zTotal: number;
-
-  // Debug-safe metadata (numbers only)
-  state: DeviationState;
-  market: DeviationMarket;
+  // passthrough (useful for debugging server logs; do not show raw objects to users)
+  state: NBAGameState;
+  market: MarketSnapshot;
 };
 
 function toNum(x: any): number | null {
@@ -61,7 +50,30 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-function getScores(g: any): { home: number | null; away: number | null } {
+function buildState(g: any): NBAGameState {
+  const period = toInt(g?.period) ?? toInt(g?.state?.period) ?? 1;
+
+  // Your mock feed uses `secondsRemaining` (per period). Keep that as first choice.
+  const secondsRemainingInPeriod =
+    toInt(g?.secondsRemaining) ??
+    toInt(g?.secondsRemainingInPeriod) ??
+    toInt(g?.state?.secondsRemainingInPeriod) ??
+    0;
+
+  // Prefer explicit scoreDiff if present; else compute from scores if available; else 0.
+  const scoreDiffExplicit =
+    toInt(g?.scoreDiff) ??
+    toInt(g?.state?.scoreDiff) ??
+    null;
+
+  if (scoreDiffExplicit != null) {
+    return {
+      period: Math.max(1, period),
+      secondsRemainingInPeriod: clamp(secondsRemainingInPeriod, 0, 60 * 12),
+      scoreDiff: scoreDiffExplicit,
+    };
+  }
+
   const away =
     toInt(g?.awayScore) ??
     toInt(g?.away_score) ??
@@ -76,192 +88,62 @@ function getScores(g: any): { home: number | null; away: number | null } {
     toInt(g?.home?.score) ??
     null;
 
-  return { home, away };
+  const scoreDiff = home != null && away != null ? home - away : 0;
+
+  return {
+    period: Math.max(1, period),
+    secondsRemainingInPeriod: clamp(secondsRemainingInPeriod, 0, 60 * 12),
+    scoreDiff,
+  };
 }
 
-function buildState(g: any): DeviationState {
-  const period =
-    toInt(g?.period) ??
-    toInt(g?.state?.period) ??
-    toInt(g?.gameState?.period) ??
-    null;
-
-  // Your feed uses `secondsRemaining`
-  const secondsRemainingInPeriod =
-    toInt(g?.secondsRemaining) ??
-    toInt(g?.secondsRemainingInPeriod) ??
-    toInt(g?.state?.secondsRemainingInPeriod) ??
-    toInt(g?.gameState?.secondsRemainingInPeriod) ??
-    null;
-
-  // Prefer explicit scoreDiff if present; else compute from score
-  const scoreDiffExplicit =
-    toInt(g?.scoreDiff) ??
-    toInt(g?.state?.scoreDiff) ??
-    toInt(g?.gameState?.scoreDiff) ??
-    null;
-
-  if (scoreDiffExplicit != null) {
-    return { period, secondsRemainingInPeriod, scoreDiff: scoreDiffExplicit };
-  }
-
-  const s = getScores(g);
-  const scoreDiff =
-    s.home != null && s.away != null ? s.home - s.away : null;
-
-  return { period, secondsRemainingInPeriod, scoreDiff };
-}
-
-function buildMarket(g: any): DeviationMarket {
-  const closingHomeSpread =
-    toNum(g?.closingSpreadHome) ??
-    toNum(g?.closingHomeSpread) ??
-    toNum(g?.closing_spread_home) ??
-    toNum(g?.market?.closingHomeSpread) ??
-    null;
-
+function buildMarket(g: any): MarketSnapshot {
   const liveHomeSpread =
     toNum(g?.liveSpreadHome) ??
     toNum(g?.liveHomeSpread) ??
-    toNum(g?.live_spread_home) ??
     toNum(g?.market?.liveHomeSpread) ??
+    toNum(g?.live_spread_home) ??
     null;
 
-  return { closingHomeSpread, liveHomeSpread };
-}
-
-/**
- * Best-effort adapter around unknown spreadIndex shape.
- * We try a few common method names and return:
- *  - meanExpectedFinalMargin (home)
- *  - stdDevFinalMargin
- */
-function estimateFromIndex(
-  spreadIndex: any,
-  state: DeviationState,
-  market: DeviationMarket
-): { mean: number | null; std: number | null } {
-  if (!spreadIndex) return { mean: null, std: null };
-
-  const payload = { state, market };
-
-  // 1) expectedFinalMargin({state, market})
-  if (typeof spreadIndex.expectedFinalMargin === "function") {
-    try {
-      const out = spreadIndex.expectedFinalMargin(payload);
-      const mean =
-        toNum(out?.mean) ??
-        toNum(out?.expected) ??
-        toNum(out?.expectedFinalHomeMargin) ??
-        toNum(out);
-      const std = toNum(out?.std) ?? toNum(out?.stdev) ?? toNum(out?.sigma) ?? null;
-      return { mean, std };
-    } catch {
-      // ignore
-    }
-  }
-
-  // 2) predict({state, market})
-  if (typeof spreadIndex.predict === "function") {
-    try {
-      const out = spreadIndex.predict(payload);
-      const mean =
-        toNum(out?.mean) ??
-        toNum(out?.expected) ??
-        toNum(out?.expectedFinalHomeMargin) ??
-        toNum(out);
-      const std = toNum(out?.std) ?? toNum(out?.stdev) ?? toNum(out?.sigma) ?? null;
-      return { mean, std };
-    } catch {
-      // ignore
-    }
-  }
-
-  // 3) query(state, market) or lookup(state, market)
-  const maybeFn =
-    (typeof spreadIndex.query === "function" && spreadIndex.query) ||
-    (typeof spreadIndex.lookup === "function" && spreadIndex.lookup) ||
+  const closingHomeSpread =
+    toNum(g?.closingSpreadHome) ??
+    toNum(g?.closingHomeSpread) ??
+    toNum(g?.market?.closingHomeSpread) ??
+    toNum(g?.closing_spread_home) ??
     null;
 
-  if (maybeFn) {
-    try {
-      const out = maybeFn(state, market);
-
-      // If out looks like a distribution summary
-      const mean =
-        toNum(out?.mean) ??
-        toNum(out?.expected) ??
-        toNum(out?.expectedFinalHomeMargin) ??
-        null;
-
-      const std =
-        toNum(out?.std) ?? toNum(out?.stdev) ?? toNum(out?.sigma) ?? null;
-
-      if (mean != null || std != null) return { mean, std };
-
-      // If out is an array of samples, try to compute mean/std from `finalMargin` or similar
-      if (Array.isArray(out) && out.length > 0) {
-        const vals = out
-          .map((x: any) => toNum(x?.finalHomeMargin ?? x?.finalMargin ?? x?.y ?? x))
-          .filter((v: any) => typeof v === "number" && Number.isFinite(v)) as number[];
-
-        if (vals.length === 0) return { mean: null, std: null };
-
-        const m = vals.reduce((a, b) => a + b, 0) / vals.length;
-        const varSum = vals.reduce((a, b) => a + (b - m) * (b - m), 0);
-        const sd = Math.sqrt(varSum / Math.max(1, vals.length - 1));
-        return { mean: m, std: sd };
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  return { mean: null, std: null };
+  return {
+    liveHomeSpread: liveHomeSpread ?? 0,
+    closingHomeSpread: closingHomeSpread ?? 0,
+  };
 }
 
-export function computeDeviation(g: any, opts: ComputeDeviationOptions = {}): DeviationResult {
+export function computeDeviation(g: any, opts: ComputeDeviationOptions): DeviationResult {
   const state = buildState(g);
   const market = buildMarket(g);
 
-  const impliedFinalHomeMargin =
-    market.liveHomeSpread != null ? -market.liveHomeSpread : null;
+  const scored = scoreDeviation(opts.spreadIndex, state, market);
 
-  const est = estimateFromIndex(opts.spreadIndex, state, market);
+  const observedMove =
+    Number.isFinite(scored.observedDeviation) ? scored.observedDeviation : 0;
 
-  // If we can't estimate, fall back to "no signal" rather than guessing.
-  const expectedFinalHomeMargin = est.mean;
+  const expectedMove =
+    Number.isFinite(scored.expectedDeviation) ? scored.expectedDeviation : 0;
 
-  const expectationGap =
-    expectedFinalHomeMargin != null && impliedFinalHomeMargin != null
-      ? expectedFinalHomeMargin - impliedFinalHomeMargin
-      : 0;
-
-  const absGap = Math.abs(expectationGap);
-
-  // Conservative std fallback if index doesn't provide one.
-  // Keep this mild; used only for zGap display/thresholding if desired.
-  const stdFallback = 7; // typical NBA margin variability scale
-  const gapStdDev =
-    est.std != null && Number.isFinite(est.std) && est.std > 0.25
-      ? est.std
-      : null;
-
-  const denom = gapStdDev ?? stdFallback;
-  const zGap = denom > 0 ? clamp(expectationGap / denom, -6, 6) : 0;
+  const dislocationPts = observedMove - expectedMove;
+  const absDislocationPts = Math.abs(dislocationPts);
 
   return {
-    expectedFinalHomeMargin,
-    impliedFinalHomeMargin,
-    expectationGap,
-    absGap,
+    expectedMove,
+    observedMove,
+    stdevUsed: scored.stdevUsed,
+    z: clamp(scored.z, -6, 6),
+    absZ: clamp(scored.absZ, 0, 6),
+    tier: scored.tier,
+    label: scored.label,
 
-    gapStdDev,
-    zGap,
-
-    // Back-compat placeholders (we no longer use them as primary)
-    zSpread: 0,
-    zTotal: 0,
+    dislocationPts,
+    absDislocationPts,
 
     state,
     market,
