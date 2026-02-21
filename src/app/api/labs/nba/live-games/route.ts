@@ -34,7 +34,7 @@ type LiveOk = {
     updatedAt: string; // ISO
     window: "active" | "offhours";
     storage?: "supabase" | "none";
-    // ✅ debug-safe presence flags (no secrets)
+    // debug-safe presence flags (no secrets)
     supabase?: {
       hasUrl: boolean;
       hasServiceKey: boolean;
@@ -169,7 +169,10 @@ async function ensureClosingLines(candidates: Array<{ gameKey: string; closingHo
   }
 }
 
-function classifyPhase(it: { period: number | null; awayScore: number | null; homeScore: number | null }, status?: string): Phase {
+function classifyPhase(
+  it: { period: number | null; awayScore: number | null; homeScore: number | null },
+  status?: string
+): Phase {
   const s = String(status ?? "").toLowerCase();
   if (s.includes("final") || s.includes("finished")) return "final";
 
@@ -197,6 +200,7 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
   const gameKeys: string[] = [];
   const closingCandidates: Array<{ gameKey: string; closingHomeSpread: number }> = [];
 
+  // Primary: scores feed
   for (const s of scores) {
     const match = `${s.awayTeam}@${s.homeTeam}`;
     const gameKey = makeMatchKey(s.awayTeam, s.homeTeam, s.laDateKey);
@@ -207,7 +211,10 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     const o2 = oddsByMatch.get(match);
     const liveSpreadHome = o1?.liveHomeSpread ?? o2?.liveHomeSpread ?? null;
 
-    if (s.status === "scheduled" && typeof liveSpreadHome === "number" && Number.isFinite(liveSpreadHome)) {
+    // ✅ FIX: seed "closing" baseline as "first seen" spread for pregame + live.
+    // This prevents missing baselines if we only start polling after tip.
+    const isFinal = s.status === "final";
+    if (!isFinal && typeof liveSpreadHome === "number" && Number.isFinite(liveSpreadHome)) {
       closingCandidates.push({ gameKey, closingHomeSpread: liveSpreadHome });
     }
 
@@ -232,6 +239,7 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     });
   }
 
+  // Fallback: odds-only (still show something)
   if (items.length === 0 && odds.length > 0) {
     for (const o of odds) {
       const gameKey = makeMatchKey(o.awayTeam, o.homeTeam, o.laDateKey || "");
@@ -300,18 +308,21 @@ async function getData(): Promise<LiveResponse> {
   const withinActiveWindow = inPollingWindow(new Date());
   const ttl = withinActiveWindow ? ACTIVE_REFRESH_MS : OFFHOURS_REFRESH_MS;
 
+  // In-memory cache (per warm instance)
   if (cached && isFresh(cached.at, ttl)) {
     return withinActiveWindow
       ? cached.payload
       : { ...cached.payload, meta: { ...cached.payload.meta, stale: true, window: "offhours" } };
   }
 
+  // Off-hours: prefer stored snapshot if it exists (fast + guaranteed)
   if (!withinActiveWindow) {
     const snap = await readSnapshot();
     if (snap) {
       cached = { at: nowMs(), payload: snap };
       return snap;
     }
+    // No snapshot yet -> seed by polling off-hours (rate limited by OFFHOURS ttl above)
   }
 
   if (inflight) return inflight;
