@@ -55,85 +55,82 @@ function laDateKeyNow(): string {
 }
 
 /**
- * API-Sports NBA v2 "status" typically:
- *  - status.long  ("Not Started", "In Play", "Finished")
- *  - status.short ("NS", "LIVE", "FT", sometimes "Q1"/"Q2"/"HT"/"OT")
- *  - status.clock ("09:41") when live
+ * API-Sports NBA v2 schema confirmed in your debug:
+ * - teams.visitors.name (away)
+ * - teams.home.name (home)
+ * - scores.visitors.points / scores.home.points
+ * - periods.current
+ * - status.long ("In Play" | "Finished" | "Not Started")
+ * - status.clock ("8:36")
+ * - status.short is numeric in your payload (2/3), so don't depend on it.
  */
 function normalizeStatusFromV2(statusObj: any): LiveScoreGame["status"] {
-  const long = String(statusObj?.long ?? "");
-  const short = String(statusObj?.short ?? "");
-  const s = `${long} ${short}`.toLowerCase();
-  const shortUp = short.toUpperCase();
+  const long = String(statusObj?.long ?? "").toLowerCase();
 
-  if (shortUp === "NS") return "scheduled";
-  if (shortUp === "FT") return "final";
-  if (shortUp === "LIVE") return "in_progress";
+  if (long.includes("finished") || long.includes("final")) return "final";
+  if (long.includes("in play") || long.includes("live") || long.includes("in progress")) return "in_progress";
+  if (long.includes("not started") || long.includes("scheduled")) return "scheduled";
 
-  // Quarter-ish shorthand
-  if (shortUp.startsWith("Q") || shortUp === "HT" || shortUp === "OT") return "in_progress";
-
-  if (s.includes("not started") || s.includes("scheduled")) return "scheduled";
-  if (s.includes("finished") || s.includes("final")) return "final";
-  if (s.includes("in play") || s.includes("live") || s.includes("in progress")) return "in_progress";
+  // If unknown but clock exists, treat as in_progress
+  if (typeof statusObj?.clock === "string" && statusObj.clock.trim()) return "in_progress";
 
   return "unknown";
 }
 
-function parseClockSecondsFromV2(game: any): number | null {
-  const clock =
-    pickFirstString(
-      game?.status?.clock,
-      game?.status?.timer,
-      game?.clock,
-      game?.time
-    ) ?? null;
+function parsePeriodFromV2(game: any): number | null {
+  return toInt(game?.periods?.current) ?? toInt(game?.periods?.total) ?? null;
+}
 
+function parseClockSecondsFromV2(game: any): number | null {
+  const clock = pickFirstString(game?.status?.clock, game?.status?.timer, game?.clock, game?.time);
   if (!clock) return null;
   return parseClockToSecondsRemaining(clock);
 }
 
-function parsePeriodFromV2(game: any): number | null {
-  return (
-    toInt(game?.periods?.current) ??
-    toInt(game?.status?.period) ??
-    toInt(game?.period) ??
-    null
-  );
-}
-
 function parseScoresFromV2(game: any): { away: number | null; home: number | null } {
-  // v2 NBA: live scoring often under scores.*.points
-  // sometimes total is null while points updates live
+  // confirmed: scores.visitors.points and scores.home.points
+  const away =
+    toInt(game?.scores?.visitors?.points) ??
+    toInt(game?.scores?.visitors?.total) ??
+    toInt(game?.scores?.away?.points) ??
+    toInt(game?.scores?.away?.total) ??
+    null;
+
   const home =
     toInt(game?.scores?.home?.points) ??
     toInt(game?.scores?.home?.total) ??
-    toInt(game?.scores?.home) ??
-    toInt(game?.score?.home) ??
-    toInt(game?.home?.score) ??
-    null;
-
-  const away =
-    toInt(game?.scores?.away?.points) ??
-    toInt(game?.scores?.away?.total) ??
-    toInt(game?.scores?.away) ??
-    toInt(game?.score?.away) ??
-    toInt(game?.away?.score) ??
     null;
 
   return { away, home };
 }
 
 function parseTeamsFromV2(game: any): { away: string | null; home: string | null } {
+  // confirmed: teams.visitors and teams.home
   const home =
     pickFirstString(game?.teams?.home?.name, game?.home?.name, game?.homeTeam) ?? null;
+
   const away =
-    pickFirstString(game?.teams?.away?.name, game?.away?.name, game?.awayTeam) ?? null;
+    pickFirstString(
+      game?.teams?.visitors?.name, // v2 NBA
+      game?.teams?.away?.name,
+      game?.visitors?.name,
+      game?.away?.name,
+      game?.awayTeam
+    ) ?? null;
+
   return { away, home };
 }
 
 function parseStartIsoFromV2(game: any): string | null {
-  return pickFirstString(game?.date, game?.datetime, game?.start) ?? null;
+  // confirmed: date.start
+  return (
+    pickFirstString(
+      game?.date?.start,
+      game?.date,
+      game?.datetime,
+      game?.start
+    ) ?? null
+  );
 }
 
 async function fetchJson(url: string, apiKey: string) {
@@ -172,17 +169,17 @@ export async function fetchApiSportsScores(): Promise<LiveScoreGame[]> {
 
   const base = (process.env.APISPORTS_NBA_BASE_URL || "https://v2.nba.api-sports.io").replace(/\/+$/, "");
 
-  // Rolling UTC window (PT night games can be "tomorrow" UTC)
+  // Rolling UTC window catches PT evening games that fall on "tomorrow" UTC.
   const now = new Date();
   const dates = [addDays(now, -1), now, addDays(now, 1)].map(ymdUtc);
-  const urls = dates.map((d) => `${base}/games?date=${encodeURIComponent(d)}`);
 
   const collected: LiveScoreGame[] = [];
   const seenProviderIds = new Set<string>();
 
-  for (const url of urls) {
-    let json: any = null;
+  for (const d of dates) {
+    const url = `${base}/games?date=${encodeURIComponent(d)}`;
 
+    let json: any = null;
     try {
       json = await fetchJson(url, apiKey);
     } catch (e: any) {
@@ -193,7 +190,7 @@ export async function fetchApiSportsScores(): Promise<LiveScoreGame[]> {
     const arr = extractResponseArray(json);
 
     for (const g of arr) {
-      const providerGameId = pickFirstString(g?.id, g?.game?.id, g?.gameId, g?.GameId) ?? null;
+      const providerGameId = String(g?.id ?? "").trim();
       if (!providerGameId) continue;
       if (seenProviderIds.has(providerGameId)) continue;
       seenProviderIds.add(providerGameId);
