@@ -34,7 +34,6 @@ type LiveOk = {
     updatedAt: string; // ISO
     window: "active" | "offhours";
     storage?: "supabase" | "none";
-    // You had extra fields at one point; leaving room is fine.
     supabase?: { hasUrl: boolean; hasServiceKey: boolean; enabled: boolean };
   };
 };
@@ -43,6 +42,52 @@ type LiveResponse = LiveOk | { ok: false };
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function nowMs() {
+  return Date.now();
+}
+
+/**
+ * LIVE GRACE:
+ * If we've seen any live game recently, keep polling frequently so the final
+ * score + final status gets captured even if the game ends right after the
+ * last scheduled poll.
+ */
+const LIVE_GRACE_MS = 30 * 60_000; // 30 minutes
+let lastLiveSeenAtMs: number | null = null;
+
+function minutesPT(d: Date): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+
+  const hh = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const mm = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return 0;
+  return hh * 60 + mm;
+}
+
+function beforeHardCutoffPT(d: Date): boolean {
+  // 11:59 PM PT cutoff
+  const m = minutesPT(d);
+  return m <= 23 * 60 + 59;
+}
+
+function effectiveActiveWindow(now: Date): boolean {
+  // Normal scheduled window OR within grace after last live game
+  const scheduled = inPollingWindow(now);
+  const withinGrace =
+    lastLiveSeenAtMs != null && nowMs() - lastLiveSeenAtMs <= LIVE_GRACE_MS;
+
+  // Never run "active" polling past the hard cutoff
+  if (!beforeHardCutoffPT(now)) return false;
+
+  return scheduled || withinGrace;
 }
 
 /**
@@ -98,10 +143,9 @@ async function writeSnapshot(payload: LiveOk) {
     const sb = supabaseAdminOrNull();
     if (!sb) return;
 
-    await sb.from("nba_live_snapshots").upsert(
-      { id: "latest", payload, updated_at: nowIso() },
-      { onConflict: "id" }
-    );
+    await sb
+      .from("nba_live_snapshots")
+      .upsert({ id: "latest", payload, updated_at: nowIso() }, { onConflict: "id" });
   } catch (err: any) {
     console.error("[nba/live-games] writeSnapshot error:", err?.message ?? err);
   }
@@ -177,10 +221,7 @@ async function ensureClosingLines(candidates: Array<{ gameKey: string; closingHo
   }
 }
 
-function classifyPhase(
-  it: { period: number | null; awayScore: number | null; homeScore: number | null },
-  status?: string
-): Phase {
+function classifyPhase(it: { period: number | null; awayScore: number | null; homeScore: number | null }, status?: string): Phase {
   const s = String(status ?? "").toLowerCase();
   if (s.includes("final") || s.includes("finished")) return "final";
 
@@ -212,7 +253,6 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
   for (const s of scores) {
     const match = `${s.awayTeam}@${s.homeTeam}`;
 
-    // ✅ null-safe dateKey if your type ever wobbles
     const laDateKey = (s as any)?.laDateKey ?? "";
     const gameKey = makeMatchKey(s.awayTeam, s.homeTeam, laDateKey);
 
@@ -222,10 +262,8 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     const o2 = oddsByMatch.get(match);
     const liveSpreadHome = o1?.liveHomeSpread ?? o2?.liveHomeSpread ?? null;
 
-    // ✅ Seed baseline ONLY pregame, period 0, scheduled
-    const isPregameSeed =
-      s.status === "scheduled" && (s.period == null || s.period === 0);
-
+    // ✅ Seed baseline ONLY pregame, scheduled, period 0/null
+    const isPregameSeed = s.status === "scheduled" && (s.period == null || s.period === 0);
     if (isPregameSeed && typeof liveSpreadHome === "number" && Number.isFinite(liveSpreadHome)) {
       closingCandidates.push({ gameKey, closingHomeSpread: liveSpreadHome });
     }
@@ -257,10 +295,6 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
       const gameKey = makeMatchKey(o.awayTeam, o.homeTeam, o.laDateKey || "");
       gameKeys.push(gameKey);
 
-      // ✅ Seed baseline ONLY if odds-only AND we are clearly pregame (no scores feed)
-      // We cannot be sure; so we do NOT seed here to avoid creating fake baselines.
-      // (If you want to seed odds-only later, we can do it with stronger checks.)
-
       items.push({
         gameId: gameKey,
         awayTeam: o.awayTeam,
@@ -279,12 +313,21 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
   // ✅ Persist baselines (no overwrite)
   await ensureClosingLines(closingCandidates);
 
-  // ✅ Attach baselines; IMPORTANT: do NOT fall back to live
+  // ✅ Attach baselines; do NOT fall back to live
   const closingMap = await getClosingMap(gameKeys);
   const finalItems = items.map((it) => ({
     ...it,
     closingSpreadHome: closingMap.get(it.gameId) ?? null,
   }));
+
+  // ✅ Update live-grace marker
+  const hasLive = finalItems.some((g) => g.phase === "live");
+  if (hasLive) {
+    lastLiveSeenAtMs = nowMs();
+  } else {
+    // If we're past cutoff and nothing is live, clear it.
+    if (!beforeHardCutoffPT(new Date())) lastLiveSeenAtMs = null;
+  }
 
   const sb = supabaseAdminOrNull();
   const storage = sb ? "supabase" : "none";
@@ -314,16 +357,13 @@ const GRACE_MS = 5_000;
 let cached: { at: number; payload: LiveOk } | null = null;
 let inflight: Promise<LiveOk> | null = null;
 
-function nowMs() {
-  return Date.now();
-}
-
 function isFresh(ts: number, ttlMs: number) {
   return nowMs() - ts <= ttlMs + GRACE_MS;
 }
 
 async function getData(): Promise<LiveResponse> {
-  const withinActiveWindow = inPollingWindow(new Date());
+  const now = new Date();
+  const withinActiveWindow = effectiveActiveWindow(now);
   const ttl = withinActiveWindow ? ACTIVE_REFRESH_MS : OFFHOURS_REFRESH_MS;
 
   // In-memory cache (per warm instance)
