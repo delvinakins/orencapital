@@ -10,7 +10,7 @@ import { inPollingWindow } from "@/lib/labs/nba/poll-window";
 type Phase = "pregame" | "live" | "final" | "unknown";
 
 type LiveGameItem = {
-  gameId: string; // game_key (LA date + matchup) used as DB key
+  gameId: string; // YYYY-MM-DD|away@home
   awayTeam: string;
   homeTeam: string;
 
@@ -34,7 +34,6 @@ type LiveOk = {
     updatedAt: string; // ISO
     window: "active" | "offhours";
     storage?: "supabase" | "none";
-    // debug-safe presence flags (no secrets)
     supabase?: {
       hasUrl: boolean;
       hasServiceKey: boolean;
@@ -47,6 +46,16 @@ type LiveResponse = LiveOk | { ok: false };
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function laTodayKey(): string {
+  // "en-CA" yields YYYY-MM-DD
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 /**
@@ -163,8 +172,6 @@ async function ensureClosingLines(candidates: Array<{ gameKey: string; closingHo
 
     if (rows.length === 0) return;
 
-    // Upsert keeps first-seen if you later switch to "insert only" logic.
-    // For now this is fine.
     await sb.from("nba_closing_lines").upsert(rows, { onConflict: "game_key" });
   } catch (err: any) {
     console.error("[nba/live-games] ensureClosingLines error:", err?.message ?? err);
@@ -186,6 +193,64 @@ function classifyPhase(
   return "pregame";
 }
 
+function pickDominantSlateDate(items: LiveGameItem[]): string | null {
+  // Prefer LA today+ so yesterday finals never win the vote.
+  const today = laTodayKey();
+
+  const withDates = items.filter((g) => g.gameId.includes("|"));
+  if (withDates.length === 0) return null;
+
+  // First, restrict to today-or-future if possible
+  const todayPlus = withDates.filter((g) => {
+    const d = g.gameId.split("|")[0];
+    return d && d >= today;
+  });
+
+  const candidates = todayPlus.length > 0 ? todayPlus : withDates;
+
+  // Second, decide slate date using NON-FINAL games if possible
+  const nonFinal = candidates.filter((g) => g.phase !== "final");
+  const votingPool = nonFinal.length > 0 ? nonFinal : candidates;
+
+  const counts = new Map<string, number>();
+  for (const g of votingPool) {
+    const d = g.gameId.split("|")[0];
+    if (!d) continue;
+    counts.set(d, (counts.get(d) ?? 0) + 1);
+  }
+
+  let best: string | null = null;
+  let max = 0;
+  for (const [d, c] of counts.entries()) {
+    if (c > max) {
+      max = c;
+      best = d;
+    }
+  }
+
+  return best;
+}
+
+function filterToSlate(items: LiveGameItem[]): LiveGameItem[] {
+  if (items.length === 0) return items;
+
+  const dominant = pickDominantSlateDate(items);
+  if (!dominant) return items;
+
+  // Keep all games on the dominant slate date…
+  const slate = items.filter((g) => g.gameId.startsWith(dominant));
+
+  // …and ALSO keep any live games (safety net for edge-case dateKey mismatches)
+  const live = items.filter((g) => g.phase === "live");
+
+  // Merge unique by gameId
+  const map = new Map<string, LiveGameItem>();
+  for (const g of slate) map.set(g.gameId, g);
+  for (const g of live) map.set(g.gameId, g);
+
+  return Array.from(map.values());
+}
+
 async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
   const [scores, odds] = await Promise.all([fetchApiSportsScores(), fetchTheOddsApiSpreads()]);
 
@@ -199,7 +264,7 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     if (o.laDateKey) oddsByKey.set(`${o.laDateKey}|${match}`, { liveHomeSpread: o.liveHomeSpread });
   }
 
-  // ✅ Dedup scores by providerGameId to prevent duplicates caused by mixed date windows (UTC vs PT)
+  // ✅ Dedup scores by providerGameId (prevents duplicates from multiple endpoints)
   const seenProvider = new Set<string>();
 
   const items: LiveGameItem[] = [];
@@ -222,8 +287,7 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     const o2 = oddsByMatch.get(match);
     const liveSpreadHome = o1?.liveHomeSpread ?? o2?.liveHomeSpread ?? null;
 
-    // ✅ Seed "closing" baseline as first-seen spread for pregame + live (not just scheduled).
-    // Prevents missing baselines if polling begins after tip.
+    // Seed baseline for any non-final game so we don't miss baseline if polling starts late
     const isFinal = s.status === "final";
     if (!isFinal && typeof liveSpreadHome === "number" && Number.isFinite(liveSpreadHome)) {
       closingCandidates.push({ gameKey, closingHomeSpread: liveSpreadHome });
@@ -246,7 +310,7 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
       secondsRemaining: s.secondsRemainingInPeriod,
       liveSpreadHome,
       closingSpreadHome: null,
-      phase: classifyPhase(s, String(s.status ?? "")),
+      phase: classifyPhase(s, String((s as any)?.status ?? "")),
     });
   }
 
@@ -275,17 +339,14 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     }
   }
 
-  // Write baseline lines, then read them back (keys are uniq inside getClosingMap)
   await ensureClosingLines(closingCandidates);
   const closingMap = await getClosingMap(gameKeys);
 
-  // Build items with closing spread fallback
+  // Fill closing baseline (never null if live spread exists)
   const enriched = items.map((it) => {
     const fromDb = closingMap.get(it.gameId);
     const fallback =
-      typeof it.liveSpreadHome === "number" && Number.isFinite(it.liveSpreadHome)
-        ? it.liveSpreadHome
-        : null;
+      typeof it.liveSpreadHome === "number" && Number.isFinite(it.liveSpreadHome) ? it.liveSpreadHome : null;
 
     return {
       ...it,
@@ -293,28 +354,8 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     };
   });
 
-  // -------------------------------------
-  // FILTER TO MOST-COMMON LA DATE (SLATE)
-  // -------------------------------------
-  const dateCounts = new Map<string, number>();
-  for (const g of enriched) {
-    const date = g.gameId.split("|")[0];
-    if (!date) continue;
-    dateCounts.set(date, (dateCounts.get(date) ?? 0) + 1);
-  }
-
-  let dominantDate: string | null = null;
-  let max = 0;
-
-  for (const [date, count] of dateCounts.entries()) {
-    if (count > max) {
-      max = count;
-      dominantDate = date;
-    }
-  }
-
-  const finalItems =
-    dominantDate != null ? enriched.filter((g) => g.gameId.startsWith(dominantDate)) : enriched;
+  // ✅ Filter to the correct slate (prevents yesterday finals from winning the vote)
+  const finalItems = filterToSlate(enriched);
 
   const enabled = supabaseAdminOrNull() != null;
   const storage = enabled ? "supabase" : "none";
@@ -359,7 +400,7 @@ async function getData(): Promise<LiveResponse> {
       : { ...cached.payload, meta: { ...cached.payload.meta, stale: true, window: "offhours" } };
   }
 
-  // Off-hours: prefer stored snapshot if it exists (fast + guaranteed)
+  // Off-hours: prefer stored snapshot if it exists
   if (!withinActiveWindow) {
     const snap = await readSnapshot();
     if (snap) {
