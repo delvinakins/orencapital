@@ -10,7 +10,7 @@ import { inPollingWindow } from "@/lib/labs/nba/poll-window";
 type Phase = "pregame" | "live" | "final" | "unknown";
 
 type LiveGameItem = {
-  gameId: string;
+  gameId: string; // game_key (LA date + matchup) used as DB key
   awayTeam: string;
   homeTeam: string;
 
@@ -109,9 +109,7 @@ async function writeSnapshot(payload: LiveOk) {
     const sb = supabaseAdminOrNull();
     if (!sb) return;
 
-    await sb
-      .from("nba_live_snapshots")
-      .upsert({ id: "latest", payload, updated_at: nowIso() }, { onConflict: "id" });
+    await sb.from("nba_live_snapshots").upsert({ id: "latest", payload, updated_at: nowIso() }, { onConflict: "id" });
   } catch (err: any) {
     console.error("[nba/live-games] writeSnapshot error:", err?.message ?? err);
   }
@@ -119,7 +117,8 @@ async function writeSnapshot(payload: LiveOk) {
 
 async function getClosingMap(keys: string[]) {
   const map = new Map<string, number>();
-  if (keys.length === 0) return map;
+  const uniq = Array.from(new Set(keys.filter(Boolean)));
+  if (uniq.length === 0) return map;
 
   try {
     const sb = supabaseAdminOrNull();
@@ -128,7 +127,7 @@ async function getClosingMap(keys: string[]) {
     const { data, error } = await sb
       .from("nba_closing_lines")
       .select("game_key, closing_home_spread")
-      .in("game_key", keys);
+      .in("game_key", uniq);
 
     if (error || !Array.isArray(data)) return map;
 
@@ -163,16 +162,16 @@ async function ensureClosingLines(candidates: Array<{ gameKey: string; closingHo
     }
 
     if (rows.length === 0) return;
+
+    // Upsert keeps first-seen if you later switch to "insert only" logic.
+    // For now this is fine.
     await sb.from("nba_closing_lines").upsert(rows, { onConflict: "game_key" });
   } catch (err: any) {
     console.error("[nba/live-games] ensureClosingLines error:", err?.message ?? err);
   }
 }
 
-function classifyPhase(
-  it: { period: number | null; awayScore: number | null; homeScore: number | null },
-  status?: string
-): Phase {
+function classifyPhase(it: { period: number | null; awayScore: number | null; homeScore: number | null }, status?: string): Phase {
   const s = String(status ?? "").toLowerCase();
   if (s.includes("final") || s.includes("finished")) return "final";
 
@@ -187,6 +186,7 @@ function classifyPhase(
 async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
   const [scores, odds] = await Promise.all([fetchApiSportsScores(), fetchTheOddsApiSpreads()]);
 
+  // Odds maps
   const oddsByKey = new Map<string, { liveHomeSpread: number | null }>();
   const oddsByMatch = new Map<string, { liveHomeSpread: number | null }>();
 
@@ -196,23 +196,31 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     if (o.laDateKey) oddsByKey.set(`${o.laDateKey}|${match}`, { liveHomeSpread: o.liveHomeSpread });
   }
 
+  // ✅ Dedup scores by providerGameId to prevent duplicates caused by mixed date windows (UTC vs PT)
+  const seenProvider = new Set<string>();
+
   const items: LiveGameItem[] = [];
   const gameKeys: string[] = [];
   const closingCandidates: Array<{ gameKey: string; closingHomeSpread: number }> = [];
 
   // Primary: scores feed
   for (const s of scores) {
+    const providerId = String((s as any)?.providerGameId ?? "");
+    if (providerId) {
+      if (seenProvider.has(providerId)) continue;
+      seenProvider.add(providerId);
+    }
+
     const match = `${s.awayTeam}@${s.homeTeam}`;
     const gameKey = makeMatchKey(s.awayTeam, s.homeTeam, s.laDateKey);
-
     gameKeys.push(gameKey);
 
     const o1 = oddsByKey.get(`${s.laDateKey}|${match}`);
     const o2 = oddsByMatch.get(match);
     const liveSpreadHome = o1?.liveHomeSpread ?? o2?.liveHomeSpread ?? null;
 
-    // ✅ FIX: seed "closing" baseline as "first seen" spread for pregame + live.
-    // This prevents missing baselines if we only start polling after tip.
+    // ✅ FIX: seed "closing" baseline as first-seen spread for pregame + live (not just scheduled),
+    // so we don't miss the baseline if polling begins after tip.
     const isFinal = s.status === "final";
     if (!isFinal && typeof liveSpreadHome === "number" && Number.isFinite(liveSpreadHome)) {
       closingCandidates.push({ gameKey, closingHomeSpread: liveSpreadHome });
@@ -239,7 +247,7 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     });
   }
 
-  // Fallback: odds-only (still show something)
+  // Fallback: odds-only (still show something if scores feed has nothing)
   if (items.length === 0 && odds.length > 0) {
     for (const o of odds) {
       const gameKey = makeMatchKey(o.awayTeam, o.homeTeam, o.laDateKey || "");
@@ -264,13 +272,21 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     }
   }
 
+  // Write baseline lines, then read them back (keys are uniq inside getClosingMap)
   await ensureClosingLines(closingCandidates);
-
   const closingMap = await getClosingMap(gameKeys);
-  const finalItems = items.map((it) => ({
-    ...it,
-    closingSpreadHome: closingMap.get(it.gameId) ?? it.closingSpreadHome ?? null,
-  }));
+
+  // ✅ Fill closingSpreadHome reliably.
+  // If DB doesn't have it yet (first cycle), fallback to liveSpreadHome so the UI never shows null.
+  const finalItems = items.map((it) => {
+    const fromDb = closingMap.get(it.gameId);
+    const fallback = typeof it.liveSpreadHome === "number" && Number.isFinite(it.liveSpreadHome) ? it.liveSpreadHome : null;
+
+    return {
+      ...it,
+      closingSpreadHome: fromDb ?? fallback,
+    };
+  });
 
   const enabled = supabaseAdminOrNull() != null;
   const storage = enabled ? "supabase" : "none";
@@ -322,7 +338,6 @@ async function getData(): Promise<LiveResponse> {
       cached = { at: nowMs(), payload: snap };
       return snap;
     }
-    // No snapshot yet -> seed by polling off-hours (rate limited by OFFHOURS ttl above)
   }
 
   if (inflight) return inflight;
