@@ -171,7 +171,10 @@ async function ensureClosingLines(candidates: Array<{ gameKey: string; closingHo
   }
 }
 
-function classifyPhase(it: { period: number | null; awayScore: number | null; homeScore: number | null }, status?: string): Phase {
+function classifyPhase(
+  it: { period: number | null; awayScore: number | null; homeScore: number | null },
+  status?: string
+): Phase {
   const s = String(status ?? "").toLowerCase();
   if (s.includes("final") || s.includes("finished")) return "final";
 
@@ -219,8 +222,8 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     const o2 = oddsByMatch.get(match);
     const liveSpreadHome = o1?.liveHomeSpread ?? o2?.liveHomeSpread ?? null;
 
-    // ✅ FIX: seed "closing" baseline as first-seen spread for pregame + live (not just scheduled),
-    // so we don't miss the baseline if polling begins after tip.
+    // ✅ Seed "closing" baseline as first-seen spread for pregame + live (not just scheduled).
+    // Prevents missing baselines if polling begins after tip.
     const isFinal = s.status === "final";
     if (!isFinal && typeof liveSpreadHome === "number" && Number.isFinite(liveSpreadHome)) {
       closingCandidates.push({ gameKey, closingHomeSpread: liveSpreadHome });
@@ -276,17 +279,42 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
   await ensureClosingLines(closingCandidates);
   const closingMap = await getClosingMap(gameKeys);
 
-  // ✅ Fill closingSpreadHome reliably.
-  // If DB doesn't have it yet (first cycle), fallback to liveSpreadHome so the UI never shows null.
-  const finalItems = items.map((it) => {
+  // Build items with closing spread fallback
+  const enriched = items.map((it) => {
     const fromDb = closingMap.get(it.gameId);
-    const fallback = typeof it.liveSpreadHome === "number" && Number.isFinite(it.liveSpreadHome) ? it.liveSpreadHome : null;
+    const fallback =
+      typeof it.liveSpreadHome === "number" && Number.isFinite(it.liveSpreadHome)
+        ? it.liveSpreadHome
+        : null;
 
     return {
       ...it,
       closingSpreadHome: fromDb ?? fallback,
     };
   });
+
+  // -------------------------------------
+  // FILTER TO MOST-COMMON LA DATE (SLATE)
+  // -------------------------------------
+  const dateCounts = new Map<string, number>();
+  for (const g of enriched) {
+    const date = g.gameId.split("|")[0];
+    if (!date) continue;
+    dateCounts.set(date, (dateCounts.get(date) ?? 0) + 1);
+  }
+
+  let dominantDate: string | null = null;
+  let max = 0;
+
+  for (const [date, count] of dateCounts.entries()) {
+    if (count > max) {
+      max = count;
+      dominantDate = date;
+    }
+  }
+
+  const finalItems =
+    dominantDate != null ? enriched.filter((g) => g.gameId.startsWith(dominantDate)) : enriched;
 
   const enabled = supabaseAdminOrNull() != null;
   const storage = enabled ? "supabase" : "none";
