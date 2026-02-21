@@ -40,6 +40,13 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
+function roundToHalf(x: any): number | null {
+  if (x == null) return null;
+  const v = typeof x === "number" ? x : Number(String(x).trim());
+  if (!Number.isFinite(v)) return null;
+  return Math.round(v * 2) / 2;
+}
+
 function formatSpread(x: any, digits = 1) {
   if (x == null) return "—";
 
@@ -125,7 +132,9 @@ function MoveGapTip() {
       <div className="text-foreground/70">
         Compares the current live-vs-close move to what typically happens in similar game states.
       </div>
-      <div className="text-foreground/70">Larger gaps may require review. It’s a watchlist signal — not a bet button.</div>
+      <div className="text-foreground/70">
+        Larger gaps may require review. It’s a watchlist signal — not a bet button.
+      </div>
     </div>
   );
 }
@@ -157,6 +166,9 @@ type Row = {
   tone: "accent" | "warn" | "neutral";
 
   absZ: number;
+
+  phase: "pregame" | "live" | "final" | "unknown";
+  isLive: boolean;
 };
 
 /** -------- Treemap (squarify) layout (no deps) -------- */
@@ -365,6 +377,9 @@ export default function NbaClient() {
 
   const rows = useMemo<Row[]>(() => {
     const computed = games.map((g: any) => {
+      const phase = String(g?.phase ?? "unknown") as Row["phase"];
+      const isLive = phase === "live";
+
       // Only compute “signal” after 2pm PT (spreads are hidden before then).
       const result = after2pm ? computeDeviation(g, { spreadIndex }) : null;
 
@@ -377,13 +392,27 @@ export default function NbaClient() {
       const absZ = after2pm && result && Number.isFinite(result.absZ) ? result.absZ : 0;
       const tone = after2pm ? toneFromAbsZ(absZ) : "neutral";
 
-      const mm = Math.floor((Number(g.secondsRemaining) || 0) / 60);
-      const ss = String((Number(g.secondsRemaining) || 0) % 60).padStart(2, "0");
-
       const awayTeam = String(g?.awayTeam ?? "—");
       const homeTeam = String(g?.homeTeam ?? "—");
 
       const s = getLiveScore(g);
+
+      // Clock (calm): when we truly don't have secondsRemaining, avoid fake 0:00
+      const period = safeInt(g?.period);
+      const secondsRemaining = safeInt(g?.secondsRemaining);
+      const mm = secondsRemaining != null ? Math.floor(secondsRemaining / 60) : null;
+      const ss = secondsRemaining != null ? String(secondsRemaining % 60).padStart(2, "0") : null;
+
+      const clock =
+        period == null || period === 0
+          ? "Pregame"
+          : mm == null || ss == null
+          ? `P${period} • —`
+          : `P${period} • ${mm}:${ss}`;
+
+      // Round spreads to nearest 0.5 for display
+      const liveRounded = roundToHalf(g?.liveSpreadHome);
+      const closeRounded = roundToHalf(g?.closingSpreadHome);
 
       return {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
@@ -400,20 +429,24 @@ export default function NbaClient() {
         homeScore: s.home,
 
         matchup: `${awayTeam} @ ${homeTeam}`,
-        clock: `P${g.period ?? "—"} • ${mm}:${ss}`,
+        clock,
 
-        live: after2pm ? formatSpread(g.liveSpreadHome, 1) : "—",
-        close: after2pm ? formatSpread(g.closingSpreadHome, 1) : "—",
+        live: after2pm ? formatSpread(liveRounded, 1) : "—",
+        close: after2pm ? formatSpread(closeRounded, 1) : "—",
 
         scoreText: after2pm ? formatSigned(moveGapPts, 1) : "—",
         tone,
         absZ,
+
+        phase,
+        isLive,
       };
     });
 
     // Before 2pm, keep stable ordering by matchup; after 2pm, rank by abs move-gap.
-    if (after2pm) computed.sort((a, b) => b.abs - a.abs);
-    else computed.sort((a, b) => a.matchup.localeCompare(b.matchup));
+    // Always float live games to the top within the chosen ordering.
+    if (after2pm) computed.sort((a, b) => (b.isLive ? 1 : 0) - (a.isLive ? 1 : 0) || b.abs - a.abs);
+    else computed.sort((a, b) => (b.isLive ? 1 : 0) - (a.isLive ? 1 : 0) || a.matchup.localeCompare(b.matchup));
 
     return computed;
   }, [games, after2pm]);
@@ -423,7 +456,7 @@ export default function NbaClient() {
   // - Before 2pm: show all games (neutral tiles, equal weights)
   const heatRows = useMemo(() => {
     if (!after2pm) return rows;
-    return rows.filter((r) => r.abs >= 0.6);
+    return rows.filter((r) => r.abs >= 0.6 || r.isLive); // keep live games visible even if abs is small
   }, [rows, after2pm]);
 
   const treemap = useMemo(() => {
@@ -438,7 +471,9 @@ export default function NbaClient() {
       }
 
       const capped = clamp(r.abs, 0, 4.0);
-      const weight = 1 + capped * 3.0;
+      // Slight bump for live games so they’re easier to spot, without feeling “gamified”
+      const liveBump = r.isLive ? 0.35 : 0;
+      const weight = 1 + (capped + liveBump) * 3.0;
       return { id: r.key, value: weight, row: r };
     });
 
@@ -468,6 +503,8 @@ export default function NbaClient() {
     });
   }, [heatRows, after2pm]);
 
+  const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-5xl space-y-8 px-6 py-16">
@@ -484,9 +521,16 @@ export default function NbaClient() {
 
               {updatedAtLabel ? <div className="text-xs text-foreground/55">Last updated {updatedAtLabel} PT</div> : null}
 
+              {liveCount > 0 ? (
+                <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-3 py-1 text-xs text-[color:var(--accent)]">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
+                  {liveCount} live
+                </div>
+              ) : null}
+
               {!after2pm ? (
                 <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
-                  Spreads unlock at 5pm ET
+                  Spreads unlock at 5pm EST
                 </div>
               ) : null}
             </div>
@@ -557,9 +601,25 @@ export default function NbaClient() {
                     const scoreClass = textToneClass(r.tone);
 
                     return (
-                      <tr key={r.key} className="border-t border-[color:var(--border)]">
+                      <tr
+                        key={r.key}
+                        className={cn(
+                          "border-t border-[color:var(--border)]",
+                          r.isLive && "bg-[color:var(--accent)]/5"
+                        )}
+                        style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.18)" } : undefined}
+                      >
                         <td className="px-4 py-3">
-                          <div className="font-medium text-foreground">{r.matchup}</div>
+                          <div className="flex items-center gap-2">
+                            <div className="font-medium text-foreground">{r.matchup}</div>
+                            {r.isLive ? (
+                              <span className="inline-flex items-center gap-2 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-2.5 py-0.5 text-xs text-[color:var(--accent)]">
+                                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
+                                LIVE
+                              </span>
+                            ) : null}
+                          </div>
+
                           <div className="mt-1 text-sm text-foreground/70">
                             {hasScore ? (
                               <span>
@@ -575,7 +635,16 @@ export default function NbaClient() {
                           </div>
                         </td>
 
-                        <td className="px-4 py-3 text-foreground/80">{r.clock}</td>
+                        <td className="px-4 py-3">
+                          {r.isLive ? (
+                            <div className="inline-flex items-center rounded-lg border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-2.5 py-1 text-sm text-foreground">
+                              <span className="text-foreground/80">{r.clock}</span>
+                            </div>
+                          ) : (
+                            <div className="text-foreground/80">{r.clock}</div>
+                          )}
+                        </td>
+
                         <td className="px-4 py-3 text-foreground/80">{r.live}</td>
                         <td className="px-4 py-3 text-foreground/80">{r.close}</td>
                         <td className={cn("px-4 py-3 font-medium tabular-nums", scoreClass)}>{r.scoreText}</td>
@@ -585,9 +654,15 @@ export default function NbaClient() {
                 </tbody>
               </table>
 
+              <div className="mt-4 text-sm text-foreground/55">Lab preview. All signals require review.</div>
+
               {!after2pm ? (
-                <div className="mt-2 text-sm text-foreground/55">Spread-based signals are hidden until 5pm ET.</div>
+                <div className="mt-2 text-sm text-foreground/55">Spread-based signals are hidden before 5pm EST.</div>
               ) : null}
+
+              <div className="mt-2 text-xs text-foreground/55">
+                Spreads are rounded to the nearest 0.5 for readability.
+              </div>
             </div>
           ) : (
             <div className="space-y-4">
@@ -599,7 +674,7 @@ export default function NbaClient() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-300/80" />
-                    <span>{after2pm ? "worth watching" : "labels unlock at 5pm ET"}</span>
+                    <span>{after2pm ? "worth watching" : "labels unlock at 5pm EST"}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="inline-block h-2.5 w-2.5 rounded-full bg-white/30" />
@@ -639,8 +714,9 @@ export default function NbaClient() {
 
                     const showMoveNormal = after2pm && isLarge;
 
-                    // Before 2pm, hide the move-gap number too (it’s derived from spreads)
                     const showMoveGapNumber = after2pm;
+
+                    const liveOutline = r.isLive ? "rgba(43, 203, 119, 0.32)" : border;
 
                     return (
                       <div
@@ -655,17 +731,30 @@ export default function NbaClient() {
                           width: t.width,
                           height: t.height,
                           background: bg,
-                          border: `1px solid ${border}`,
+                          border: `1px solid ${liveOutline}`,
+                          boxShadow: r.isLive ? "0 0 0 1px rgba(43,203,119,0.10) inset" : undefined,
                         }}
                         title={`${r.matchup} • ${r.clock}`}
                       >
                         <div className={cn("h-full w-full", isLarge ? "p-4" : isMedium ? "p-3" : "p-2")}>
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <div
-                                className={cn("truncate font-semibold text-foreground", isLarge ? "text-base" : "text-sm")}
-                              >
-                                {r.matchup}
+                              <div className="flex items-center gap-2">
+                                <div
+                                  className={cn(
+                                    "truncate font-semibold text-foreground",
+                                    isLarge ? "text-base" : "text-sm"
+                                  )}
+                                >
+                                  {r.matchup}
+                                </div>
+
+                                {r.isLive ? (
+                                  <span className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-2 py-0.5 text-[11px] text-[color:var(--accent)]">
+                                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
+                                    LIVE
+                                  </span>
+                                ) : null}
                               </div>
 
                               {showScoreLine ? (
@@ -678,7 +767,15 @@ export default function NbaClient() {
                                 </div>
                               ) : null}
 
-                              {showClock ? <div className="mt-1 text-xs text-foreground/65">{r.clock}</div> : null}
+                              {showClock ? (
+                                r.isLive ? (
+                                  <div className="mt-1 inline-flex items-center rounded-md border border-[color:var(--accent)]/20 bg-[color:var(--accent)]/10 px-2 py-0.5 text-xs text-foreground/80">
+                                    {r.clock}
+                                  </div>
+                                ) : (
+                                  <div className="mt-1 text-xs text-foreground/65">{r.clock}</div>
+                                )
+                              ) : null}
                             </div>
                           </div>
 
@@ -720,6 +817,8 @@ export default function NbaClient() {
                 </div>
               </div>
 
+              <div className="text-sm text-foreground/55">Lab preview. All signals require review.</div>
+
               {after2pm && rows.length !== heatRows.length ? (
                 <div className="text-sm text-foreground/55">
                   Showing {heatRows.length} games on the heat map (low-signal games are hidden).
@@ -727,8 +826,10 @@ export default function NbaClient() {
               ) : null}
 
               {!after2pm ? (
-                <div className="text-sm text-foreground/55">Spread-based tiles and rankings start at 5pm ET.</div>
+                <div className="text-sm text-foreground/55">Spread-based tiles and rankings start at 5pm EST.</div>
               ) : null}
+
+              <div className="text-xs text-foreground/55">Spreads are rounded to the nearest 0.5 for readability.</div>
             </div>
           )}
         </section>
