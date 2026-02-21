@@ -54,115 +54,85 @@ function laDateKeyNow(): string {
   return `${y}-${m}-${d}`;
 }
 
-function normalizeStatus(raw: any): LiveScoreGame["status"] {
-  const s = String(raw ?? "").toLowerCase();
+/**
+ * API-Sports NBA v2 "status" typically contains:
+ * - status.long  (e.g. "Not Started", "In Play", "Finished")
+ * - status.short (e.g. "NS", "LIVE", "FT")
+ * - status.clock (e.g. "09:41") when live
+ */
+function normalizeStatusFromV2(statusObj: any): LiveScoreGame["status"] {
+  const long = String(statusObj?.long ?? "");
+  const short = String(statusObj?.short ?? "");
 
-  if (s.includes("not started") || s.includes("scheduled") || s === "ns") return "scheduled";
-  if (s.includes("finished") || s.includes("final") || s === "ft") return "final";
+  const s = `${long} ${short}`.toLowerCase();
+  const shortUp = short.toUpperCase();
 
-  if (
-    s.includes("in play") ||
-    s.includes("live") ||
-    s.includes("in progress") ||
-    s.includes("quarter") ||
-    s.includes("q1") ||
-    s.includes("q2") ||
-    s.includes("q3") ||
-    s.includes("q4") ||
-    s.includes("halftime") ||
-    s.includes("overtime") ||
-    s.includes("ot")
-  )
-    return "in_progress";
+  if (shortUp === "NS") return "scheduled";
+  if (shortUp === "FT") return "final";
+  if (shortUp === "LIVE") return "in_progress";
+
+  if (s.includes("not started") || s.includes("scheduled")) return "scheduled";
+  if (s.includes("finished") || s.includes("final")) return "final";
+  if (s.includes("in play") || s.includes("live") || s.includes("in progress")) return "in_progress";
 
   return "unknown";
 }
 
-function parseClockSecondsFromApiSports(game: any): number | null {
+function parseClockSecondsFromV2(game: any): number | null {
   const clock =
     pickFirstString(
-      game?.time,
-      game?.timer,
-      game?.clock,
       game?.status?.clock,
       game?.status?.timer,
-      game?.game?.clock,
-      game?.game?.timer
+      game?.clock,
+      game?.time
     ) ?? null;
 
   if (!clock) return null;
   return parseClockToSecondsRemaining(clock);
 }
 
-function parsePeriodFromApiSports(game: any): number | null {
-  return (
-    toInt(game?.periods?.current) ??
-    toInt(game?.quarter) ??
-    toInt(game?.status?.period) ??
-    toInt(game?.game?.period) ??
-    toInt(game?.period) ??
-    null
-  );
+function parsePeriodFromV2(game: any): number | null {
+  // Based on your debug keys: periods exists
+  return toInt(game?.periods?.current) ?? toInt(game?.status?.period) ?? null;
 }
 
-function parseScores(game: any): { away: number | null; home: number | null } {
-  const home =
-    toInt(game?.scores?.home?.total) ??
-    toInt(game?.scores?.home?.points) ??
-    toInt(game?.scores?.home) ??
-    toInt(game?.points?.home) ??
-    toInt(game?.score?.home) ??
-    toInt(game?.home?.score) ??
-    toInt(game?.home_score) ??
-    null;
-
-  const away =
-    toInt(game?.scores?.away?.total) ??
-    toInt(game?.scores?.away?.points) ??
-    toInt(game?.scores?.away) ??
-    toInt(game?.points?.away) ??
-    toInt(game?.score?.away) ??
-    toInt(game?.away?.score) ??
-    toInt(game?.away_score) ??
-    null;
-
+function parseScoresFromV2(game: any): { away: number | null; home: number | null } {
+  // Based on your debug keys: scores exists
+  const home = toInt(game?.scores?.home?.total) ?? toInt(game?.scores?.home) ?? null;
+  const away = toInt(game?.scores?.away?.total) ?? toInt(game?.scores?.away) ?? null;
   return { away, home };
 }
 
-function parseTeams(game: any): { away: string | null; home: string | null } {
-  const home =
-    pickFirstString(
-      game?.teams?.home?.name,
-      game?.home?.name,
-      game?.home_team,
-      game?.homeTeam
-    ) ?? null;
-
-  const away =
-    pickFirstString(
-      game?.teams?.away?.name,
-      game?.away?.name,
-      game?.away_team,
-      game?.awayTeam
-    ) ?? null;
-
+function parseTeamsFromV2(game: any): { away: string | null; home: string | null } {
+  const home = pickFirstString(game?.teams?.home?.name, game?.home?.name, game?.homeTeam) ?? null;
+  const away = pickFirstString(game?.teams?.away?.name, game?.away?.name, game?.awayTeam) ?? null;
   return { away, home };
 }
 
-function parseStartIso(game: any): string | null {
-  return (
-    pickFirstString(
-      game?.date,
-      game?.datetime,
-      game?.start,
-      game?.scheduled,
-      game?.game?.date,
-      game?.game?.datetime
-    ) ?? null
-  );
+function parseStartIsoFromV2(game: any): string | null {
+  return pickFirstString(game?.date, game?.datetime, game?.start) ?? null;
+}
+
+async function fetchJson(url: string, apiKey: string) {
+  const res = await fetch(url, {
+    cache: "no-store",
+    headers: {
+      "x-apisports-key": apiKey,
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API-SPORTS error ${res.status}: ${text.slice(0, 200)}`);
+  }
+
+  const json = await res.json().catch(() => null);
+  if (!json) throw new Error("API-SPORTS returned invalid JSON");
+  return json;
 }
 
 function extractResponseArray(json: any): any[] {
+  // API-Sports uses { response: [...] }
   if (Array.isArray(json?.response)) return json.response;
   if (Array.isArray(json)) return json;
   return [];
@@ -176,158 +146,65 @@ function addDays(d: Date, days: number) {
   return new Date(d.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
-/**
- * NBA season inference for Basketball API usage.
- * NBA season typically starts in Oct; use Aug (8) as safe cutoff.
- * Returns the season YEAR (e.g., 2025 for 2025-26).
- */
-function inferNbaSeasonYear(now = new Date()) {
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth() + 1; // 1-12
-  return m >= 8 ? y : y - 1;
-}
-
-function isMethodNotSupported(json: any) {
-  const msg = String(json?.errors?.token ?? "");
-  return msg.toLowerCase().includes("method not supported");
-}
-
-async function fetchJson(url: string, apiKey: string) {
-  const res = await fetch(url, {
-    cache: "no-store",
-    headers: { "x-apisports-key": apiKey },
-  });
-
-  const json = await res.json().catch(() => null);
-  if (!res.ok) {
-    const errMsg = String(json?.errors?.token ?? json?.message ?? "");
-    throw new Error(`API-SPORTS http ${res.status}: ${errMsg || "request failed"}`);
-  }
-  if (!json) throw new Error("API-SPORTS returned invalid JSON");
-  return json;
-}
-
-/**
- * Build date query URLs for:
- * - NBA host: /games?date=YYYY-MM-DD
- * - Basketball host: /games?date=YYYY-MM-DD&league=12&season=YYYY
- */
-function buildUrlsForBase(base: string, dateYmd: string) {
-  const clean = base.replace(/\/+$/, "");
-  const isBasketballHost = clean.includes("basketball.api-sports.io");
-
-  if (isBasketballHost) {
-    const season = inferNbaSeasonYear();
-    // league=12 is commonly NBA in API-Sports Basketball.
-    return [`${clean}/games?date=${encodeURIComponent(dateYmd)}&league=12&season=${season}`];
-  }
-
-  // Default (NBA host style)
-  return [`${clean}/games?date=${encodeURIComponent(dateYmd)}`];
-}
-
 export async function fetchApiSportsScores(): Promise<LiveScoreGame[]> {
   const apiKey = process.env.APISPORTS_NBA_KEY;
   if (!apiKey) throw new Error("Missing APISPORTS_NBA_KEY");
 
-  // If you know the correct one, set APISPORTS_NBA_BASE_URL in Vercel.
-  const configured = (process.env.APISPORTS_NBA_BASE_URL || "").trim().replace(/\/+$/, "");
+  const base = (process.env.APISPORTS_NBA_BASE_URL || "https://v2.nba.api-sports.io").replace(/\/+$/, "");
 
-  const baseCandidates = [
-    configured || null,
-    "https://v2.nba.api-sports.io",
-    "https://v1.basketball.api-sports.io",
-  ].filter(Boolean) as string[];
-
-  // Date window: yesterday/today/tomorrow UTC
+  // Rolling UTC window catches PT evening games that are "tomorrow" in UTC.
   const now = new Date();
   const dates = [addDays(now, -1), now, addDays(now, 1)].map(ymdUtc);
+
+  const urls = dates.map((d) => `${base}/games?date=${encodeURIComponent(d)}`);
 
   const collected: LiveScoreGame[] = [];
   const seenProviderIds = new Set<string>();
 
-  // Try each base until we successfully get ANY results without "method not supported".
-  for (const base of baseCandidates) {
-    let anySuccess = false;
-    let anyResults = false;
+  for (const url of urls) {
+    let json: any = null;
 
-    for (const d of dates) {
-      const urls = buildUrlsForBase(base, d);
-
-      for (const url of urls) {
-        let json: any = null;
-
-        try {
-          json = await fetchJson(url, apiKey);
-        } catch (e: any) {
-          console.error("[apisports] fetch failed:", url, e?.message ?? e);
-          continue;
-        }
-
-        if (isMethodNotSupported(json)) {
-          // This base is not usable with this key.
-          console.error("[apisports] method not supported for base:", base);
-          anySuccess = false;
-          anyResults = false;
-          break;
-        }
-
-        anySuccess = true;
-
-        const arr = extractResponseArray(json);
-        if (arr.length > 0) anyResults = true;
-
-        for (const g of arr) {
-          const providerGameId =
-            pickFirstString(g?.id, g?.game?.id, g?.gameId, g?.GameId) ?? null;
-          if (!providerGameId) continue;
-          if (seenProviderIds.has(providerGameId)) continue;
-          seenProviderIds.add(providerGameId);
-
-          const teams = parseTeams(g);
-          if (!teams.home || !teams.away) continue;
-
-          const homeTeam = canonicalTeamName(teams.home);
-          const awayTeam = canonicalTeamName(teams.away);
-
-          const startIso = parseStartIso(g);
-          const laDateKey = dateKeyLosAngelesFromIso(startIso) ?? laDateKeyNow();
-
-          const status = normalizeStatus(
-            g?.status?.long ?? g?.status ?? g?.game?.status ?? g?.status?.short
-          );
-
-          const scores = parseScores(g);
-          const period = parsePeriodFromApiSports(g);
-          const secondsRemainingInPeriod = parseClockSecondsFromApiSports(g);
-
-          collected.push({
-            providerGameId,
-            status,
-            awayTeam,
-            homeTeam,
-            awayScore: scores.away,
-            homeScore: scores.home,
-            period,
-            secondsRemainingInPeriod,
-            laDateKey,
-          });
-        }
-      }
-
-      // if we broke due to "method not supported", stop trying more dates for this base
-      if (!anySuccess && collected.length === 0) break;
+    try {
+      json = await fetchJson(url, apiKey);
+    } catch (e: any) {
+      console.error("[apisports] fetch failed:", url, e?.message ?? e);
+      continue;
     }
 
-    // If this base gave us any results, stop here (don’t spam other bases).
-    if (anyResults) {
-      return collected;
-    }
+    const arr = extractResponseArray(json);
 
-    // If it succeeded but yielded no results, try the next base.
-    // (This can happen if we queried wrong league/season on the basketball host.)
-    if (anySuccess && collected.length > 0) {
-      return collected;
+    for (const g of arr) {
+      const providerGameId = pickFirstString(g?.id, g?.game?.id, g?.gameId, g?.GameId) ?? null;
+      if (!providerGameId) continue;
+      if (seenProviderIds.has(providerGameId)) continue;
+      seenProviderIds.add(providerGameId);
+
+      const teams = parseTeamsFromV2(g);
+      if (!teams.home || !teams.away) continue;
+
+      const homeTeam = canonicalTeamName(teams.home);
+      const awayTeam = canonicalTeamName(teams.away);
+
+      const startIso = parseStartIsoFromV2(g);
+      const laDateKey = dateKeyLosAngelesFromIso(startIso) ?? laDateKeyNow();
+
+      const status = normalizeStatusFromV2(g?.status);
+
+      const scores = parseScoresFromV2(g);
+      const period = parsePeriodFromV2(g);
+      const secondsRemainingInPeriod = parseClockSecondsFromV2(g);
+
+      collected.push({
+        providerGameId,
+        status,
+        awayTeam,
+        homeTeam,
+        awayScore: scores.away,
+        homeScore: scores.home,
+        period,
+        secondsRemainingInPeriod,
+        laDateKey,
+      });
     }
   }
 
