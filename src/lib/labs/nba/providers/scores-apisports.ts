@@ -59,16 +59,37 @@ function normalizeStatus(raw: any): LiveScoreGame["status"] {
 
   // Common variants
   if (s.includes("not started") || s.includes("scheduled") || s === "ns") return "scheduled";
-  if (s.includes("finished") || s.includes("final") || s === "ft") return "final";
-  if (s.includes("in play") || s.includes("live") || s.includes("in progress")) return "in_progress";
 
-  // Some APIs use numeric status codes; treat unknown as unknown
+  if (
+    s.includes("finished") ||
+    s.includes("final") ||
+    s === "ft" ||
+    s.includes("ended") ||
+    s.includes("end")
+  )
+    return "final";
+
+  // Live variants
+  if (
+    s.includes("in play") ||
+    s.includes("live") ||
+    s.includes("in progress") ||
+    s.includes("q1") ||
+    s.includes("q2") ||
+    s.includes("q3") ||
+    s.includes("q4") ||
+    s.includes("quarter") ||
+    s.includes("halftime") ||
+    s.includes("overtime") ||
+    s.includes("ot")
+  )
+    return "in_progress";
+
   return "unknown";
 }
 
 function parseClockSecondsFromApiSports(game: any): number | null {
   // API-Sports products vary. Try several likely locations.
-  // Examples seen in their ecosystems: game.time, game.timer, game.clock, etc.
   const clock =
     pickFirstString(
       game?.time,
@@ -76,14 +97,14 @@ function parseClockSecondsFromApiSports(game: any): number | null {
       game?.clock,
       game?.status?.clock,
       game?.status?.timer,
-      game?.game?.clock
+      game?.game?.clock,
+      game?.game?.timer
     ) ?? null;
 
   if (!clock) return null;
 
   // Often provided as "MM:SS"
-  const sec = parseClockToSecondsRemaining(clock);
-  return sec;
+  return parseClockToSecondsRemaining(clock);
 }
 
 function parsePeriodFromApiSports(game: any): number | null {
@@ -93,26 +114,35 @@ function parsePeriodFromApiSports(game: any): number | null {
     toInt(game?.quarter) ??
     toInt(game?.status?.period) ??
     toInt(game?.game?.period) ??
+    toInt(game?.period) ??
     null
   );
 }
 
 function parseScores(game: any): { away: number | null; home: number | null } {
-  // Many API-Sports schemas: scores.home.total, scores.away.total, or points.home, points.away
+  // API-Sports variants seen across products:
+  // - scores.home.total / scores.away.total
+  // - scores.home.points / scores.away.points
+  // - points.home / points.away
+  // - score.home / score.away
   const home =
     toInt(game?.scores?.home?.total) ??
+    toInt(game?.scores?.home?.points) ??
     toInt(game?.scores?.home) ??
     toInt(game?.points?.home) ??
     toInt(game?.score?.home) ??
     toInt(game?.home?.score) ??
+    toInt(game?.home_score) ??
     null;
 
   const away =
     toInt(game?.scores?.away?.total) ??
+    toInt(game?.scores?.away?.points) ??
     toInt(game?.scores?.away) ??
     toInt(game?.points?.away) ??
     toInt(game?.score?.away) ??
     toInt(game?.away?.score) ??
+    toInt(game?.away_score) ??
     null;
 
   return { away, home };
@@ -121,15 +151,25 @@ function parseScores(game: any): { away: number | null; home: number | null } {
 function parseTeams(game: any): { away: string | null; home: string | null } {
   // Likely: teams.home.name, teams.away.name
   const home =
-    pickFirstString(game?.teams?.home?.name, game?.home?.name, game?.home_team, game?.homeTeam) ?? null;
+    pickFirstString(
+      game?.teams?.home?.name,
+      game?.home?.name,
+      game?.home_team,
+      game?.homeTeam
+    ) ?? null;
+
   const away =
-    pickFirstString(game?.teams?.away?.name, game?.away?.name, game?.away_team, game?.awayTeam) ?? null;
+    pickFirstString(
+      game?.teams?.away?.name,
+      game?.away?.name,
+      game?.away_team,
+      game?.awayTeam
+    ) ?? null;
 
   return { away, home };
 }
 
 function parseStartIso(game: any): string | null {
-  // Likely: date, datetime, start, or scheduled
   return (
     pickFirstString(
       game?.date,
@@ -171,6 +211,10 @@ function ymdUtc(d: Date) {
   return d.toISOString().slice(0, 10);
 }
 
+function addDays(d: Date, days: number) {
+  return new Date(d.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
 export async function fetchApiSportsScores(): Promise<LiveScoreGame[]> {
   const apiKey = process.env.APISPORTS_NBA_KEY;
   if (!apiKey) throw new Error("Missing APISPORTS_NBA_KEY");
@@ -179,17 +223,22 @@ export async function fetchApiSportsScores(): Promise<LiveScoreGame[]> {
 
   // Strategy:
   // 1) Try live=all (best for live-only)
-  // 2) Fallback to yesterday/today by date (robust across products)
+  // 2) Fallback to date windows in UTC.
+  //
+  // IMPORTANT: PT evening games often fall on "tomorrow" in UTC.
+  // So we include yesterday + today + tomorrow.
   const urls: string[] = [];
 
   // Attempt live endpoint
   urls.push(`${base}/games?live=all`);
 
-  // Date endpoints (UTC date strings; we’ll compute laDateKey from start time)
   const today = new Date();
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const yesterday = addDays(today, -1);
+  const tomorrow = addDays(today, 1);
+
   urls.push(`${base}/games?date=${encodeURIComponent(ymdUtc(yesterday))}`);
   urls.push(`${base}/games?date=${encodeURIComponent(ymdUtc(today))}`);
+  urls.push(`${base}/games?date=${encodeURIComponent(ymdUtc(tomorrow))}`);
 
   const collected: LiveScoreGame[] = [];
   const seenProviderIds = new Set<string>();
@@ -200,13 +249,12 @@ export async function fetchApiSportsScores(): Promise<LiveScoreGame[]> {
     try {
       json = await fetchJson(url, apiKey);
     } catch (e: any) {
-      // If live endpoint is not supported, quietly continue to date fallback
-      // We still log on server for debugging.
       console.error("[apisports] fetch failed:", url, e?.message ?? e);
       continue;
     }
 
     const arr = extractResponseArray(json);
+
     for (const g of arr) {
       const providerGameId =
         pickFirstString(g?.id, g?.game?.id, g?.gameId, g?.GameId) ?? null;
@@ -223,7 +271,9 @@ export async function fetchApiSportsScores(): Promise<LiveScoreGame[]> {
       const startIso = parseStartIso(g);
       const laDateKey = dateKeyLosAngelesFromIso(startIso) ?? laDateKeyNow();
 
-      const status = normalizeStatus(g?.status?.long ?? g?.status ?? g?.game?.status ?? g?.status?.short);
+      const status = normalizeStatus(
+        g?.status?.long ?? g?.status ?? g?.game?.status ?? g?.status?.short
+      );
 
       const scores = parseScores(g);
       const period = parsePeriodFromApiSports(g);
