@@ -193,57 +193,61 @@ function classifyPhase(
   return "pregame";
 }
 
-function pickDominantSlateDate(items: LiveGameItem[]): string | null {
-  // Prefer LA today+ so yesterday finals never win the vote.
+function extractDateKey(gameId: string): string | null {
+  if (!gameId) return null;
+  const parts = gameId.split("|");
+  return parts.length >= 2 ? parts[0] : null;
+}
+
+function pickSlateDate(items: LiveGameItem[]): string | null {
   const today = laTodayKey();
 
-  const withDates = items.filter((g) => g.gameId.includes("|"));
-  if (withDates.length === 0) return null;
+  const dates = new Set<string>();
+  const byDate = new Map<string, LiveGameItem[]>();
 
-  // First, restrict to today-or-future if possible
-  const todayPlus = withDates.filter((g) => {
-    const d = g.gameId.split("|")[0];
-    return d && d >= today;
-  });
-
-  const candidates = todayPlus.length > 0 ? todayPlus : withDates;
-
-  // Second, decide slate date using NON-FINAL games if possible
-  const nonFinal = candidates.filter((g) => g.phase !== "final");
-  const votingPool = nonFinal.length > 0 ? nonFinal : candidates;
-
-  const counts = new Map<string, number>();
-  for (const g of votingPool) {
-    const d = g.gameId.split("|")[0];
+  for (const g of items) {
+    const d = extractDateKey(g.gameId);
     if (!d) continue;
-    counts.set(d, (counts.get(d) ?? 0) + 1);
+    dates.add(d);
+    const arr = byDate.get(d) ?? [];
+    arr.push(g);
+    byDate.set(d, arr);
   }
 
-  let best: string | null = null;
-  let max = 0;
-  for (const [d, c] of counts.entries()) {
-    if (c > max) {
-      max = c;
-      best = d;
+  if (dates.size === 0) return null;
+
+  // 1) If there are any games on LA "today", ALWAYS show today's slate (including finals)
+  if (byDate.has(today)) return today;
+
+  // 2) Otherwise prefer the earliest upcoming date (today+), prioritizing any non-final games on that date
+  const futureDates = Array.from(dates).filter((d) => d > today).sort();
+  if (futureDates.length > 0) {
+    // If any future date has non-final games, pick the earliest such date.
+    for (const d of futureDates) {
+      const arr = byDate.get(d) ?? [];
+      if (arr.some((g) => g.phase !== "final")) return d;
     }
+    // Else just pick earliest future date.
+    return futureDates[0];
   }
 
-  return best;
+  // 3) No today, no future → show most recent past slate (finals)
+  const pastDates = Array.from(dates).filter((d) => d < today).sort();
+  return pastDates.length > 0 ? pastDates[pastDates.length - 1] : null;
 }
 
 function filterToSlate(items: LiveGameItem[]): LiveGameItem[] {
   if (items.length === 0) return items;
 
-  const dominant = pickDominantSlateDate(items);
-  if (!dominant) return items;
+  const slateDate = pickSlateDate(items);
+  if (!slateDate) return items;
 
-  // Keep all games on the dominant slate date…
-  const slate = items.filter((g) => g.gameId.startsWith(dominant));
+  // Keep all games on that slate date (includes finals)
+  const slate = items.filter((g) => g.gameId.startsWith(slateDate));
 
-  // …and ALSO keep any live games (safety net for edge-case dateKey mismatches)
+  // Safety net: always keep live games too (in case of dateKey mismatch)
   const live = items.filter((g) => g.phase === "live");
 
-  // Merge unique by gameId
   const map = new Map<string, LiveGameItem>();
   for (const g of slate) map.set(g.gameId, g);
   for (const g of live) map.set(g.gameId, g);
@@ -254,7 +258,6 @@ function filterToSlate(items: LiveGameItem[]): LiveGameItem[] {
 async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
   const [scores, odds] = await Promise.all([fetchApiSportsScores(), fetchTheOddsApiSpreads()]);
 
-  // Odds maps
   const oddsByKey = new Map<string, { liveHomeSpread: number | null }>();
   const oddsByMatch = new Map<string, { liveHomeSpread: number | null }>();
 
@@ -264,7 +267,7 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     if (o.laDateKey) oddsByKey.set(`${o.laDateKey}|${match}`, { liveHomeSpread: o.liveHomeSpread });
   }
 
-  // ✅ Dedup scores by providerGameId (prevents duplicates from multiple endpoints)
+  // Dedup score games by providerGameId
   const seenProvider = new Set<string>();
 
   const items: LiveGameItem[] = [];
@@ -342,7 +345,7 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
   await ensureClosingLines(closingCandidates);
   const closingMap = await getClosingMap(gameKeys);
 
-  // Fill closing baseline (never null if live spread exists)
+  // Fill closing baseline (fallback to live spread if DB missing)
   const enriched = items.map((it) => {
     const fromDb = closingMap.get(it.gameId);
     const fallback =
@@ -354,7 +357,7 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
     };
   });
 
-  // ✅ Filter to the correct slate (prevents yesterday finals from winning the vote)
+  // ✅ Filter to the correct slate (keeps finals for the chosen slate date)
   const finalItems = filterToSlate(enriched);
 
   const enabled = supabaseAdminOrNull() != null;
@@ -393,14 +396,12 @@ async function getData(): Promise<LiveResponse> {
   const withinActiveWindow = inPollingWindow(new Date());
   const ttl = withinActiveWindow ? ACTIVE_REFRESH_MS : OFFHOURS_REFRESH_MS;
 
-  // In-memory cache (per warm instance)
   if (cached && isFresh(cached.at, ttl)) {
     return withinActiveWindow
       ? cached.payload
       : { ...cached.payload, meta: { ...cached.payload.meta, stale: true, window: "offhours" } };
   }
 
-  // Off-hours: prefer stored snapshot if it exists
   if (!withinActiveWindow) {
     const snap = await readSnapshot();
     if (snap) {
