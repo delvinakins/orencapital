@@ -10,19 +10,15 @@ import { inPollingWindow } from "@/lib/labs/nba/poll-window";
 type Phase = "pregame" | "live" | "final" | "unknown";
 
 type LiveGameItem = {
-  gameId: string; // YYYY-MM-DD|away@home
+  gameId: string;
   awayTeam: string;
   homeTeam: string;
-
   awayScore: number | null;
   homeScore: number | null;
-
   period: number | null;
   secondsRemaining: number | null;
-
   liveSpreadHome: number | null;
   closingSpreadHome: number | null;
-
   phase: Phase;
 };
 
@@ -31,14 +27,9 @@ type LiveOk = {
   items: LiveGameItem[];
   meta: {
     stale: boolean;
-    updatedAt: string; // ISO
+    updatedAt: string;
     window: "active" | "offhours";
-    storage?: "supabase" | "none";
-    supabase?: {
-      hasUrl: boolean;
-      hasServiceKey: boolean;
-      enabled: boolean;
-    };
+    storage: "supabase" | "none";
   };
 };
 
@@ -48,260 +39,86 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function laTodayKey(): string {
-  // "en-CA" yields YYYY-MM-DD
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Los_Angeles",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
-
-/**
- * IMPORTANT: Do not throw if missing env vars.
- * If Supabase isn't configured in Production yet, we still want the route to work.
- */
 function supabaseAdminOrNull() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !key) {
-    console.warn("[nba/live-games] Supabase admin unavailable (missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY).");
-    return null;
-  }
-
+  if (!url || !key) return null;
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-function supabasePresence() {
-  const hasUrl = Boolean(process.env.SUPABASE_URL);
-  const hasServiceKey = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
-  return { hasUrl, hasServiceKey, enabled: hasUrl && hasServiceKey };
-}
-
-async function readSnapshot(): Promise<LiveOk | null> {
-  try {
-    const sb = supabaseAdminOrNull();
-    if (!sb) return null;
-
-    const { data, error } = await sb
-      .from("nba_live_snapshots")
-      .select("updated_at, payload")
-      .eq("id", "latest")
-      .maybeSingle();
-
-    if (error || !data?.payload) return null;
-
-    const payload = data.payload as any;
-    if (!payload?.ok || !Array.isArray(payload.items)) return null;
-
-    return {
-      ok: true,
-      items: payload.items as LiveGameItem[],
-      meta: {
-        stale: true,
-        updatedAt: String(data.updated_at ?? payload?.meta?.updatedAt ?? nowIso()),
-        window: "offhours",
-        storage: "supabase",
-        supabase: supabasePresence(),
-      },
-    };
-  } catch (err: any) {
-    console.error("[nba/live-games] readSnapshot error:", err?.message ?? err);
-    return null;
-  }
-}
-
-async function writeSnapshot(payload: LiveOk) {
-  try {
-    const sb = supabaseAdminOrNull();
-    if (!sb) return;
-
-    await sb.from("nba_live_snapshots").upsert({ id: "latest", payload, updated_at: nowIso() }, { onConflict: "id" });
-  } catch (err: any) {
-    console.error("[nba/live-games] writeSnapshot error:", err?.message ?? err);
-  }
-}
-
 async function getClosingMap(keys: string[]) {
+  const sb = supabaseAdminOrNull();
+  if (!sb || keys.length === 0) return new Map<string, number>();
+
+  const { data } = await sb
+    .from("nba_closing_lines")
+    .select("game_key, closing_home_spread")
+    .in("game_key", keys);
+
   const map = new Map<string, number>();
-  const uniq = Array.from(new Set(keys.filter(Boolean)));
-  if (uniq.length === 0) return map;
-
-  try {
-    const sb = supabaseAdminOrNull();
-    if (!sb) return map;
-
-    const { data, error } = await sb
-      .from("nba_closing_lines")
-      .select("game_key, closing_home_spread")
-      .in("game_key", uniq);
-
-    if (error || !Array.isArray(data)) return map;
-
-    for (const row of data as any[]) {
-      if (typeof row?.game_key === "string" && typeof row?.closing_home_spread === "number") {
-        map.set(row.game_key, row.closing_home_spread);
-      }
+  for (const row of data ?? []) {
+    if (row?.game_key && typeof row?.closing_home_spread === "number") {
+      map.set(row.game_key, row.closing_home_spread);
     }
-
-    return map;
-  } catch (err: any) {
-    console.error("[nba/live-games] getClosingMap error:", err?.message ?? err);
-    return map;
   }
+  return map;
 }
 
-async function ensureClosingLines(candidates: Array<{ gameKey: string; closingHomeSpread: number }>) {
-  if (candidates.length === 0) return;
+async function seedClosingLines(rows: { gameKey: string; spread: number }[]) {
+  const sb = supabaseAdminOrNull();
+  if (!sb || rows.length === 0) return;
 
-  try {
-    const sb = supabaseAdminOrNull();
-    if (!sb) return;
+  const existing = await getClosingMap(rows.map(r => r.gameKey));
+  const toInsert = rows.filter(r => !existing.has(r.gameKey));
+  if (toInsert.length === 0) return;
 
-    const seen = new Set<string>();
-    const rows: Array<{ game_key: string; closing_home_spread: number }> = [];
-
-    for (const c of candidates) {
-      if (!c.gameKey || !Number.isFinite(c.closingHomeSpread)) continue;
-      if (seen.has(c.gameKey)) continue;
-      seen.add(c.gameKey);
-      rows.push({ game_key: c.gameKey, closing_home_spread: c.closingHomeSpread });
-    }
-
-    if (rows.length === 0) return;
-
-    await sb.from("nba_closing_lines").upsert(rows, { onConflict: "game_key" });
-  } catch (err: any) {
-    console.error("[nba/live-games] ensureClosingLines error:", err?.message ?? err);
-  }
+  await sb.from("nba_closing_lines").upsert(
+    toInsert.map(r => ({
+      game_key: r.gameKey,
+      closing_home_spread: r.spread,
+    })),
+    { onConflict: "game_key" }
+  );
 }
 
-function classifyPhase(
-  it: { period: number | null; awayScore: number | null; homeScore: number | null },
-  status?: string
-): Phase {
-  const s = String(status ?? "").toLowerCase();
-  if (s.includes("final") || s.includes("finished")) return "final";
-
-  const hasScore = typeof it.awayScore === "number" && typeof it.homeScore === "number";
-  const p = typeof it.period === "number" ? it.period : null;
-
-  if (p != null && p >= 1 && hasScore) return "live";
-  if (p != null && p >= 1 && !hasScore) return "unknown";
+function classifyPhase(period: number | null, status: string): Phase {
+  const s = status.toLowerCase();
+  if (s.includes("finished") || s.includes("final")) return "final";
+  if (period != null && period >= 1) return "live";
   return "pregame";
 }
 
-function extractDateKey(gameId: string): string | null {
-  if (!gameId) return null;
-  const parts = gameId.split("|");
-  return parts.length >= 2 ? parts[0] : null;
-}
-
-function pickSlateDate(items: LiveGameItem[]): string | null {
-  const today = laTodayKey();
-
-  const dates = new Set<string>();
-  const byDate = new Map<string, LiveGameItem[]>();
-
-  for (const g of items) {
-    const d = extractDateKey(g.gameId);
-    if (!d) continue;
-    dates.add(d);
-    const arr = byDate.get(d) ?? [];
-    arr.push(g);
-    byDate.set(d, arr);
-  }
-
-  if (dates.size === 0) return null;
-
-  // 1) If there are any games on LA "today", ALWAYS show today's slate (including finals)
-  if (byDate.has(today)) return today;
-
-  // 2) Otherwise prefer the earliest upcoming date (today+), prioritizing any non-final games on that date
-  const futureDates = Array.from(dates).filter((d) => d > today).sort();
-  if (futureDates.length > 0) {
-    // If any future date has non-final games, pick the earliest such date.
-    for (const d of futureDates) {
-      const arr = byDate.get(d) ?? [];
-      if (arr.some((g) => g.phase !== "final")) return d;
-    }
-    // Else just pick earliest future date.
-    return futureDates[0];
-  }
-
-  // 3) No today, no future → show most recent past slate (finals)
-  const pastDates = Array.from(dates).filter((d) => d < today).sort();
-  return pastDates.length > 0 ? pastDates[pastDates.length - 1] : null;
-}
-
-function filterToSlate(items: LiveGameItem[]): LiveGameItem[] {
-  if (items.length === 0) return items;
-
-  const slateDate = pickSlateDate(items);
-  if (!slateDate) return items;
-
-  // Keep all games on that slate date (includes finals)
-  const slate = items.filter((g) => g.gameId.startsWith(slateDate));
-
-  // Safety net: always keep live games too (in case of dateKey mismatch)
-  const live = items.filter((g) => g.phase === "live");
-
-  const map = new Map<string, LiveGameItem>();
-  for (const g of slate) map.set(g.gameId, g);
-  for (const g of live) map.set(g.gameId, g);
-
-  return Array.from(map.values());
-}
-
 async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
-  const [scores, odds] = await Promise.all([fetchApiSportsScores(), fetchTheOddsApiSpreads()]);
+  const [scores, odds] = await Promise.all([
+    fetchApiSportsScores(),
+    fetchTheOddsApiSpreads(),
+  ]);
 
-  const oddsByKey = new Map<string, { liveHomeSpread: number | null }>();
-  const oddsByMatch = new Map<string, { liveHomeSpread: number | null }>();
-
+  const oddsMap = new Map<string, number | null>();
   for (const o of odds) {
-    const match = `${o.awayTeam}@${o.homeTeam}`;
-    oddsByMatch.set(match, { liveHomeSpread: o.liveHomeSpread });
-    if (o.laDateKey) oddsByKey.set(`${o.laDateKey}|${match}`, { liveHomeSpread: o.liveHomeSpread });
+    const key = makeMatchKey(
+      o.awayTeam,
+      o.homeTeam,
+      o.laDateKey ?? ""   // ✅ FIXED null safety
+    );
+    oddsMap.set(key, o.liveHomeSpread ?? null);
   }
-
-  // Dedup score games by providerGameId
-  const seenProvider = new Set<string>();
 
   const items: LiveGameItem[] = [];
-  const gameKeys: string[] = [];
-  const closingCandidates: Array<{ gameKey: string; closingHomeSpread: number }> = [];
+  const seen = new Set<string>();
 
-  // Primary: scores feed
   for (const s of scores) {
-    const providerId = String((s as any)?.providerGameId ?? "");
-    if (providerId) {
-      if (seenProvider.has(providerId)) continue;
-      seenProvider.add(providerId);
-    }
+    const gameKey = makeMatchKey(
+      s.awayTeam,
+      s.homeTeam,
+      s.laDateKey ?? ""   // ✅ FIXED null safety
+    );
 
-    const match = `${s.awayTeam}@${s.homeTeam}`;
-    const gameKey = makeMatchKey(s.awayTeam, s.homeTeam, s.laDateKey);
-    gameKeys.push(gameKey);
+    if (seen.has(gameKey)) continue;
+    seen.add(gameKey);
 
-    const o1 = oddsByKey.get(`${s.laDateKey}|${match}`);
-    const o2 = oddsByMatch.get(match);
-    const liveSpreadHome = o1?.liveHomeSpread ?? o2?.liveHomeSpread ?? null;
-
-    // Seed baseline for any non-final game so we don't miss baseline if polling starts late
-    const isFinal = s.status === "final";
-    if (!isFinal && typeof liveSpreadHome === "number" && Number.isFinite(liveSpreadHome)) {
-      closingCandidates.push({ gameKey, closingHomeSpread: liveSpreadHome });
-    }
-
-    const hasAny =
-      typeof liveSpreadHome === "number" ||
-      typeof s.homeScore === "number" ||
-      typeof s.awayScore === "number";
-
-    if (!hasAny) continue;
+    const liveSpreadHome = oddsMap.get(gameKey) ?? null;
+    const phase = classifyPhase(s.period, s.status);
 
     items.push({
       gameId: gameKey,
@@ -313,142 +130,78 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
       secondsRemaining: s.secondsRemainingInPeriod,
       liveSpreadHome,
       closingSpreadHome: null,
-      phase: classifyPhase(s, String((s as any)?.status ?? "")),
+      phase,
     });
   }
 
-  // Fallback: odds-only (still show something if scores feed has nothing)
-  if (items.length === 0 && odds.length > 0) {
-    for (const o of odds) {
-      const gameKey = makeMatchKey(o.awayTeam, o.homeTeam, o.laDateKey || "");
-      gameKeys.push(gameKey);
+  // --------------------------------
+  // Seed baseline ONLY during pregame
+  // --------------------------------
+  const toSeed = items
+    .filter(
+      g =>
+        g.phase === "pregame" &&
+        (g.period == null || g.period === 0) &&
+        typeof g.liveSpreadHome === "number"
+    )
+    .map(g => ({
+      gameKey: g.gameId,
+      spread: g.liveSpreadHome as number,
+    }));
 
-      if (typeof o.liveHomeSpread === "number" && Number.isFinite(o.liveHomeSpread)) {
-        closingCandidates.push({ gameKey, closingHomeSpread: o.liveHomeSpread });
-      }
+  await seedClosingLines(toSeed);
 
-      items.push({
-        gameId: gameKey,
-        awayTeam: o.awayTeam,
-        homeTeam: o.homeTeam,
-        awayScore: null,
-        homeScore: null,
-        period: null,
-        secondsRemaining: null,
-        liveSpreadHome: o.liveHomeSpread ?? null,
-        closingSpreadHome: null,
-        phase: "pregame",
-      });
-    }
-  }
+  const closingMap = await getClosingMap(items.map(i => i.gameId));
 
-  await ensureClosingLines(closingCandidates);
-  const closingMap = await getClosingMap(gameKeys);
-
-  // Fill closing baseline (fallback to live spread if DB missing)
-  const enriched = items.map((it) => {
-    const fromDb = closingMap.get(it.gameId);
-    const fallback =
-      typeof it.liveSpreadHome === "number" && Number.isFinite(it.liveSpreadHome) ? it.liveSpreadHome : null;
-
-    return {
-      ...it,
-      closingSpreadHome: fromDb ?? fallback,
-    };
-  });
-
-  // ✅ Filter to the correct slate (keeps finals for the chosen slate date)
-  const finalItems = filterToSlate(enriched);
-
-  const enabled = supabaseAdminOrNull() != null;
-  const storage = enabled ? "supabase" : "none";
+  const enriched = items.map(g => ({
+    ...g,
+    closingSpreadHome:
+      closingMap.get(g.gameId) ??
+      (typeof g.liveSpreadHome === "number"
+        ? g.liveSpreadHome
+        : null),
+  }));
 
   return {
     ok: true,
-    items: finalItems,
+    items: enriched,
     meta: {
       stale: !withinActiveWindow,
       updatedAt: nowIso(),
       window: withinActiveWindow ? "active" : "offhours",
-      storage,
-      supabase: supabasePresence(),
+      storage: supabaseAdminOrNull() ? "supabase" : "none",
     },
   };
 }
 
-/** Cache policy */
+/** Simple in-memory cache */
 const ACTIVE_REFRESH_MS = 90_000;
 const OFFHOURS_REFRESH_MS = 15 * 60_000;
-const GRACE_MS = 5_000;
 
 let cached: { at: number; payload: LiveOk } | null = null;
-let inflight: Promise<LiveOk> | null = null;
 
-function nowMs() {
-  return Date.now();
-}
-
-function isFresh(ts: number, ttlMs: number) {
-  return nowMs() - ts <= ttlMs + GRACE_MS;
+function isFresh(ts: number, ttl: number) {
+  return Date.now() - ts <= ttl;
 }
 
 async function getData(): Promise<LiveResponse> {
   const withinActiveWindow = inPollingWindow(new Date());
-  const ttl = withinActiveWindow ? ACTIVE_REFRESH_MS : OFFHOURS_REFRESH_MS;
+  const ttl = withinActiveWindow
+    ? ACTIVE_REFRESH_MS
+    : OFFHOURS_REFRESH_MS;
 
-  if (cached && isFresh(cached.at, ttl)) {
-    return withinActiveWindow
-      ? cached.payload
-      : { ...cached.payload, meta: { ...cached.payload.meta, stale: true, window: "offhours" } };
+  if (cached && isFresh(cached.at, ttl)) return cached.payload;
+
+  try {
+    const payload = await pollProviders(withinActiveWindow);
+    cached = { at: Date.now(), payload };
+    return payload;
+  } catch {
+    return { ok: false };
   }
-
-  if (!withinActiveWindow) {
-    const snap = await readSnapshot();
-    if (snap) {
-      cached = { at: nowMs(), payload: snap };
-      return snap;
-    }
-  }
-
-  if (inflight) return inflight;
-
-  inflight = (async () => {
-    try {
-      const payload = await pollProviders(withinActiveWindow);
-
-      cached = { at: nowMs(), payload };
-      await writeSnapshot(payload);
-
-      return withinActiveWindow
-        ? payload
-        : { ...payload, meta: { ...payload.meta, stale: true, window: "offhours" } };
-    } catch (err: any) {
-      console.error("[nba/live-games] poll error:", err?.message ?? err);
-
-      if (cached) {
-        return withinActiveWindow
-          ? cached.payload
-          : { ...cached.payload, meta: { ...cached.payload.meta, stale: true, window: "offhours" } };
-      }
-
-      const snap = await readSnapshot();
-      return snap ?? ({ ok: false } as any);
-    } finally {
-      inflight = null;
-    }
-  })();
-
-  return inflight;
 }
 
 export async function GET() {
-  try {
-    const payload = await getData();
-    return NextResponse.json(payload, { status: 200 });
-  } catch (err: any) {
-    console.error("[nba/live-games] handler error:", err?.message ?? err);
-    const snap = await readSnapshot();
-    if (snap) return NextResponse.json(snap, { status: 200 });
-    return NextResponse.json({ ok: false }, { status: 200 });
-  }
+  const payload = await getData();
+  return NextResponse.json(payload);
 }
