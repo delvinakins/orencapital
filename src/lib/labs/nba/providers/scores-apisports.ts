@@ -55,21 +55,23 @@ function laDateKeyNow(): string {
 }
 
 /**
- * API-Sports NBA v2 "status" typically contains:
- * - status.long  (e.g. "Not Started", "In Play", "Finished")
- * - status.short (e.g. "NS", "LIVE", "FT")
- * - status.clock (e.g. "09:41") when live
+ * API-Sports NBA v2 "status" typically:
+ *  - status.long  ("Not Started", "In Play", "Finished")
+ *  - status.short ("NS", "LIVE", "FT", sometimes "Q1"/"Q2"/"HT"/"OT")
+ *  - status.clock ("09:41") when live
  */
 function normalizeStatusFromV2(statusObj: any): LiveScoreGame["status"] {
   const long = String(statusObj?.long ?? "");
   const short = String(statusObj?.short ?? "");
-
   const s = `${long} ${short}`.toLowerCase();
   const shortUp = short.toUpperCase();
 
   if (shortUp === "NS") return "scheduled";
   if (shortUp === "FT") return "final";
   if (shortUp === "LIVE") return "in_progress";
+
+  // Quarter-ish shorthand
+  if (shortUp.startsWith("Q") || shortUp === "HT" || shortUp === "OT") return "in_progress";
 
   if (s.includes("not started") || s.includes("scheduled")) return "scheduled";
   if (s.includes("finished") || s.includes("final")) return "final";
@@ -92,20 +94,41 @@ function parseClockSecondsFromV2(game: any): number | null {
 }
 
 function parsePeriodFromV2(game: any): number | null {
-  // Based on your debug keys: periods exists
-  return toInt(game?.periods?.current) ?? toInt(game?.status?.period) ?? null;
+  return (
+    toInt(game?.periods?.current) ??
+    toInt(game?.status?.period) ??
+    toInt(game?.period) ??
+    null
+  );
 }
 
 function parseScoresFromV2(game: any): { away: number | null; home: number | null } {
-  // Based on your debug keys: scores exists
-  const home = toInt(game?.scores?.home?.total) ?? toInt(game?.scores?.home) ?? null;
-  const away = toInt(game?.scores?.away?.total) ?? toInt(game?.scores?.away) ?? null;
+  // v2 NBA: live scoring often under scores.*.points
+  // sometimes total is null while points updates live
+  const home =
+    toInt(game?.scores?.home?.points) ??
+    toInt(game?.scores?.home?.total) ??
+    toInt(game?.scores?.home) ??
+    toInt(game?.score?.home) ??
+    toInt(game?.home?.score) ??
+    null;
+
+  const away =
+    toInt(game?.scores?.away?.points) ??
+    toInt(game?.scores?.away?.total) ??
+    toInt(game?.scores?.away) ??
+    toInt(game?.score?.away) ??
+    toInt(game?.away?.score) ??
+    null;
+
   return { away, home };
 }
 
 function parseTeamsFromV2(game: any): { away: string | null; home: string | null } {
-  const home = pickFirstString(game?.teams?.home?.name, game?.home?.name, game?.homeTeam) ?? null;
-  const away = pickFirstString(game?.teams?.away?.name, game?.away?.name, game?.awayTeam) ?? null;
+  const home =
+    pickFirstString(game?.teams?.home?.name, game?.home?.name, game?.homeTeam) ?? null;
+  const away =
+    pickFirstString(game?.teams?.away?.name, game?.away?.name, game?.awayTeam) ?? null;
   return { away, home };
 }
 
@@ -116,9 +139,7 @@ function parseStartIsoFromV2(game: any): string | null {
 async function fetchJson(url: string, apiKey: string) {
   const res = await fetch(url, {
     cache: "no-store",
-    headers: {
-      "x-apisports-key": apiKey,
-    },
+    headers: { "x-apisports-key": apiKey },
   });
 
   if (!res.ok) {
@@ -132,7 +153,6 @@ async function fetchJson(url: string, apiKey: string) {
 }
 
 function extractResponseArray(json: any): any[] {
-  // API-Sports uses { response: [...] }
   if (Array.isArray(json?.response)) return json.response;
   if (Array.isArray(json)) return json;
   return [];
@@ -152,10 +172,9 @@ export async function fetchApiSportsScores(): Promise<LiveScoreGame[]> {
 
   const base = (process.env.APISPORTS_NBA_BASE_URL || "https://v2.nba.api-sports.io").replace(/\/+$/, "");
 
-  // Rolling UTC window catches PT evening games that are "tomorrow" in UTC.
+  // Rolling UTC window (PT night games can be "tomorrow" UTC)
   const now = new Date();
   const dates = [addDays(now, -1), now, addDays(now, 1)].map(ymdUtc);
-
   const urls = dates.map((d) => `${base}/games?date=${encodeURIComponent(d)}`);
 
   const collected: LiveScoreGame[] = [];
