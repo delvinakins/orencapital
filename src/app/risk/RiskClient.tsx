@@ -49,6 +49,10 @@ function useAnimatedNumber(target: number, durationMs = 420) {
   return display;
 }
 
+function volLabel(v: VolLevel) {
+  return v === "LOW" ? "Low" : v === "MED" ? "Med" : v === "HIGH" ? "High" : "Extreme";
+}
+
 function Segmented({
   value,
   onChange,
@@ -241,8 +245,13 @@ export default function RiskClient() {
             </div>
             <div className="mt-2 text-sm text-foreground/70">{benchmark}</div>
 
-            <div className="mt-3 flex flex-wrap gap-2 text-xs text-foreground/55">
-              <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
+            {/* Horizon + Volatility row with controlled accent */}
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <div className="rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1 text-emerald-200/90">
+                Volatility: <span className="tabular-nums">{volLabel(inputs.volLevel)}</span>
+              </div>
+
+              <div className="rounded-full border border-emerald-400/15 bg-[color:var(--card)] px-3 py-1 text-foreground/60">
                 <Tooltip label="Horizon">
                   <div className="space-y-2">
                     <div>The simulation window, expressed in trades.</div>
@@ -255,14 +264,14 @@ export default function RiskClient() {
                   </div>
                 </Tooltip>
                 <span className="ml-2">
-                  <span className="text-foreground/60">:</span>{" "}
+                  <span className="text-foreground/50">:</span>{" "}
                   <span className="text-foreground/80 tabular-nums">
                     {horizonTrades !== null ? `${horizonTrades} trades` : "—"}
                   </span>
                 </span>
               </div>
 
-              <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
+              <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1 text-foreground/60">
                 Paths: <span className="text-foreground/80">1,500</span>
               </div>
             </div>
@@ -344,7 +353,6 @@ export default function RiskClient() {
             tip={<div>Average win size relative to average loss (loss is 1R).</div>}
           />
 
-          {/* Volatility box: emerald emphasis is on the selected segment */}
           <div className="oc-glass rounded-xl border border-[color:var(--border)] p-5">
             <div className="text-sm text-foreground/80">
               <Tooltip label="Volatility level">
