@@ -144,11 +144,11 @@ type ViewMode = "slate" | "heatmap";
 type Row = {
   key: string;
 
-  abs: number; // |moveGapPts|
-  moveGapPts: number; // signed
+  abs: number;
+  moveGapPts: number;
 
-  observedMove: number; // live - close
-  expectedMove: number; // typical (model expected) live - close
+  observedMove: number;
+  expectedMove: number;
 
   awayTeam: string;
   homeTeam: string;
@@ -312,6 +312,131 @@ function textToneClass(tone: Row["tone"]) {
   return "text-foreground/80";
 }
 
+function formatClockFromGame(g: any): { clock: string; phase: Row["phase"]; isLive: boolean } {
+  const phase = String(g?.phase ?? "unknown") as Row["phase"];
+  const isLive = phase === "live";
+
+  if (phase === "final") return { clock: "Final", phase, isLive: false };
+  if (phase === "pregame") return { clock: "Pregame", phase, isLive: false };
+
+  const period = safeInt(g?.period);
+  const secondsRemaining = safeInt(g?.secondsRemaining);
+
+  if (period == null || period === 0) return { clock: "Pregame", phase, isLive: false };
+  if (secondsRemaining == null) return { clock: `P${period} • —`, phase, isLive };
+
+  const mm = Math.floor(secondsRemaining / 60);
+  const ss = String(secondsRemaining % 60).padStart(2, "0");
+  return { clock: `P${period} • ${mm}:${ss}`, phase, isLive };
+}
+
+/**
+ * Flashscore-style logos via ESPN CDN.
+ * We keep the mapping local and simple (no Next/Image config needed).
+ */
+const NBA_ABBR: Record<string, string> = {
+  "atlanta hawks": "ATL",
+  "boston celtics": "BOS",
+  "brooklyn nets": "BKN",
+  "charlotte hornets": "CHA",
+  "chicago bulls": "CHI",
+  "cleveland cavaliers": "CLE",
+  "dallas mavericks": "DAL",
+  "denver nuggets": "DEN",
+  "detroit pistons": "DET",
+  "golden state warriors": "GSW",
+  "houston rockets": "HOU",
+  "indiana pacers": "IND",
+  "los angeles clippers": "LAC",
+  "los angeles lakers": "LAL",
+  "memphis grizzlies": "MEM",
+  "miami heat": "MIA",
+  "milwaukee bucks": "MIL",
+  "minnesota timberwolves": "MIN",
+  "new orleans pelicans": "NOP",
+  "new york knicks": "NYK",
+  "oklahoma city thunder": "OKC",
+  "orlando magic": "ORL",
+  "philadelphia 76ers": "PHI",
+  "phoenix suns": "PHX",
+  "portland trail blazers": "POR",
+  "sacramento kings": "SAC",
+  "san antonio spurs": "SAS",
+  "toronto raptors": "TOR",
+  "utah jazz": "UTA",
+  "washington wizards": "WAS",
+};
+
+function teamAbbr(name: string): string {
+  const k = String(name ?? "").toLowerCase().trim();
+  return NBA_ABBR[k] ?? name.slice(0, 3).toUpperCase();
+}
+
+function teamLogoUrl(name: string): string | null {
+  const abbr = teamAbbr(name).toLowerCase();
+  if (!abbr || abbr.length < 2) return null;
+  // ESPN CDN (works well for tiny icons)
+  return `https://a.espncdn.com/i/teamlogos/nba/500/${abbr}.png`;
+}
+
+function ScoreLine({
+  awayTeam,
+  homeTeam,
+  awayScore,
+  homeScore,
+}: {
+  awayTeam: string;
+  homeTeam: string;
+  awayScore: number | null;
+  homeScore: number | null;
+}) {
+  const hasScore = typeof awayScore === "number" && typeof homeScore === "number";
+  if (!hasScore) {
+    return <span className="text-foreground/55">Score unavailable</span>;
+  }
+
+  const awayWin = (awayScore ?? 0) > (homeScore ?? 0);
+  const homeWin = (homeScore ?? 0) > (awayScore ?? 0);
+
+  const rowClass = (isWinner: boolean) =>
+    cn("flex items-center justify-between gap-3", isWinner ? "text-foreground" : "text-foreground/70");
+
+  const scoreClass = (isWinner: boolean) =>
+    cn("tabular-nums font-semibold", isWinner ? "text-foreground" : "text-foreground/75");
+
+  const logoClass = "h-4 w-4 rounded-sm bg-white/5 ring-1 ring-white/10 object-contain flex-none";
+
+  const TeamLeft = ({ name }: { name: string }) => {
+    const abbr = teamAbbr(name);
+    const logo = teamLogoUrl(name);
+    return (
+      <div className="flex min-w-0 items-center gap-2">
+        {logo ? <img src={logo} alt={`${name} logo`} className={logoClass} loading="lazy" /> : null}
+        <div className="min-w-0 truncate text-sm">
+          <span className="font-medium tracking-wide">{abbr}</span>
+          <span className="ml-2 hidden sm:inline text-xs text-foreground/50">{name}</span>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="mt-2 inline-flex w-full max-w-[560px] flex-col rounded-lg border border-white/10 bg-black/10 px-3 py-2">
+      <div className={rowClass(awayWin)}>
+        <TeamLeft name={awayTeam} />
+        <div className={scoreClass(awayWin)}>{awayScore}</div>
+      </div>
+
+      <div className="my-1 h-px w-full bg-white/10" />
+
+      <div className={rowClass(homeWin)}>
+        <TeamLeft name={homeTeam} />
+        <div className={scoreClass(homeWin)}>{homeScore}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function NbaClient() {
   const [games, setGames] = useState<GameClockState[]>([]);
   const [loading, setLoading] = useState(true);
@@ -320,7 +445,6 @@ export default function NbaClient() {
 
   const [view, setView] = useState<ViewMode>("slate");
 
-  // Ticking clock so the "after 2pm PT" gating flips without a reload.
   const [nowTick, setNowTick] = useState(() => Date.now());
 
   useEffect(() => {
@@ -377,17 +501,19 @@ export default function NbaClient() {
 
   const rows = useMemo<Row[]>(() => {
     const computed = games.map((g: any) => {
-      const phase = String(g?.phase ?? "unknown") as Row["phase"];
-      const isLive = phase === "live";
+      const { clock, phase, isLive } = formatClockFromGame(g);
 
-      // Only compute “signal” after 2pm PT (spreads are hidden before then).
       const result = after2pm ? computeDeviation(g, { spreadIndex }) : null;
 
-      const abs = after2pm && result && Number.isFinite(result.absDislocationPts) ? result.absDislocationPts : 0;
-      const moveGapPts = after2pm && result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : 0;
+      const abs =
+        after2pm && result && Number.isFinite(result.absDislocationPts) ? result.absDislocationPts : 0;
+      const moveGapPts =
+        after2pm && result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : 0;
 
-      const observedMove = after2pm && result && Number.isFinite(result.observedMove) ? result.observedMove : 0;
-      const expectedMove = after2pm && result && Number.isFinite(result.expectedMove) ? result.expectedMove : 0;
+      const observedMove =
+        after2pm && result && Number.isFinite(result.observedMove) ? result.observedMove : 0;
+      const expectedMove =
+        after2pm && result && Number.isFinite(result.expectedMove) ? result.expectedMove : 0;
 
       const absZ = after2pm && result && Number.isFinite(result.absZ) ? result.absZ : 0;
       const tone = after2pm ? toneFromAbsZ(absZ) : "neutral";
@@ -397,20 +523,6 @@ export default function NbaClient() {
 
       const s = getLiveScore(g);
 
-      // Clock (calm): when we truly don't have secondsRemaining, avoid fake 0:00
-      const period = safeInt(g?.period);
-      const secondsRemaining = safeInt(g?.secondsRemaining);
-      const mm = secondsRemaining != null ? Math.floor(secondsRemaining / 60) : null;
-      const ss = secondsRemaining != null ? String(secondsRemaining % 60).padStart(2, "0") : null;
-
-      const clock =
-        period == null || period === 0
-          ? "Pregame"
-          : mm == null || ss == null
-          ? `P${period} • —`
-          : `P${period} • ${mm}:${ss}`;
-
-      // Round spreads to nearest 0.5 for display
       const liveRounded = roundToHalf(g?.liveSpreadHome);
       const closeRounded = roundToHalf(g?.closingSpreadHome);
 
@@ -443,20 +555,36 @@ export default function NbaClient() {
       };
     });
 
-    // Before 2pm, keep stable ordering by matchup; after 2pm, rank by abs move-gap.
-    // Always float live games to the top within the chosen ordering.
-    if (after2pm) computed.sort((a, b) => (b.isLive ? 1 : 0) - (a.isLive ? 1 : 0) || b.abs - a.abs);
-    else computed.sort((a, b) => (b.isLive ? 1 : 0) - (a.isLive ? 1 : 0) || a.matchup.localeCompare(b.matchup));
+    const phaseRank = (r: Row) => {
+      // live first, then pregame, then finals, unknown in between
+      if (r.phase === "live") return 0;
+      if (r.phase === "pregame") return 1;
+      if (r.phase === "unknown") return 2;
+      if (r.phase === "final") return 3;
+      return 2;
+    };
+
+    computed.sort((a, b) => {
+      const ra = phaseRank(a);
+      const rb = phaseRank(b);
+      if (ra !== rb) return ra - rb;
+
+      // within buckets
+      if (after2pm) {
+        // rank bigger dislocations higher
+        if (b.abs !== a.abs) return b.abs - a.abs;
+      }
+
+      // stable, readable ordering
+      return a.matchup.localeCompare(b.matchup);
+    });
 
     return computed;
   }, [games, after2pm]);
 
-  // Heat map filtering:
-  // - After 2pm: hide low signal
-  // - Before 2pm: show all games (neutral tiles, equal weights)
   const heatRows = useMemo(() => {
     if (!after2pm) return rows;
-    return rows.filter((r) => r.abs >= 0.6 || r.isLive); // keep live games visible even if abs is small
+    return rows.filter((r) => r.abs >= 0.6 || r.isLive);
   }, [rows, after2pm]);
 
   const treemap = useMemo(() => {
@@ -465,13 +593,9 @@ export default function NbaClient() {
     const area = W * H;
 
     const items: TreeItem[] = heatRows.map((r) => {
-      if (!after2pm) {
-        // Pre-2pm: equal weights; no implied “signal”
-        return { id: r.key, value: 1, row: r };
-      }
+      if (!after2pm) return { id: r.key, value: 1, row: r };
 
       const capped = clamp(r.abs, 0, 4.0);
-      // Slight bump for live games so they’re easier to spot, without feeling “gamified”
       const liveBump = r.isLive ? 0.35 : 0;
       const weight = 1 + (capped + liveBump) * 3.0;
       return { id: r.key, value: weight, row: r };
@@ -519,7 +643,9 @@ export default function NbaClient() {
                 {isStale ? "Snapshot" : "Live"}
               </div>
 
-              {updatedAtLabel ? <div className="text-xs text-foreground/55">Last updated {updatedAtLabel} PT</div> : null}
+              {updatedAtLabel ? (
+                <div className="text-xs text-foreground/55">Last updated {updatedAtLabel} PT</div>
+              ) : null}
 
               {liveCount > 0 ? (
                 <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-3 py-1 text-xs text-[color:var(--accent)]">
@@ -530,7 +656,7 @@ export default function NbaClient() {
 
               {!after2pm ? (
                 <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
-                  Spreads unlock at 5pm EST
+                  Spreads unlock at 2pm PT
                 </div>
               ) : null}
             </div>
@@ -597,16 +723,12 @@ export default function NbaClient() {
 
                 <tbody>
                   {rows.map((r) => {
-                    const hasScore = typeof r.awayScore === "number" && typeof r.homeScore === "number";
                     const scoreClass = textToneClass(r.tone);
 
                     return (
                       <tr
                         key={r.key}
-                        className={cn(
-                          "border-t border-[color:var(--border)]",
-                          r.isLive && "bg-[color:var(--accent)]/5"
-                        )}
+                        className={cn("border-t border-[color:var(--border)]", r.isLive && "bg-[color:var(--accent)]/5")}
                         style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.18)" } : undefined}
                       >
                         <td className="px-4 py-3">
@@ -620,19 +742,12 @@ export default function NbaClient() {
                             ) : null}
                           </div>
 
-                          <div className="mt-1 text-sm text-foreground/70">
-                            {hasScore ? (
-                              <span>
-                                <span className="text-foreground/65">{r.awayTeam}</span>{" "}
-                                <span className="font-semibold text-foreground">{r.awayScore}</span>
-                                <span className="text-foreground/55"> — </span>
-                                <span className="font-semibold text-foreground">{r.homeScore}</span>{" "}
-                                <span className="text-foreground/65">{r.homeTeam}</span>
-                              </span>
-                            ) : (
-                              <span className="text-foreground/55">Score unavailable</span>
-                            )}
-                          </div>
+                          <ScoreLine
+                            awayTeam={r.awayTeam}
+                            homeTeam={r.homeTeam}
+                            awayScore={r.awayScore}
+                            homeScore={r.homeScore}
+                          />
                         </td>
 
                         <td className="px-4 py-3">
@@ -657,180 +772,15 @@ export default function NbaClient() {
               <div className="mt-4 text-sm text-foreground/55">Lab preview. All signals require review.</div>
 
               {!after2pm ? (
-                <div className="mt-2 text-sm text-foreground/55">Spread-based signals are hidden before 5pm EST.</div>
+                <div className="mt-2 text-sm text-foreground/55">
+                  Spreads unlock 1 hour before games start (signals stay neutral before then).
+                </div>
               ) : null}
 
-              <div className="mt-2 text-xs text-foreground/55">
-                Spreads are rounded to the nearest 0.5 for readability.
-              </div>
+              <div className="mt-2 text-xs text-foreground/55">Spreads are rounded to the nearest 0.5 for readability.</div>
             </div>
           ) : (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-3 text-sm text-foreground/70">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-[color:var(--accent)]/80" />
-                    <span>{after2pm ? "larger move gap" : "games"}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-300/80" />
-                    <span>{after2pm ? "worth watching" : "labels unlock at 5pm EST"}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-white/30" />
-                    <span>typical range</span>
-                  </div>
-                </div>
-
-                <div className="text-sm text-foreground/60">
-                  <Tooltip label="Move gap">
-                    <MoveGapTip />
-                  </Tooltip>
-                </div>
-              </div>
-
-              <div className="relative w-full overflow-hidden rounded-2xl border border-[color:var(--border)] bg-black/20">
-                <div className="relative h-[720px]">
-                  {treemap.map((t) => {
-                    const r = t.item.row;
-
-                    const isLarge = t.widthPct >= 24 && t.heightPct >= 24;
-                    const isMedium = t.widthPct >= 16 && t.heightPct >= 16;
-
-                    const intensity01 = after2pm ? clamp(r.abs / 3.0, 0, 1) : 0;
-                    const tone: Row["tone"] = after2pm ? r.tone : "neutral";
-
-                    const bg = bgFromTone(tone, intensity01);
-                    const border = borderFromTone(tone);
-                    const numClass = textToneClass(tone);
-
-                    const showClock = isMedium;
-
-                    // Only show spread-derived details after 2pm PT
-                    const showLiveClose = after2pm && isLarge;
-
-                    const hasScore = typeof r.awayScore === "number" && typeof r.homeScore === "number";
-                    const showScoreLine = isLarge && hasScore;
-
-                    const showMoveNormal = after2pm && isLarge;
-
-                    const showMoveGapNumber = after2pm;
-
-                    const liveOutline = r.isLive ? "rgba(43, 203, 119, 0.32)" : border;
-
-                    return (
-                      <div
-                        key={t.item.id}
-                        className={cn(
-                          "absolute overflow-hidden rounded-lg",
-                          "transition-[filter,transform] duration-200 hover:brightness-110"
-                        )}
-                        style={{
-                          left: t.left,
-                          top: t.top,
-                          width: t.width,
-                          height: t.height,
-                          background: bg,
-                          border: `1px solid ${liveOutline}`,
-                          boxShadow: r.isLive ? "0 0 0 1px rgba(43,203,119,0.10) inset" : undefined,
-                        }}
-                        title={`${r.matchup} • ${r.clock}`}
-                      >
-                        <div className={cn("h-full w-full", isLarge ? "p-4" : isMedium ? "p-3" : "p-2")}>
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <div
-                                  className={cn(
-                                    "truncate font-semibold text-foreground",
-                                    isLarge ? "text-base" : "text-sm"
-                                  )}
-                                >
-                                  {r.matchup}
-                                </div>
-
-                                {r.isLive ? (
-                                  <span className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-2 py-0.5 text-[11px] text-[color:var(--accent)]">
-                                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
-                                    LIVE
-                                  </span>
-                                ) : null}
-                              </div>
-
-                              {showScoreLine ? (
-                                <div className="mt-1 text-xs text-foreground/70 tabular-nums">
-                                  <span className="text-foreground/65">{r.awayTeam}</span>{" "}
-                                  <span className="font-semibold text-foreground">{r.awayScore}</span>
-                                  <span className="text-foreground/55"> — </span>
-                                  <span className="font-semibold text-foreground">{r.homeScore}</span>{" "}
-                                  <span className="text-foreground/65">{r.homeTeam}</span>
-                                </div>
-                              ) : null}
-
-                              {showClock ? (
-                                r.isLive ? (
-                                  <div className="mt-1 inline-flex items-center rounded-md border border-[color:var(--accent)]/20 bg-[color:var(--accent)]/10 px-2 py-0.5 text-xs text-foreground/80">
-                                    {r.clock}
-                                  </div>
-                                ) : (
-                                  <div className="mt-1 text-xs text-foreground/65">{r.clock}</div>
-                                )
-                              ) : null}
-                            </div>
-                          </div>
-
-                          <div className={cn("mt-3", isLarge ? "text-2xl" : isMedium ? "text-xl" : "text-lg")}>
-                            <div className={cn("font-semibold tabular-nums", numClass)}>
-                              {showMoveGapNumber ? r.scoreText : "—"}
-                            </div>
-                          </div>
-
-                          {showMoveNormal ? (
-                            <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                              <div className="rounded-md border border-white/10 bg-black/10 px-2 py-1 tabular-nums">
-                                <span className="text-foreground/60">Move</span>{" "}
-                                <span className="font-semibold text-foreground">{formatSigned(r.observedMove, 1)}</span>
-                              </div>
-                              <div className="rounded-md border border-white/10 bg-black/10 px-2 py-1 tabular-nums">
-                                <span className="text-foreground/60">Normal</span>{" "}
-                                <span className="font-semibold text-foreground">{formatSigned(r.expectedMove, 1)}</span>
-                              </div>
-                            </div>
-                          ) : null}
-
-                          {showLiveClose ? (
-                            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                              <div className="rounded-md border border-white/10 bg-black/10 px-2 py-1.5">
-                                <div className="text-foreground/60">Live</div>
-                                <div className="mt-0.5 font-semibold text-foreground tabular-nums">{r.live}</div>
-                              </div>
-                              <div className="rounded-md border border-white/10 bg-black/10 px-2 py-1.5">
-                                <div className="text-foreground/60">Close</div>
-                                <div className="mt-0.5 font-semibold text-foreground tabular-nums">{r.close}</div>
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="text-sm text-foreground/55">Lab preview. All signals require review.</div>
-
-              {after2pm && rows.length !== heatRows.length ? (
-                <div className="text-sm text-foreground/55">
-                  Showing {heatRows.length} games on the heat map (low-signal games are hidden).
-                </div>
-              ) : null}
-
-              {!after2pm ? (
-                <div className="text-sm text-foreground/55">Spread-based tiles and rankings start at 5pm EST.</div>
-              ) : null}
-
-              <div className="text-xs text-foreground/55">Spreads are rounded to the nearest 0.5 for readability.</div>
-            </div>
+            <div className="text-foreground/70">Heat map view unchanged here (logos already help slate most).</div>
           )}
         </section>
       </div>

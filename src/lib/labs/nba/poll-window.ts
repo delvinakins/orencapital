@@ -1,35 +1,32 @@
 // src/lib/labs/nba/poll-window.ts
-// Pure helper: define polling window in America/Los_Angeles.
 
-export type PollWindow = {
-  startHour: number; // 0-23
-  endHour: number; // 0-23 (exclusive)
-};
+const PT_TZ = "America/Los_Angeles";
 
-const DEFAULT_WINDOW: PollWindow = { startHour: 14, endHour: 22 }; // 2pm–10pm PST/PDT
-
-function getHourInLosAngeles(d: Date): number {
-  // Use Intl to avoid bundling tz libs. Works in Node runtimes.
+function partsPT(d: Date) {
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
+    timeZone: PT_TZ,
+    weekday: "short",
     hour: "2-digit",
+    minute: "2-digit",
     hour12: false,
   }).formatToParts(d);
 
-  const hourPart = parts.find((p) => p.type === "hour")?.value;
-  const hour = hourPart ? Number(hourPart) : NaN;
-  return Number.isFinite(hour) ? hour : d.getHours(); // fallback
+  const wd = String(parts.find((p) => p.type === "weekday")?.value ?? "Mon");
+  const hh = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const mm = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  return { wd, minutes: hh * 60 + mm };
 }
 
 /**
- * True if we should poll providers right now.
- * Uses America/Los_Angeles local hour.
+ * Polling window (PT):
+ * - Weekdays: start 3:30pm (covers 4pm tips + pregame)
+ * - Weekends: start 8:00am (matinees)
+ * - End: 11:59pm
  */
-export function inPollingWindow(now: Date, window: PollWindow = DEFAULT_WINDOW): boolean {
-  const h = getHourInLosAngeles(now);
-  const start = window.startHour;
-  const end = window.endHour;
-
-  // Simple non-wrapping window (14..22). If you ever wrap across midnight, adjust.
-  return h >= start && h < end;
+export function inPollingWindow(now: Date): boolean {
+  const { wd, minutes } = partsPT(now);
+  const isWeekend = wd === "Sat" || wd === "Sun";
+  const start = isWeekend ? 8 * 60 : 15 * 60 + 30;
+  const end = 23 * 60 + 59;
+  return minutes >= start && minutes <= end;
 }

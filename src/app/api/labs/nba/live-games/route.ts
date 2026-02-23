@@ -1,11 +1,11 @@
-// src/app/api/labs/nba/live-games/route.ts
-
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { fetchApiSportsScores } from "@/lib/labs/nba/providers/scores-apisports";
 import { fetchTheOddsApiSpreads } from "@/lib/labs/nba/providers/odds-theoddsapi";
-import { makeMatchKey } from "@/lib/labs/nba/providers/normalize";
-import { inPollingWindow } from "@/lib/labs/nba/poll-window";
+import { makeMatchKey, canonicalTeamName } from "@/lib/labs/nba/providers/normalize";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type Phase = "pregame" | "live" | "final" | "unknown";
 
@@ -31,35 +31,30 @@ type LiveOk = {
   items: LiveGameItem[];
   meta: {
     stale: boolean;
-    updatedAt: string; // ISO
+    updatedAt: string;
     window: "active" | "offhours";
     storage?: "supabase" | "none";
-    supabase?: { hasUrl: boolean; hasServiceKey: boolean; enabled: boolean };
+    dateKeyPT?: string;
+    allowedDateKeysPT?: string[];
+    closingSeeded?: number;
+    closingAttached?: number;
   };
 };
 
 type LiveResponse = LiveOk | { ok: false };
 
+const PT_TZ = "America/Los_Angeles";
+
 function nowIso() {
   return new Date().toISOString();
 }
-
 function nowMs() {
   return Date.now();
 }
 
-/**
- * LIVE GRACE:
- * If we've seen any live game recently, keep polling frequently so the final
- * score + final status gets captured even if the game ends right after the
- * last scheduled poll.
- */
-const LIVE_GRACE_MS = 30 * 60_000; // 30 minutes
-let lastLiveSeenAtMs: number | null = null;
-
 function minutesPT(d: Date): number {
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
+    timeZone: PT_TZ,
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
@@ -67,233 +62,288 @@ function minutesPT(d: Date): number {
 
   const hh = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
   const mm = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
-
   if (!Number.isFinite(hh) || !Number.isFinite(mm)) return 0;
   return hh * 60 + mm;
 }
 
-function beforeHardCutoffPT(d: Date): boolean {
-  // 11:59 PM PT cutoff
-  const m = minutesPT(d);
-  return m <= 23 * 60 + 59;
+function dateKeyPT(d: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: PT_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+
+  const y = parts.find((p) => p.type === "year")?.value ?? "1970";
+  const m = parts.find((p) => p.type === "month")?.value ?? "01";
+  const day = parts.find((p) => p.type === "day")?.value ?? "01";
+  return `${y}-${m}-${day}`;
 }
 
-function effectiveActiveWindow(now: Date): boolean {
-  // Normal scheduled window OR within grace after last live game
-  const scheduled = inPollingWindow(now);
-  const withinGrace =
-    lastLiveSeenAtMs != null && nowMs() - lastLiveSeenAtMs <= LIVE_GRACE_MS;
-
-  // Never run "active" polling past the hard cutoff
-  if (!beforeHardCutoffPT(now)) return false;
-
-  return scheduled || withinGrace;
+function addDaysUTC(dateKey: string, deltaDays: number): string {
+  const [y, m, d] = dateKey.split("-").map((x) => Number(x));
+  const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+  dt.setUTCDate(dt.getUTCDate() + deltaDays);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
 }
 
-/**
- * IMPORTANT: Do not throw if missing env vars.
- * If Supabase isn't configured in Production yet, we still want the route to work.
- */
-function supabaseAdminOrNull() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+function hasNumber(x: unknown): x is number {
+  return typeof x === "number" && Number.isFinite(x);
+}
 
-  if (!url || !key) {
-    console.warn("[nba/live-games] Supabase admin unavailable (missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY).");
-    return null;
+function toNum(x: unknown): number | null {
+  if (typeof x === "number" && Number.isFinite(x)) return x;
+  if (typeof x === "string") {
+    const n = Number(x);
+    if (Number.isFinite(n)) return n;
   }
-
-  return createClient(url, key, { auth: { persistSession: false } });
+  return null;
 }
 
-async function readSnapshot(): Promise<LiveOk | null> {
-  try {
-    const sb = supabaseAdminOrNull();
-    if (!sb) return null;
-
-    const { data, error } = await sb
-      .from("nba_live_snapshots")
-      .select("updated_at, payload")
-      .eq("id", "latest")
-      .maybeSingle();
-
-    if (error || !data?.payload) return null;
-
-    const payload = data.payload as any;
-    if (!payload?.ok || !Array.isArray(payload.items)) return null;
-
-    return {
-      ok: true,
-      items: payload.items as LiveGameItem[],
-      meta: {
-        stale: true,
-        updatedAt: String(data.updated_at ?? payload?.meta?.updatedAt ?? nowIso()),
-        window: "offhours",
-        storage: "supabase",
-      },
-    };
-  } catch (err: any) {
-    console.error("[nba/live-games] readSnapshot error:", err?.message ?? err);
-    return null;
-  }
+function roundHalf(n: number | null): number | null {
+  if (n == null || !Number.isFinite(n)) return null;
+  return Math.round(n * 2) / 2;
 }
 
-async function writeSnapshot(payload: LiveOk) {
-  try {
-    const sb = supabaseAdminOrNull();
-    if (!sb) return;
-
-    await sb
-      .from("nba_live_snapshots")
-      .upsert({ id: "latest", payload, updated_at: nowIso() }, { onConflict: "id" });
-  } catch (err: any) {
-    console.error("[nba/live-games] writeSnapshot error:", err?.message ?? err);
-  }
+function normalizeStatus(raw: unknown): string {
+  return String(raw ?? "").trim().toLowerCase();
 }
 
-async function getClosingMap(keys: string[]) {
-  const map = new Map<string, number>();
-  if (keys.length === 0) return map;
+function classifyPhase(
+  it: { period: number | null; secondsRemaining: number | null; awayScore: number | null; homeScore: number | null },
+  statusRaw?: unknown
+): Phase {
+  const s = normalizeStatus(statusRaw);
 
-  try {
-    const sb = supabaseAdminOrNull();
-    if (!sb) return map;
+  if (s.includes("final") || s.includes("finished") || s.includes("ended")) return "final";
+  if (s.includes("live") || s.includes("inprogress") || s.includes("in_progress") || s.includes("playing")) return "live";
+  if (s.includes("scheduled") || s.includes("not started") || s.includes("not_started") || s.includes("pregame"))
+    return "pregame";
 
-    const { data, error } = await sb
-      .from("nba_closing_lines")
-      .select("game_key, closing_home_spread")
-      .in("game_key", keys);
+  const p = hasNumber(it.period) ? it.period : null;
+  const sr = hasNumber(it.secondsRemaining) ? it.secondsRemaining : null;
+  const hasScore = hasNumber(it.awayScore) && hasNumber(it.homeScore);
 
-    if (error || !Array.isArray(data)) return map;
-
-    for (const row of data as any[]) {
-      if (typeof row?.game_key === "string" && typeof row?.closing_home_spread === "number") {
-        map.set(row.game_key, row.closing_home_spread);
-      }
-    }
-
-    return map;
-  } catch (err: any) {
-    console.error("[nba/live-games] getClosingMap error:", err?.message ?? err);
-    return map;
-  }
-}
-
-/**
- * IMPORTANT:
- * - Seed baseline ONLY when missing (do NOT overwrite).
- * - "Closing" for now means "first seen pregame".
- */
-async function ensureClosingLines(candidates: Array<{ gameKey: string; closingHomeSpread: number }>) {
-  if (candidates.length === 0) return;
-
-  try {
-    const sb = supabaseAdminOrNull();
-    if (!sb) return;
-
-    // De-dupe candidates
-    const seen = new Set<string>();
-    const unique: Array<{ gameKey: string; closingHomeSpread: number }> = [];
-    for (const c of candidates) {
-      if (!c.gameKey || !Number.isFinite(c.closingHomeSpread)) continue;
-      if (seen.has(c.gameKey)) continue;
-      seen.add(c.gameKey);
-      unique.push(c);
-    }
-
-    if (unique.length === 0) return;
-
-    // Only insert rows that do NOT already exist
-    const existing = await getClosingMap(unique.map((u) => u.gameKey));
-    const toInsert = unique
-      .filter((u) => !existing.has(u.gameKey))
-      .map((u) => ({ game_key: u.gameKey, closing_home_spread: u.closingHomeSpread }));
-
-    if (toInsert.length === 0) return;
-
-    await sb.from("nba_closing_lines").insert(toInsert);
-  } catch (err: any) {
-    // insert may error on conflicts if race; that's ok—baseline already exists
-    const msg = String(err?.message ?? err);
-    if (!msg.toLowerCase().includes("duplicate") && !msg.toLowerCase().includes("conflict")) {
-      console.error("[nba/live-games] ensureClosingLines error:", err?.message ?? err);
-    }
-  }
-}
-
-function classifyPhase(it: { period: number | null; awayScore: number | null; homeScore: number | null }, status?: string): Phase {
-  const s = String(status ?? "").toLowerCase();
-  if (s.includes("final") || s.includes("finished")) return "final";
-
-  const hasScore = typeof it.awayScore === "number" && typeof it.homeScore === "number";
-  const p = typeof it.period === "number" ? it.period : null;
+  // Key fix: Q4 + scores + no clock => FINAL (prevents “P4 • —” hanging forever)
+  if (p != null && p >= 4 && hasScore && (sr === 0 || sr === null)) return "final";
 
   if (p != null && p >= 1 && hasScore) return "live";
   if (p != null && p >= 1 && !hasScore) return "unknown";
   return "pregame";
 }
 
-async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
-  const [scores, odds] = await Promise.all([fetchApiSportsScores(), fetchTheOddsApiSpreads()]);
+function itemDateKeyFromGameId(gameId: string): string | null {
+  const k = String(gameId || "").split("|")[0]?.trim();
+  if (!k || k.length !== 10) return null;
+  return k;
+}
 
-  const oddsByKey = new Map<string, { liveHomeSpread: number | null }>();
-  const oddsByMatch = new Map<string, { liveHomeSpread: number | null }>();
+function allowedDateKeys(now: Date) {
+  const today = dateKeyPT(now);
+  const yday = addDaysUTC(today, -1);
+
+  const keys = new Set<string>([today]);
+  // Early AM PT: allow yesterday for late games
+  if (minutesPT(now) <= 5 * 60) keys.add(yday);
+
+  return { today, keys: Array.from(keys) };
+}
+
+function filterItemsByAllowedDates(items: LiveGameItem[], allowed: Set<string>) {
+  return items.filter((it) => {
+    const k = itemDateKeyFromGameId(it.gameId);
+    if (!k) return true;
+    return allowed.has(k);
+  });
+}
+
+function supabaseAdminOrNull() {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false } });
+}
+
+async function getClosingMap(keys: string[]) {
+  const map = new Map<string, number>();
+  if (keys.length === 0) return map;
+
+  const sb = supabaseAdminOrNull();
+  if (!sb) return map;
+
+  const { data, error } = await sb
+    .from("nba_closing_lines")
+    .select("game_key, closing_home_spread")
+    .in("game_key", keys);
+
+  if (error || !Array.isArray(data)) return map;
+
+  for (const row of data as any[]) {
+    const k = typeof row?.game_key === "string" ? row.game_key : null;
+    const v = toNum(row?.closing_home_spread); // ✅ parses numeric strings
+    if (k && v != null) map.set(k, roundHalf(v)!); // ✅ round to 0.5
+  }
+
+  return map;
+}
+
+async function seedClosingFromOdds(candidates: Array<{ gameKey: string; closingHomeSpread: number }>) {
+  const sb = supabaseAdminOrNull();
+  if (!sb) return 0;
+  if (candidates.length === 0) return 0;
+
+  const seen = new Set<string>();
+  const unique: Array<{ gameKey: string; closingHomeSpread: number }> = [];
+  for (const c of candidates) {
+    if (!c.gameKey || !Number.isFinite(c.closingHomeSpread)) continue;
+    if (seen.has(c.gameKey)) continue;
+    seen.add(c.gameKey);
+    unique.push({ ...c, closingHomeSpread: roundHalf(c.closingHomeSpread)! });
+  }
+  if (unique.length === 0) return 0;
+
+  const existing = await getClosingMap(unique.map((u) => u.gameKey));
+  const toInsert = unique
+    .filter((u) => !existing.has(u.gameKey))
+    .map((u) => ({ game_key: u.gameKey, closing_home_spread: u.closingHomeSpread }));
+
+  if (toInsert.length === 0) return 0;
+
+  const { error } = await sb.from("nba_closing_lines").insert(toInsert);
+  if (error) {
+    const msg = error.message.toLowerCase();
+    if (!msg.includes("duplicate") && !msg.includes("conflict")) {
+      console.error("[nba/live-games] seedClosingFromOdds insert error:", error.message);
+    }
+    return 0;
+  }
+  return toInsert.length;
+}
+
+/**
+ * Slate-aware polling window:
+ * Active if now is within (firstTip - PRE) .. (lastTip + POST).
+ */
+function computeSlateActive(
+  odds: Array<{ laDateKey: string | null; commenceTimeIso: string | null }>,
+  now: Date,
+  allowed: Set<string>
+) {
+  const PRE_MIN = 120;
+  const POST_MIN = 360;
+
+  const times: number[] = [];
+  for (const o of odds) {
+    const dk = o.laDateKey ?? "";
+    if (dk && !allowed.has(dk)) continue;
+
+    const iso = o.commenceTimeIso;
+    if (!iso) continue;
+
+    const t = Date.parse(iso);
+    if (Number.isFinite(t)) times.push(t);
+  }
+
+  if (times.length === 0) return false;
+
+  const first = Math.min(...times);
+  const last = Math.max(...times);
+
+  const start = first - PRE_MIN * 60_000;
+  const end = last + POST_MIN * 60_000;
+
+  const nowT = now.getTime();
+  return nowT >= start && nowT <= end;
+}
+
+async function pollProviders(now: Date): Promise<LiveOk> {
+  const { today, keys } = allowedDateKeys(now);
+  const allowed = new Set(keys);
+
+  const odds = await fetchTheOddsApiSpreads();
+  const slateActive = computeSlateActive(
+    odds.map((o) => ({ laDateKey: o.laDateKey, commenceTimeIso: o.commenceTimeIso })),
+    now,
+    allowed
+  );
+
+  // Seed closing from odds (first seen consensus)
+  const closingCandidates = odds
+    .filter((o) => (o.laDateKey ? allowed.has(o.laDateKey) : true))
+    .map((o) => ({
+      gameKey: makeMatchKey(o.awayTeam, o.homeTeam, o.laDateKey || ""),
+      closingHomeSpread: toNum(o.liveHomeSpread) ?? NaN,
+    }))
+    .filter((x) => Number.isFinite(x.closingHomeSpread));
+
+  const closingSeeded = await seedClosingFromOdds(
+    closingCandidates.map((c) => ({ gameKey: c.gameKey, closingHomeSpread: c.closingHomeSpread }))
+  );
+
+  const scores = await fetchApiSportsScores();
+
+  // odds maps for live spread attach
+  const oddsByKey = new Map<string, number | null>();
+  const oddsByMatch = new Map<string, number | null>();
 
   for (const o of odds) {
     const match = `${o.awayTeam}@${o.homeTeam}`;
-    oddsByMatch.set(match, { liveHomeSpread: o.liveHomeSpread });
-    if (o.laDateKey) oddsByKey.set(`${o.laDateKey}|${match}`, { liveHomeSpread: o.liveHomeSpread });
+    oddsByMatch.set(match, roundHalf(toNum(o.liveHomeSpread)) ?? null);
+
+    const dk = o.laDateKey ?? "";
+    if (dk && allowed.has(dk)) oddsByKey.set(`${dk}|${match}`, roundHalf(toNum(o.liveHomeSpread)) ?? null);
   }
 
   const items: LiveGameItem[] = [];
-  const gameKeys: string[] = [];
-  const closingCandidates: Array<{ gameKey: string; closingHomeSpread: number }> = [];
 
-  // Primary: scores feed
-  for (const s of scores) {
-    const match = `${s.awayTeam}@${s.homeTeam}`;
+  for (const raw of scores as any[]) {
+    const laKey = String(raw?.laDateKey ?? "").trim();
+    if (laKey && !allowed.has(laKey)) continue;
 
-    const laDateKey = (s as any)?.laDateKey ?? "";
-    const gameKey = makeMatchKey(s.awayTeam, s.homeTeam, laDateKey);
+    const awayTeam = canonicalTeamName(String(raw?.awayTeam ?? "").trim());
+    const homeTeam = canonicalTeamName(String(raw?.homeTeam ?? "").trim());
+    if (!awayTeam || !homeTeam) continue;
 
-    gameKeys.push(gameKey);
+    const match = `${awayTeam}@${homeTeam}`;
+    const gameKey = makeMatchKey(awayTeam, homeTeam, laKey);
 
-    const o1 = oddsByKey.get(`${laDateKey}|${match}`);
-    const o2 = oddsByMatch.get(match);
-    const liveSpreadHome = o1?.liveHomeSpread ?? o2?.liveHomeSpread ?? null;
+    const liveSpreadHome =
+      (laKey ? oddsByKey.get(`${laKey}|${match}`) : null) ?? oddsByMatch.get(match) ?? null;
 
-    // ✅ Seed baseline ONLY pregame, scheduled, period 0/null
-    const isPregameSeed = s.status === "scheduled" && (s.period == null || s.period === 0);
-    if (isPregameSeed && typeof liveSpreadHome === "number" && Number.isFinite(liveSpreadHome)) {
-      closingCandidates.push({ gameKey, closingHomeSpread: liveSpreadHome });
-    }
+    const awayScore = hasNumber(raw?.awayScore) ? raw.awayScore : null;
+    const homeScore = hasNumber(raw?.homeScore) ? raw.homeScore : null;
+    const period = hasNumber(raw?.period) ? raw.period : null;
+    const secondsRemaining = hasNumber(raw?.secondsRemainingInPeriod) ? raw.secondsRemainingInPeriod : null;
 
-    const hasAny =
-      typeof liveSpreadHome === "number" ||
-      typeof s.homeScore === "number" ||
-      typeof s.awayScore === "number";
-
+    const hasAny = hasNumber(liveSpreadHome) || hasNumber(awayScore) || hasNumber(homeScore);
     if (!hasAny) continue;
+
+    const phase = classifyPhase({ period, secondsRemaining, awayScore, homeScore }, raw?.status);
 
     items.push({
       gameId: gameKey,
-      awayTeam: s.awayTeam,
-      homeTeam: s.homeTeam,
-      awayScore: s.awayScore,
-      homeScore: s.homeScore,
-      period: s.period,
-      secondsRemaining: s.secondsRemainingInPeriod,
-      liveSpreadHome,
+      awayTeam,
+      homeTeam,
+      awayScore,
+      homeScore,
+      period,
+      secondsRemaining,
+      liveSpreadHome: liveSpreadHome,
       closingSpreadHome: null,
-      phase: classifyPhase(s, String(s.status ?? "")),
+      phase,
     });
   }
 
-  // Fallback: odds-only (still show something)
+  // Fallback to odds slate if scores missing
   if (items.length === 0 && odds.length > 0) {
     for (const o of odds) {
-      const gameKey = makeMatchKey(o.awayTeam, o.homeTeam, o.laDateKey || "");
-      gameKeys.push(gameKey);
+      const dk = o.laDateKey ?? "";
+      if (dk && !allowed.has(dk)) continue;
+
+      const gameKey = makeMatchKey(o.awayTeam, o.homeTeam, dk);
 
       items.push({
         gameId: gameKey,
@@ -301,111 +351,60 @@ async function pollProviders(withinActiveWindow: boolean): Promise<LiveOk> {
         homeTeam: o.homeTeam,
         awayScore: null,
         homeScore: null,
-        period: null,
+        period: 0,
         secondsRemaining: null,
-        liveSpreadHome: o.liveHomeSpread ?? null,
+        liveSpreadHome: roundHalf(toNum(o.liveHomeSpread)),
         closingSpreadHome: null,
         phase: "pregame",
       });
     }
   }
 
-  // ✅ Persist baselines (no overwrite)
-  await ensureClosingLines(closingCandidates);
+  const filtered = filterItemsByAllowedDates(items, allowed);
 
-  // ✅ Attach baselines; do NOT fall back to live
-  const closingMap = await getClosingMap(gameKeys);
-  const finalItems = items.map((it) => ({
+  const closingMap = await getClosingMap(filtered.map((it) => it.gameId));
+  const attached = filtered.map((it) => ({
     ...it,
     closingSpreadHome: closingMap.get(it.gameId) ?? null,
   }));
 
-  // ✅ Update live-grace marker
-  const hasLive = finalItems.some((g) => g.phase === "live");
-  if (hasLive) {
-    lastLiveSeenAtMs = nowMs();
-  } else {
-    // If we're past cutoff and nothing is live, clear it.
-    if (!beforeHardCutoffPT(new Date())) lastLiveSeenAtMs = null;
-  }
-
-  const sb = supabaseAdminOrNull();
-  const storage = sb ? "supabase" : "none";
-
   return {
     ok: true,
-    items: finalItems,
+    items: attached,
     meta: {
-      stale: !withinActiveWindow,
+      stale: !slateActive,
       updatedAt: nowIso(),
-      window: withinActiveWindow ? "active" : "offhours",
-      storage,
-      supabase: {
-        hasUrl: Boolean(process.env.SUPABASE_URL),
-        hasServiceKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
-        enabled: Boolean(sb),
-      },
+      window: slateActive ? "active" : "offhours",
+      storage: supabaseAdminOrNull() ? "supabase" : "none",
+      dateKeyPT: today,
+      allowedDateKeysPT: keys,
+      closingSeeded,
+      closingAttached: closingMap.size,
     },
   };
 }
 
-/** Cache policy */
-const ACTIVE_REFRESH_MS = 90_000;
-const OFFHOURS_REFRESH_MS = 15 * 60_000;
-const GRACE_MS = 5_000;
-
+// warm cache
+const TTL_MS = 60_000;
 let cached: { at: number; payload: LiveOk } | null = null;
 let inflight: Promise<LiveOk> | null = null;
 
-function isFresh(ts: number, ttlMs: number) {
-  return nowMs() - ts <= ttlMs + GRACE_MS;
+function isFresh(ts: number) {
+  return nowMs() - ts <= TTL_MS;
 }
 
 async function getData(): Promise<LiveResponse> {
-  const now = new Date();
-  const withinActiveWindow = effectiveActiveWindow(now);
-  const ttl = withinActiveWindow ? ACTIVE_REFRESH_MS : OFFHOURS_REFRESH_MS;
-
-  // In-memory cache (per warm instance)
-  if (cached && isFresh(cached.at, ttl)) {
-    return withinActiveWindow
-      ? cached.payload
-      : { ...cached.payload, meta: { ...cached.payload.meta, stale: true, window: "offhours" } };
-  }
-
-  // Off-hours: prefer stored snapshot if it exists (fast + guaranteed)
-  if (!withinActiveWindow) {
-    const snap = await readSnapshot();
-    if (snap) {
-      cached = { at: nowMs(), payload: snap };
-      return snap;
-    }
-    // No snapshot yet -> seed by polling off-hours (rate limited by OFFHOURS ttl above)
-  }
-
+  if (cached && isFresh(cached.at)) return cached.payload;
   if (inflight) return inflight;
 
   inflight = (async () => {
     try {
-      const payload = await pollProviders(withinActiveWindow);
-
+      const payload = await pollProviders(new Date());
       cached = { at: nowMs(), payload };
-      await writeSnapshot(payload);
-
-      return withinActiveWindow
-        ? payload
-        : { ...payload, meta: { ...payload.meta, stale: true, window: "offhours" } };
+      return payload;
     } catch (err: any) {
-      console.error("[nba/live-games] poll error:", err?.message ?? err);
-
-      if (cached) {
-        return withinActiveWindow
-          ? cached.payload
-          : { ...cached.payload, meta: { ...cached.payload.meta, stale: true, window: "offhours" } };
-      }
-
-      const snap = await readSnapshot();
-      return snap ?? ({ ok: false } as any);
+      console.error("[nba/live-games] error:", err?.message ?? err);
+      return cached?.payload ?? ({ ok: false } as any);
     } finally {
       inflight = null;
     }
@@ -415,13 +414,14 @@ async function getData(): Promise<LiveResponse> {
 }
 
 export async function GET() {
-  try {
-    const payload = await getData();
-    return NextResponse.json(payload, { status: 200 });
-  } catch (err: any) {
-    console.error("[nba/live-games] handler error:", err?.message ?? err);
-    const snap = await readSnapshot();
-    if (snap) return NextResponse.json(snap, { status: 200 });
-    return NextResponse.json({ ok: false }, { status: 200 });
-  }
+  const payload = await getData();
+
+  return NextResponse.json(payload, {
+    status: 200,
+    headers: {
+      "cache-control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      pragma: "no-cache",
+      expires: "0",
+    },
+  });
 }
