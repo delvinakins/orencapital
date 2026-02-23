@@ -175,6 +175,63 @@ function benchExplain(dd50: number) {
   return "Most plausible paths hit deep stress before the horizon.";
 }
 
+type Bands = {
+  p05: number[];
+  p25: number[];
+  p50: number[];
+  p75: number[];
+  p95: number[];
+};
+
+function endWidth(b: Bands | null) {
+  if (!b) return null;
+  const n = Math.min(b.p05.length, b.p95.length);
+  if (n < 2) return null;
+  const end = n - 1;
+  const w = b.p95[end] - b.p05[end];
+  return Number.isFinite(w) ? w : null;
+}
+
+function stateFrom(dd50: number, bands: Bands | null) {
+  const w = endWidth(bands); // relative equity width at horizon
+  const width = w ?? 0.7;
+
+  // Clinical mapping:
+  // - dd50 answers: "how often do we hit -50% before horizon?"
+  // - width answers: "how path-dependent are outcomes?"
+  //
+  // We use both. Precedence: extreme risk first.
+  if (dd50 >= 0.55 || width >= 1.0) {
+    return {
+      label: "Stress",
+      tone: "stress" as const,
+      blurb: "Survival is sequence-dependent. Small errors compound fast.",
+    };
+  }
+
+  if (dd50 >= 0.40 || width >= 0.85) {
+    return {
+      label: "Accelerated",
+      tone: "warn" as const,
+      blurb: "Drawdown velocity is high. Variance dominates the path.",
+    };
+  }
+
+  if (dd50 >= 0.20 || width >= 0.60) {
+    return {
+      label: "Recovery-dependent",
+      tone: "neutral" as const,
+      blurb: "Edge may be positive, but the next streak determines the outcome.",
+    };
+  }
+
+  return {
+    label: "Stable",
+    tone: "good" as const,
+    blurb: "Outcomes are more controllable. Drawdowns are less likely to cascade.",
+  };
+}
+
 function parseVol(v: string | null): VolLevel | null {
   if (!v) return null;
   const up = v.toUpperCase();
@@ -234,7 +291,7 @@ export default function RiskClient() {
     volLevel: "MED",
   });
 
-  // Apply URL → state once
+  // URL → state once
   const appliedUrlRef = useRef(false);
   useEffect(() => {
     if (appliedUrlRef.current) return;
@@ -258,7 +315,7 @@ export default function RiskClient() {
     return () => clearTimeout(t);
   }, [inputs]);
 
-  // Debounce URL writes (replaceState)
+  // Debounce URL writes
   const urlDebounceRef = useRef<number | null>(null);
   useEffect(() => {
     if (urlDebounceRef.current) window.clearTimeout(urlDebounceRef.current);
@@ -308,17 +365,29 @@ export default function RiskClient() {
   const line1 = useMemo(() => benchLine(dd50Risk), [dd50Risk]);
   const line2 = useMemo(() => benchExplain(dd50Risk), [dd50Risk]);
 
-  const [copied, setCopied] = useState(false);
-  async function copyLink() {
+  const bands = (primary.result?.bands as Bands | null) ?? null;
+  const st = useMemo(() => stateFrom(dd50Risk, bands), [dd50Risk, bands]);
+
+  const stateClass =
+    st.tone === "good"
+      ? "border-emerald-700/40 bg-emerald-600/10 text-emerald-200"
+      : st.tone === "warn"
+      ? "border-amber-700/40 bg-amber-500/10 text-amber-200"
+      : st.tone === "stress"
+      ? "border-rose-700/40 bg-rose-500/10 text-rose-200"
+      : "border-white/10 bg-white/5 text-slate-200";
+
+  const [shared, setShared] = useState(false);
+  async function shareScenario() {
     try {
       const href = typeof window !== "undefined" ? window.location.href : "";
       if (!href) return;
 
       await navigator.clipboard.writeText(href);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
+      setShared(true);
+      window.setTimeout(() => setShared(false), 1200);
     } catch {
-      // no-op: clipboard may be blocked; we keep UI quiet for V1
+      // clipboard can be blocked; keep UI quiet for V1
     }
   }
 
@@ -340,37 +409,57 @@ export default function RiskClient() {
             <div className="pb-3 text-sm text-foreground/60">to -50%</div>
           </div>
 
-          <div className="space-y-1">
-            <div className="text-sm text-foreground/80">{line1}</div>
-            <div className="text-sm text-foreground/60">{line2}</div>
-          </div>
+          {/* state + benchmark lines (instrument feel) */}
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 ${stateClass}`}>
+                <Tooltip label="State">
+                  <div className="space-y-2">
+                    <div>
+                      A qualitative label derived from <span className="font-semibold">DD50 probability</span> and the cone’s{" "}
+                      <span className="font-semibold">outcome dispersion</span>.
+                    </div>
+                    <div className="text-foreground/70">
+                      It’s not a market call. It’s a survivability read on this parameter set.
+                    </div>
+                  </div>
+                </Tooltip>
+                <span className="text-foreground/70">:</span>
+                <span className="font-semibold">{st.label}</span>
+              </div>
 
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <div className="rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-3 py-1">
-              Volatility: <span className="text-[color:var(--accent)]">{volLabel(inputs.volLevel)}</span>
+              <div className="rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-3 py-1 text-foreground/70">
+                Volatility: <span className="text-[color:var(--accent)]">{volLabel(inputs.volLevel)}</span>
+              </div>
+
+              <div className="rounded-full border border-[color:var(--border)] px-3 py-1 text-foreground/70">
+                <Tooltip label="Horizon">
+                  Simulation window in trades. Higher volatility and higher risk compress the horizon.
+                </Tooltip>
+                <span className="ml-2">{horizonTrades !== null ? `${horizonTrades} trades` : "—"}</span>
+              </div>
+
+              <div className="rounded-full border border-[color:var(--border)] px-3 py-1 text-foreground/70">Paths: 1,500</div>
+
+              <button
+                type="button"
+                onClick={shareScenario}
+                className={[
+                  "rounded-full border px-3 py-1 transition",
+                  shared
+                    ? "border-emerald-700/40 bg-emerald-600/10 text-emerald-200"
+                    : "border-[color:var(--border)] bg-transparent text-foreground/70 hover:bg-white/5 hover:text-foreground",
+                ].join(" ")}
+              >
+                {shared ? "Link copied" : "Share"}
+              </button>
             </div>
 
-            <div className="rounded-full border border-[color:var(--border)] px-3 py-1">
-              <Tooltip label="Horizon">
-                Simulation window in trades. Higher volatility and higher risk compress the horizon.
-              </Tooltip>
-              <span className="ml-2">{horizonTrades !== null ? `${horizonTrades} trades` : "—"}</span>
+            <div className="space-y-1">
+              <div className="text-sm text-foreground/80">{line1}</div>
+              <div className="text-sm text-foreground/60">{line2}</div>
+              <div className="text-sm text-foreground/70">{st.blurb}</div>
             </div>
-
-            <div className="rounded-full border border-[color:var(--border)] px-3 py-1">Paths: 1,500</div>
-
-            <button
-              type="button"
-              onClick={copyLink}
-              className={[
-                "rounded-full border px-3 py-1 transition",
-                copied
-                  ? "border-emerald-700/40 bg-emerald-600/10 text-emerald-200"
-                  : "border-[color:var(--border)] bg-transparent text-foreground/70 hover:bg-white/5 hover:text-foreground",
-              ].join(" ")}
-            >
-              {copied ? "Copied" : "Copy link"}
-            </button>
           </div>
 
           <EquityCone bands={primary.result?.bands ?? null} height={240} />
@@ -427,7 +516,7 @@ export default function RiskClient() {
         <section className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-6 flex justify-between items-center">
           <div>
             <div className="text-sm">Track this live with your actual positions.</div>
-            <div className="text-xs text-foreground/55 mt-1">Smoothed updates. Regime state. Recompute cadence.</div>
+            <div className="text-xs text-foreground/55 mt-1">Smoothed updates. Regime-style labeling. Recompute cadence.</div>
           </div>
           <a href="/risk-engine" className="oc-btn oc-btn-primary">
             Open Position Risk
