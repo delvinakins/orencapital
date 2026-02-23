@@ -49,6 +49,10 @@ function useAnimatedNumber(target: number, durationMs = 420) {
   return display;
 }
 
+function volLabel(v: VolLevel) {
+  return v === "LOW" ? "Low" : v === "MED" ? "Med" : v === "HIGH" ? "High" : "Extreme";
+}
+
 function Segmented({
   value,
   onChange,
@@ -216,6 +220,8 @@ export default function RiskClient() {
   const animatedPct = useAnimatedNumber(dd50Risk * 100);
   const benchmark = useMemo(() => benchText(dd50Risk), [dd50Risk]);
 
+  const horizonTrades = primary.result?.horizonTrades ?? null;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -231,7 +237,7 @@ export default function RiskClient() {
 
       {/* Dominant number */}
       <section className="oc-glass rounded-xl border border-[color:var(--border)] p-6">
-        <div className="flex items-end justify-between gap-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <div className="text-xs tracking-[0.22em] text-foreground/50">RISK</div>
             <div className="mt-2 flex items-baseline gap-3">
@@ -242,27 +248,31 @@ export default function RiskClient() {
             </div>
             <div className="mt-2 text-sm text-foreground/70">{benchmark}</div>
 
+            {/* Always-visible horizon + volatility */}
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-foreground/55">
+              <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
+                Volatility: <span className="text-foreground/80">{volLabel(inputs.volLevel)}</span>
+              </div>
+              <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
+                Horizon:{" "}
+                <span className="text-foreground/80">
+                  {horizonTrades !== null ? `${horizonTrades} trades` : "—"}
+                </span>
+              </div>
+              <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
+                Paths: <span className="text-foreground/80">1,500</span>
+              </div>
+            </div>
+
             {(primary.isComputing || primary.error) && (
               <div className="mt-2 text-xs text-foreground/50">
                 {primary.isComputing ? "Recomputing…" : primary.error}
               </div>
             )}
           </div>
-
-          <div className="hidden sm:flex flex-col items-end gap-2 text-xs text-foreground/55">
-            <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
-              Horizon:{" "}
-              <span className="text-foreground/80">
-                {primary.result ? `${primary.result.horizonTrades} trades` : "—"}
-              </span>
-            </div>
-            <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
-              Paths: <span className="text-foreground/80">1,500</span>
-            </div>
-          </div>
         </div>
 
-        {/* Cone placeholder (bands computed in worker) */}
+        {/* Cone placeholder */}
         <div className="mt-6 rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-4">
           <div className="flex items-center justify-between">
             <div className="text-xs tracking-[0.22em] text-foreground/50">EQUITY CONE</div>
