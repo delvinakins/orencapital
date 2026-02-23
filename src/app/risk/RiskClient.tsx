@@ -193,49 +193,20 @@ function endWidth(b: Bands | null) {
 }
 
 function stateFrom(dd50: number, bands: Bands | null) {
-  const w = endWidth(bands); // relative equity width at horizon
+  const w = endWidth(bands);
   const width = w ?? 0.7;
 
-  // Clinical mapping:
-  // - dd50 answers: "how often do we hit -50% before horizon?"
-  // - width answers: "how path-dependent are outcomes?"
-  //
-  // We use both. Precedence: extreme risk first.
-  if (dd50 >= 0.55 || width >= 1.0) {
-    return {
-      label: "Stress",
-      tone: "stress" as const,
-      blurb: "Survival is sequence-dependent. Small errors compound fast.",
-    };
-  }
-
-  if (dd50 >= 0.40 || width >= 0.85) {
-    return {
-      label: "Accelerated",
-      tone: "warn" as const,
-      blurb: "Drawdown velocity is high. Variance dominates the path.",
-    };
-  }
-
-  if (dd50 >= 0.20 || width >= 0.60) {
-    return {
-      label: "Recovery-dependent",
-      tone: "neutral" as const,
-      blurb: "Edge may be positive, but the next streak determines the outcome.",
-    };
-  }
-
-  return {
-    label: "Stable",
-    tone: "good" as const,
-    blurb: "Outcomes are more controllable. Drawdowns are less likely to cascade.",
-  };
+  if (dd50 >= 0.55 || width >= 1.0) return { label: "Stress", tone: "stress" as const, blurb: "Survival is sequence-dependent. Small errors compound fast." };
+  if (dd50 >= 0.40 || width >= 0.85) return { label: "Accelerated", tone: "warn" as const, blurb: "Drawdown velocity is high. Variance dominates the path." };
+  if (dd50 >= 0.20 || width >= 0.60)
+    return { label: "Recovery-dependent", tone: "neutral" as const, blurb: "Edge may be positive, but the next streak determines the outcome." };
+  return { label: "Stable", tone: "good" as const, blurb: "Outcomes are more controllable. Drawdowns are less likely to cascade." };
 }
 
 function parseVol(v: string | null): VolLevel | null {
   if (!v) return null;
   const up = v.toUpperCase();
-  if (up === "LOW" || up === "MED" || up === "HIGH" || up === "EXTREME") return up;
+  if (up === "LOW" || up === "MED" || up === "HIGH" || up === "EXTREME") return up as VolLevel;
   return null;
 }
 
@@ -308,6 +279,21 @@ export default function RiskClient() {
     }));
   }, []);
 
+  // Persist assumptions for dashboard use (win rate / avgR / vol)
+  useEffect(() => {
+    try {
+      const payload = {
+        winRatePct: inputs.winRatePct,
+        avgR: inputs.avgR,
+        volLevel: inputs.volLevel,
+        updatedAt: new Date().toISOString(),
+      };
+      localStorage.setItem("oc_survivability_assumptions", JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+  }, [inputs.winRatePct, inputs.avgR, inputs.volLevel]);
+
   // Debounce simulations
   const [debounced, setDebounced] = useState(inputs);
   useEffect(() => {
@@ -328,10 +314,7 @@ export default function RiskClient() {
     };
   }, [inputs]);
 
-  const lowerRiskPct = useMemo(
-    () => clamp(inputs.riskPerTradePct * 0.7, 0.1, inputs.riskPerTradePct),
-    [inputs.riskPerTradePct]
-  );
+  const lowerRiskPct = useMemo(() => clamp(inputs.riskPerTradePct * 0.7, 0.1, inputs.riskPerTradePct), [inputs.riskPerTradePct]);
 
   const primary = useRiskWorker();
   const lower = useRiskWorker();
@@ -387,7 +370,7 @@ export default function RiskClient() {
       setShared(true);
       window.setTimeout(() => setShared(false), 1200);
     } catch {
-      // clipboard can be blocked; keep UI quiet for V1
+      // keep quiet
     }
   }
 
@@ -409,7 +392,6 @@ export default function RiskClient() {
             <div className="pb-3 text-sm text-foreground/60">to -50%</div>
           </div>
 
-          {/* state + benchmark lines (instrument feel) */}
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 ${stateClass}`}>
@@ -419,9 +401,7 @@ export default function RiskClient() {
                       A qualitative label derived from <span className="font-semibold">DD50 probability</span> and the cone’s{" "}
                       <span className="font-semibold">outcome dispersion</span>.
                     </div>
-                    <div className="text-foreground/70">
-                      It’s not a market call. It’s a survivability read on this parameter set.
-                    </div>
+                    <div className="text-foreground/70">It’s not a market call. It’s a survivability read on this parameter set.</div>
                   </div>
                 </Tooltip>
                 <span className="text-foreground/70">:</span>
@@ -433,9 +413,7 @@ export default function RiskClient() {
               </div>
 
               <div className="rounded-full border border-[color:var(--border)] px-3 py-1 text-foreground/70">
-                <Tooltip label="Horizon">
-                  Simulation window in trades. Higher volatility and higher risk compress the horizon.
-                </Tooltip>
+                <Tooltip label="Horizon">Simulation window in trades. Higher volatility and higher risk compress the horizon.</Tooltip>
                 <span className="ml-2">{horizonTrades !== null ? `${horizonTrades} trades` : "—"}</span>
               </div>
 
@@ -516,7 +494,7 @@ export default function RiskClient() {
         <section className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-6 flex justify-between items-center">
           <div>
             <div className="text-sm">Track this live with your actual positions.</div>
-            <div className="text-xs text-foreground/55 mt-1">Smoothed updates. Regime-style labeling. Recompute cadence.</div>
+            <div className="text-xs text-foreground/55 mt-1">Smoothed updates. State label. Recompute cadence.</div>
           </div>
           <a href="/risk-engine" className="oc-btn oc-btn-primary">
             Open Position Risk
