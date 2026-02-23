@@ -79,7 +79,12 @@ function Segmented({
             className={[
               "rounded-lg px-3 py-2 text-xs transition",
               active
-                ? "border border-emerald-400/50 bg-emerald-500/15 text-emerald-200 shadow-[0_0_0_1px_rgba(52,211,153,0.18)]"
+                ? [
+                    "border border-[color:var(--accent)]",
+                    "bg-[color:var(--accent)]/15",
+                    "text-[color:var(--accent)]",
+                    "shadow-[0_0_0_2px_var(--accent-glow)]",
+                  ].join(" ")
                 : "text-foreground/70 hover:bg-black/20",
             ].join(" ")}
           >
@@ -113,7 +118,7 @@ function SliderField({
   const decimals = step < 1 ? (step < 0.1 ? 2 : 1) : 0;
 
   return (
-    <div className="oc-glass rounded-xl border border-[color:var(--border)] p-5">
+    <div className="oc-glass rounded-xl p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="text-sm text-foreground/80">
           {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
@@ -141,7 +146,8 @@ function SliderField({
           step={step}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="w-full accent-foreground"
+          className="w-full"
+          style={{ accentColor: "var(--accent)" }}
         />
         <div className="mt-2 flex justify-between text-[11px] text-foreground/50">
           <span>
@@ -233,7 +239,7 @@ export default function RiskClient() {
         </div>
       </div>
 
-      <section className="oc-glass rounded-xl border border-[color:var(--border)] p-6">
+      <section className="oc-glass rounded-xl p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <div className="text-xs tracking-[0.22em] text-foreground/50">RISK</div>
@@ -245,13 +251,14 @@ export default function RiskClient() {
             </div>
             <div className="mt-2 text-sm text-foreground/70">{benchmark}</div>
 
-            {/* Horizon + Volatility row with controlled accent */}
+            {/* info row: token-driven, consistent with your system */}
             <div className="mt-3 flex flex-wrap gap-2 text-xs">
-              <div className="rounded-full border border-emerald-400/25 bg-emerald-500/10 px-3 py-1 text-emerald-200/90">
-                Volatility: <span className="tabular-nums">{volLabel(inputs.volLevel)}</span>
+              <div className="rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-3 py-1 text-foreground/70">
+                Volatility:{" "}
+                <span className="text-[color:var(--accent)] tabular-nums">{volLabel(inputs.volLevel)}</span>
               </div>
 
-              <div className="rounded-full border border-emerald-400/15 bg-[color:var(--card)] px-3 py-1 text-foreground/60">
+              <div className="rounded-full border border-[color:var(--accent)]/20 bg-[color:var(--card)] px-3 py-1 text-foreground/70">
                 <Tooltip label="Horizon">
                   <div className="space-y-2">
                     <div>The simulation window, expressed in trades.</div>
@@ -265,14 +272,14 @@ export default function RiskClient() {
                 </Tooltip>
                 <span className="ml-2">
                   <span className="text-foreground/50">:</span>{" "}
-                  <span className="text-foreground/80 tabular-nums">
+                  <span className="text-foreground tabular-nums">
                     {horizonTrades !== null ? `${horizonTrades} trades` : "—"}
                   </span>
                 </span>
               </div>
 
-              <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1 text-foreground/60">
-                Paths: <span className="text-foreground/80">1,500</span>
+              <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1 text-foreground/70">
+                Paths: <span className="text-foreground tabular-nums">1,500</span>
               </div>
             </div>
 
@@ -313,7 +320,7 @@ export default function RiskClient() {
                 volLevel: "MED",
               })
             }
-            className="h-10 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-xs text-foreground/70 hover:text-foreground"
+            className="oc-btn oc-btn-secondary h-10 px-4 py-2 text-xs"
           >
             Reset
           </button>
@@ -353,7 +360,7 @@ export default function RiskClient() {
             tip={<div>Average win size relative to average loss (loss is 1R).</div>}
           />
 
-          <div className="oc-glass rounded-xl border border-[color:var(--border)] p-5">
+          <div className="oc-glass rounded-xl p-5">
             <div className="text-sm text-foreground/80">
               <Tooltip label="Volatility level">
                 <div className="space-y-2">
@@ -374,7 +381,7 @@ export default function RiskClient() {
         </div>
       </section>
 
-      <section className="oc-glass rounded-xl border border-[color:var(--border)] p-6">
+      <section className="oc-glass rounded-xl p-6">
         <div className="text-xs tracking-[0.22em] text-foreground/50">REDUCE RISK</div>
         <div className="mt-3 text-sm text-foreground/75">
           If you reduce risk per trade to{" "}
@@ -399,16 +406,10 @@ export default function RiskClient() {
           </div>
 
           <div className="flex gap-2">
-            <a
-              href="/portfolio"
-              className="h-11 rounded-lg bg-foreground px-4 py-3 text-sm font-medium text-background hover:opacity-90"
-            >
+            <a href="/portfolio" className="oc-btn oc-btn-primary">
               Open Dashboard
             </a>
-            <a
-              href="/pricing"
-              className="h-11 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-3 text-sm text-foreground/80 hover:text-foreground"
-            >
+            <a href="/pricing" className="oc-btn oc-btn-secondary">
               Pricing
             </a>
           </div>
