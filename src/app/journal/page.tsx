@@ -48,15 +48,28 @@ function pct(v: number | null) {
   return `${Math.round(v * 1000) / 10}%`; // risk_pct is decimal; display percent
 }
 
-function clsStatus(status: string) {
-  const s = (status || "").toUpperCase();
-  if (s === "OPEN") return "text-[#2BCB77]"; // pine
-  if (s === "CLOSED") return "text-zinc-300";
-  return "text-amber-300";
+function clsPill(base: string) {
+  return `inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold tracking-wide ${base}`;
 }
 
-function clsPill(base: string) {
-  return `inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${base}`;
+function statusPill(statusRaw: string | null) {
+  const s = (statusRaw || "OPEN").toUpperCase();
+  if (s === "OPEN") {
+    return clsPill("border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]");
+  }
+  if (s === "CLOSED") {
+    return clsPill("border-white/10 bg-white/5 text-slate-200");
+  }
+  return clsPill("border-amber-200/20 bg-amber-400/10 text-amber-200");
+}
+
+function fieldCls(hasErr: boolean) {
+  return [
+    "mt-1 w-full rounded-xl border bg-[color:var(--card)] px-3 py-2 text-sm text-foreground outline-none placeholder:text-foreground/30",
+    hasErr
+      ? "border-amber-400/40 focus:border-amber-400/55"
+      : "border-[color:var(--border)] focus:border-[color:var(--accent)]/55",
+  ].join(" ");
 }
 
 export default function JournalPage() {
@@ -246,96 +259,95 @@ export default function JournalPage() {
     }
   }
 
+  const fe = fieldErrors ?? {};
+  const has = (k: string) => typeof fe?.[k] === "string" && fe[k].length > 0;
+
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="mx-auto w-full max-w-6xl px-4 py-8">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight">Journal</h1>
-          <p className="text-sm text-zinc-400">
-            Trades feed Portfolio discipline metrics automatically. No signals. No alerts.
-          </p>
-        </div>
+    <main className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-10 sm:py-16 space-y-8 sm:space-y-10">
+        {/* Header */}
+        <header className="space-y-2">
+          <h1 className="text-3xl font-semibold tracking-tight">Journal</h1>
+          <p className="text-sm text-foreground/70">Trades feed Portfolio discipline metrics automatically. No signals. No alerts.</p>
+        </header>
 
         {/* Status strip */}
-        <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div className="oc-glass rounded-2xl border border-white/10 p-4">
-            <div className="text-xs text-zinc-400">Open trades</div>
-            <div className="mt-1 text-xl font-semibold">{loading ? "—" : openTrades.length}</div>
+        <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="oc-glass rounded-2xl p-5">
+            <div className="text-xs tracking-[0.22em] text-foreground/50">OPEN</div>
+            <div className="mt-2 text-3xl font-semibold tabular-nums">{loading ? "—" : openTrades.length}</div>
           </div>
-          <div className="oc-glass rounded-2xl border border-white/10 p-4">
-            <div className="text-xs text-zinc-400">Closed trades</div>
-            <div className="mt-1 text-xl font-semibold">{loading ? "—" : closedTrades.length}</div>
+
+          <div className="oc-glass rounded-2xl p-5">
+            <div className="text-xs tracking-[0.22em] text-foreground/50">CLOSED</div>
+            <div className="mt-2 text-3xl font-semibold tabular-nums">{loading ? "—" : closedTrades.length}</div>
           </div>
-          <div className="oc-glass rounded-2xl border border-white/10 p-4">
-            <div className="text-xs text-zinc-400">Sync</div>
-            <div className="mt-1 text-sm text-zinc-300">
-              {loading ? "Loading…" : "Live (journal-derived)"}
+
+          <div className="oc-glass rounded-2xl p-5">
+            <div className="text-xs tracking-[0.22em] text-foreground/50">SYNC</div>
+            <div className="mt-2 text-sm text-foreground/70">
+              {loading ? "Loading…" : <span className="text-foreground/80">Live (journal-derived)</span>}
             </div>
+            <div className="mt-2 text-xs text-foreground/50">Manual refresh available.</div>
           </div>
-        </div>
+        </section>
 
         {/* Error banner */}
         {(error || fieldErrors) && (
-          <div className="mt-6 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4">
-            <div className="text-sm font-medium text-amber-200">Attention</div>
-            {error && <div className="mt-1 text-sm text-amber-100/90">{error}</div>}
+          <section className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-5">
+            <div className="text-sm font-semibold text-amber-200">Attention</div>
+            {error && <div className="mt-2 text-sm text-amber-100/90">{error}</div>}
             {fieldErrors && (
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-100/90">
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-100/90">
                 {Object.entries(fieldErrors).map(([k, v]) => (
                   <li key={k}>
-                    <span className="font-medium">{k}:</span> {v}
+                    <span className="font-semibold">{k}:</span> {v}
                   </li>
                 ))}
               </ul>
             )}
-          </div>
+          </section>
         )}
 
         {/* Create trade */}
-        <div className="mt-6 oc-glass rounded-2xl border border-white/10 p-5">
-          <div className="flex items-center justify-between gap-3">
+        <section className="oc-glass rounded-2xl p-6 space-y-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <div className="text-sm font-semibold">New trade</div>
-              <div className="mt-1 text-xs text-zinc-400">
-                Risk % is stored as a decimal (0.01 = 1%). You can type <span className="text-zinc-200">1</span> or{" "}
-                <span className="text-zinc-200">0.01</span>.
+              <div className="text-lg font-semibold">New trade</div>
+              <div className="mt-1 text-xs text-foreground/55">
+                Risk % is stored as a decimal (0.01 = 1%). You can type{" "}
+                <span className="text-foreground/80 tabular-nums">1</span> or{" "}
+                <span className="text-foreground/80 tabular-nums">0.01</span>.
               </div>
             </div>
-            <div className={clsPill("border-white/10 bg-white/5 text-zinc-300")}>
+
+            <div className={clsPill("border-[color:var(--accent)]/20 bg-[color:var(--accent)]/10 text-foreground/80")}>
               Pine = disciplined
             </div>
           </div>
 
-          <form onSubmit={onCreateTrade} className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-12">
+          <form onSubmit={onCreateTrade} className="grid grid-cols-1 gap-3 md:grid-cols-12">
             <div className="md:col-span-3">
-              <label className="text-xs text-zinc-400">Symbol</label>
+              <label className="text-xs text-foreground/60">Symbol</label>
               <input
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value)}
                 placeholder="AAPL"
-                className="mt-1 w-full rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-[#2BCB77]/50"
+                className={fieldCls(has("symbol"))}
               />
             </div>
 
             <div className="md:col-span-2">
-              <label className="text-xs text-zinc-400">Direction</label>
-              <select
-                value={direction}
-                onChange={(e) => setDirection(e.target.value as any)}
-                className="mt-1 w-full rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2 text-sm outline-none focus:border-[#2BCB77]/50"
-              >
+              <label className="text-xs text-foreground/60">Direction</label>
+              <select value={direction} onChange={(e) => setDirection(e.target.value as any)} className={fieldCls(has("direction"))}>
                 <option value="LONG">LONG</option>
                 <option value="SHORT">SHORT</option>
               </select>
             </div>
 
             <div className="md:col-span-3">
-              <label className="text-xs text-zinc-400">Market</label>
-              <select
-                value={market}
-                onChange={(e) => setMarket(e.target.value as any)}
-                className="mt-1 w-full rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2 text-sm outline-none focus:border-[#2BCB77]/50"
-              >
+              <label className="text-xs text-foreground/60">Market</label>
+              <select value={market} onChange={(e) => setMarket(e.target.value as any)} className={fieldCls(has("market"))}>
                 <option value="STOCKS">STOCKS</option>
                 <option value="OPTIONS">OPTIONS</option>
                 <option value="FUTURES">FUTURES</option>
@@ -344,66 +356,66 @@ export default function JournalPage() {
             </div>
 
             <div className="md:col-span-2">
-              <label className="text-xs text-zinc-400">Entry</label>
+              <label className="text-xs text-foreground/60">Entry</label>
               <input
                 value={entry}
                 onChange={(e) => setEntry(e.target.value)}
                 placeholder="195.25"
                 inputMode="decimal"
-                className="mt-1 w-full rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-[#2BCB77]/50"
+                className={fieldCls(has("entry"))}
               />
             </div>
 
             <div className="md:col-span-2">
-              <label className="text-xs text-zinc-400">Stop</label>
+              <label className="text-xs text-foreground/60">Stop</label>
               <input
                 value={stop}
                 onChange={(e) => setStop(e.target.value)}
                 placeholder="190.00"
                 inputMode="decimal"
-                className="mt-1 w-full rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-[#2BCB77]/50"
+                className={fieldCls(has("stop"))}
               />
             </div>
 
             <div className="md:col-span-3">
-              <label className="text-xs text-zinc-400">Position size</label>
+              <label className="text-xs text-foreground/60">Position size</label>
               <input
                 value={positionSize}
                 onChange={(e) => setPositionSize(e.target.value)}
                 placeholder="100"
                 inputMode="decimal"
-                className="mt-1 w-full rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-[#2BCB77]/50"
+                className={fieldCls(has("position_size"))}
               />
             </div>
 
             <div className="md:col-span-3">
-              <label className="text-xs text-zinc-400">Risk %</label>
+              <label className="text-xs text-foreground/60">Risk %</label>
               <input
                 value={riskPct}
                 onChange={(e) => setRiskPct(e.target.value)}
                 placeholder="1  (or 0.01)"
                 inputMode="decimal"
-                className="mt-1 w-full rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-[#2BCB77]/50"
+                className={fieldCls(has("risk_pct"))}
               />
             </div>
 
             <div className="md:col-span-3">
-              <label className="text-xs text-zinc-400">Strategy tag</label>
+              <label className="text-xs text-foreground/60">Strategy tag</label>
               <input
                 value={strategyTag}
                 onChange={(e) => setStrategyTag(e.target.value)}
                 placeholder="Breakout / Mean reversion / etc."
-                className="mt-1 w-full rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-[#2BCB77]/50"
+                className={fieldCls(has("strategy_tag"))}
               />
             </div>
 
             <div className="md:col-span-9">
-              <label className="text-xs text-zinc-400">Notes</label>
+              <label className="text-xs text-foreground/60">Notes</label>
               <input
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Context, rule adherence, what you’ll do next time."
-                className="mt-1 w-full rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-[#2BCB77]/50"
+                className={fieldCls(has("notes"))}
               />
             </div>
 
@@ -412,61 +424,55 @@ export default function JournalPage() {
                 type="button"
                 onClick={loadTrades}
                 disabled={loading || saving}
-                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-zinc-200 hover:bg-white/10 disabled:opacity-50"
+                className="oc-btn oc-btn-secondary disabled:opacity-60"
               >
                 Refresh
               </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="rounded-xl border border-[#2BCB77]/30 bg-[#2BCB77]/10 px-4 py-2 text-sm text-[#2BCB77] hover:bg-[#2BCB77]/15 disabled:opacity-50"
-              >
+              <button type="submit" disabled={saving} className="oc-btn oc-btn-outline-accent disabled:opacity-60">
                 {saving ? "Saving…" : "Add trade"}
               </button>
             </div>
           </form>
-        </div>
+        </section>
 
-        {/* Trades table */}
-        <div className="mt-6 oc-glass rounded-2xl border border-white/10 p-5">
-          <div className="flex items-center justify-between gap-3">
+        {/* Trades */}
+        <section className="oc-glass rounded-2xl p-6 space-y-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <div className="text-sm font-semibold">Trades</div>
-              <div className="mt-1 text-xs text-zinc-400">
-                Close trades to unlock outcomes (R-multiple, drawdown, expectancy).
-              </div>
+              <div className="text-lg font-semibold">Trades</div>
+              <div className="mt-1 text-xs text-foreground/55">Close trades to unlock outcomes (R-multiple, drawdown, expectancy).</div>
             </div>
-            <div className={clsPill("border-white/10 bg-white/5 text-zinc-300")}>
-              Amber = attention
-            </div>
+
+            <div className={clsPill("border-amber-200/20 bg-amber-400/10 text-amber-200")}>Amber = attention</div>
           </div>
 
-          <div className="mt-4 overflow-x-auto">
+          <div className="overflow-x-auto">
             <table className="min-w-full border-separate border-spacing-0">
               <thead>
-                <tr className="text-left text-xs text-zinc-400">
-                  <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Symbol</th>
-                  <th className="py-2 pr-4">Dir</th>
-                  <th className="py-2 pr-4">Market</th>
-                  <th className="py-2 pr-4">Entry</th>
-                  <th className="py-2 pr-4">Stop</th>
-                  <th className="py-2 pr-4">Risk %</th>
-                  <th className="py-2 pr-4">Tag</th>
-                  <th className="py-2 pr-4">Created</th>
-                  <th className="py-2 pr-0 text-right">Action</th>
+                <tr className="text-left text-[11px] tracking-wide text-foreground/55">
+                  <th className="py-2 pr-4 font-semibold">STATUS</th>
+                  <th className="py-2 pr-4 font-semibold">SYMBOL</th>
+                  <th className="py-2 pr-4 font-semibold">DIR</th>
+                  <th className="py-2 pr-4 font-semibold">MARKET</th>
+                  <th className="py-2 pr-4 font-semibold">ENTRY</th>
+                  <th className="py-2 pr-4 font-semibold">STOP</th>
+                  <th className="py-2 pr-4 font-semibold">RISK %</th>
+                  <th className="py-2 pr-4 font-semibold">TAG</th>
+                  <th className="py-2 pr-4 font-semibold">CREATED</th>
+                  <th className="py-2 pr-0 text-right font-semibold">ACTION</th>
                 </tr>
               </thead>
+
               <tbody>
                 {loading ? (
                   <tr>
-                    <td className="py-4 text-sm text-zinc-400" colSpan={10}>
+                    <td className="py-4 text-sm text-foreground/60" colSpan={10}>
                       Loading…
                     </td>
                   </tr>
                 ) : trades.length === 0 ? (
                   <tr>
-                    <td className="py-4 text-sm text-zinc-400" colSpan={10}>
+                    <td className="py-4 text-sm text-foreground/60" colSpan={10}>
                       No trades yet.
                     </td>
                   </tr>
@@ -478,42 +484,31 @@ export default function JournalPage() {
                     return (
                       <React.Fragment key={t.id}>
                         <tr className="border-t border-white/5 text-sm">
-                          <td className={`py-3 pr-4 ${clsStatus(status)}`}>
-                            {status === "OPEN" ? (
-                              <span className={clsPill("border-[#2BCB77]/25 bg-[#2BCB77]/10 text-[#2BCB77]")}>
-                                OPEN
-                              </span>
-                            ) : status === "CLOSED" ? (
-                              <span className={clsPill("border-white/10 bg-white/5 text-zinc-300")}>
-                                CLOSED
-                              </span>
-                            ) : (
-                              <span className={clsPill("border-amber-400/25 bg-amber-400/10 text-amber-200")}>
-                                {status || "—"}
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3 pr-4 font-medium text-zinc-100">
+                          <td className="py-3 pr-4">{statusPill(t.status)}</td>
+
+                          <td className="py-3 pr-4 font-semibold text-foreground">
                             {(t.symbol || "—").toUpperCase()}
                           </td>
-                          <td className="py-3 pr-4 text-zinc-300">{(t.direction || "—").toUpperCase()}</td>
-                          <td className="py-3 pr-4 text-zinc-300">{(t.market || "STOCKS").toUpperCase()}</td>
-                          <td className="py-3 pr-4 text-zinc-300">{nOrDash(t.entry)}</td>
-                          <td className="py-3 pr-4 text-zinc-300">{nOrDash(t.stop)}</td>
-                          <td className="py-3 pr-4 text-zinc-300">{pct(t.risk_pct)}</td>
-                          <td className="py-3 pr-4 text-zinc-400">{t.strategy_tag || "—"}</td>
-                          <td className="py-3 pr-4 text-zinc-500">{fmtDate(t.created_at)}</td>
+
+                          <td className="py-3 pr-4 text-foreground/75">{(t.direction || "—").toUpperCase()}</td>
+                          <td className="py-3 pr-4 text-foreground/75">{(t.market || "STOCKS").toUpperCase()}</td>
+                          <td className="py-3 pr-4 text-foreground/75 tabular-nums">{nOrDash(t.entry)}</td>
+                          <td className="py-3 pr-4 text-foreground/75 tabular-nums">{nOrDash(t.stop)}</td>
+                          <td className="py-3 pr-4 text-foreground/75 tabular-nums">{pct(t.risk_pct)}</td>
+                          <td className="py-3 pr-4 text-foreground/60">{t.strategy_tag || "—"}</td>
+                          <td className="py-3 pr-4 text-foreground/50">{fmtDate(t.created_at)}</td>
+
                           <td className="py-3 pr-0 text-right">
                             {status === "OPEN" ? (
                               <button
                                 onClick={() => onStartClose(t.id)}
                                 disabled={saving}
-                                className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-200 hover:bg-white/10 disabled:opacity-50"
+                                className="oc-btn oc-btn-secondary h-9 px-3 text-xs disabled:opacity-60"
                               >
                                 Close
                               </button>
                             ) : (
-                              <span className="text-xs text-zinc-500">—</span>
+                              <span className="text-xs text-foreground/40">—</span>
                             )}
                           </td>
                         </tr>
@@ -521,37 +516,41 @@ export default function JournalPage() {
                         {isClosing && (
                           <tr className="border-t border-white/5">
                             <td colSpan={10} className="py-3">
-                              <div className="flex flex-col gap-3 rounded-2xl border border-amber-400/25 bg-amber-400/5 p-4 md:flex-row md:items-center md:justify-between">
-                                <div>
-                                  <div className="text-sm font-medium text-amber-200">Close trade</div>
-                                  <div className="mt-1 text-xs text-zinc-400">
-                                    Optional: add exit to compute R-multiple (if entry/stop exist).
+                              <div className="rounded-2xl border border-amber-400/25 bg-amber-400/5 p-5">
+                                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                  <div>
+                                    <div className="text-sm font-semibold text-amber-200">Close trade</div>
+                                    <div className="mt-1 text-xs text-foreground/55">
+                                      Optional: add exit to compute R-multiple (if entry/stop exist).
+                                    </div>
                                   </div>
-                                </div>
 
-                                <div className="flex flex-col gap-2 md:flex-row md:items-center">
-                                  <input
-                                    value={closeExit}
-                                    onChange={(e) => setCloseExit(e.target.value)}
-                                    placeholder="Exit (optional)"
-                                    inputMode="decimal"
-                                    className="w-full rounded-xl border border-white/10 bg-zinc-950/40 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-amber-400/40 md:w-44"
-                                  />
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      onClick={onCancelClose}
-                                      disabled={saving}
-                                      className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-200 hover:bg-white/10 disabled:opacity-50"
-                                    >
-                                      Cancel
-                                    </button>
-                                    <button
-                                      onClick={() => onConfirmClose(t)}
-                                      disabled={saving}
-                                      className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-sm text-amber-200 hover:bg-amber-400/15 disabled:opacity-50"
-                                    >
-                                      {saving ? "Closing…" : "Confirm close"}
-                                    </button>
+                                  <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                                    <input
+                                      value={closeExit}
+                                      onChange={(e) => setCloseExit(e.target.value)}
+                                      placeholder="Exit (optional)"
+                                      inputMode="decimal"
+                                      className="h-11 w-full rounded-xl border border-amber-400/25 bg-[color:var(--card)] px-3 text-sm text-foreground outline-none placeholder:text-foreground/30 focus:border-amber-400/40 md:w-44"
+                                    />
+
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        onClick={onCancelClose}
+                                        disabled={saving}
+                                        className="oc-btn oc-btn-secondary disabled:opacity-60"
+                                      >
+                                        Cancel
+                                      </button>
+                                      <button
+                                        onClick={() => onConfirmClose(t)}
+                                        disabled={saving}
+                                        className="oc-btn oc-btn-outline-accent disabled:opacity-60"
+                                        style={{ borderColor: "rgba(251,191,36,.35)", color: "rgb(253 230 138)" }}
+                                      >
+                                        {saving ? "Closing…" : "Confirm close"}
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
                               </div>
@@ -565,13 +564,12 @@ export default function JournalPage() {
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
 
-        {/* Small footer note */}
-        <div className="mt-6 text-xs text-zinc-500">
-          Discipline engine is journal-derived. Correlation/sector/beta clustering will arrive in Heat 2.0.
+        <div className="text-xs text-foreground/45">
+          Discipline engine is journal-derived. Correlation/sector/beta clustering will arrive later.
         </div>
       </div>
-    </div>
+    </main>
   );
 }
