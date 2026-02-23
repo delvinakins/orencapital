@@ -1,8 +1,8 @@
-import type { VolLevel, RiskResult, RiskSimInputs } from "./types";
+import type { SimulationInputs, SimulationResult, VolLevel } from "./types";
 
 /**
  * Resample an array y[0..(n-1)] to length m using linear interpolation.
- * Keeps endpoints stable and guarantees constant-length bands for smooth SVG morphing.
+ * Guarantees constant-length bands for stable SVG morphing.
  */
 function resampleLinear(y: number[], m: number) {
   const n = y.length;
@@ -54,8 +54,7 @@ function makeRng(seed: number) {
 }
 
 function volSigma(level: VolLevel) {
-  // Not price vol — regime intensity multiplier for outcome dispersion.
-  // Stable + stress mapping, kept simple for V1.
+  // Regime intensity multiplier for outcome dispersion.
   if (level === "LOW") return 0.55;
   if (level === "MED") return 0.85;
   if (level === "HIGH") return 1.15;
@@ -63,13 +62,11 @@ function volSigma(level: VolLevel) {
 }
 
 function horizonFromInputs(riskPerTrade: number, volLevel: VolLevel) {
-  // Dynamic, volatility-adjusted horizon in "trades".
-  // Higher vol + higher risk compresses horizon.
+  // Dynamic horizon in trades. Higher vol + higher risk compress horizon.
   const base = 220;
   const vol = volSigma(volLevel);
   const risk = clamp(riskPerTrade, 0.0005, 0.10);
 
-  // Compression curve (kept intentionally simple, smooth, and monotonic)
   const volFactor = 1 / (1 + 0.9 * (vol - 0.55)); // LOW≈1, EXT≈~0.52
   const riskFactor = 1 / (1 + 18 * risk);         // 1%->~0.85, 3%->~0.65, 5%->~0.53
 
@@ -88,7 +85,7 @@ function percentile(sorted: number[], p: number) {
   return sorted[i] + (sorted[j] - sorted[i]) * a;
 }
 
-export function simulate(inputs: RiskSimInputs): RiskResult {
+export function simulate(inputs: SimulationInputs): SimulationResult {
   const paths = Math.max(250, Math.min(10000, Math.floor(inputs.paths || 1500)));
 
   const riskPerTrade = clamp(inputs.riskPerTrade, 0.0005, 0.10);
@@ -96,16 +93,14 @@ export function simulate(inputs: RiskSimInputs): RiskResult {
   const avgR = clamp(inputs.avgR, 0.1, 10);
 
   const horizon = horizonFromInputs(riskPerTrade, inputs.volLevel);
-
-  // --- Model: trade returns in R units with regime dispersion ---
   const sigma = volSigma(inputs.volLevel);
 
-  // For each time step, collect ending equity across paths to build percentile bands
+  // Collect equity across paths at each time step to build percentile bands
   const eqAtT: number[][] = Array.from({ length: horizon + 1 }, () => new Array(paths).fill(1));
 
   let ddHits = 0;
 
-  // Seed changes with inputs so repeated UI toggles are stable-ish, but still "random enough"
+  // Deterministic-ish seed from inputs (stable feel)
   const seed =
     Math.floor(riskPerTrade * 1e6) ^
     Math.floor(winRate * 1e6) ^
@@ -125,17 +120,15 @@ export function simulate(inputs: RiskSimInputs): RiskResult {
     for (let t = 1; t <= horizon; t++) {
       const isWin = rng() < winRate;
 
-      // Add mild dispersion to R outcomes to reflect regime instability
-      // Wins: centered near avgR; Losses: centered near -1
+      // Mild dispersion to reflect regime instability (kept V1-simple)
       const noise = randn(rng) * 0.35 * sigma;
 
       const r = isWin ? Math.max(0, avgR + noise) : -Math.max(0, 1 + noise * 0.6);
 
       // Fractional risk applied to equity
-      // eq_{t+1} = eq_t * (1 + risk * r)
       eq = eq * (1 + riskPerTrade * r);
 
-      // Avoid negative equity in the visualization; floor tiny
+      // Visualization floor
       eq = Math.max(0.02, eq);
 
       peak = Math.max(peak, eq);
@@ -149,7 +142,7 @@ export function simulate(inputs: RiskSimInputs): RiskResult {
     if (hit) ddHits += 1;
   }
 
-  // Build percentile bands per time step
+  // Percentile bands per step
   const p05: number[] = new Array(horizon + 1);
   const p25: number[] = new Array(horizon + 1);
   const p50: number[] = new Array(horizon + 1);
@@ -160,24 +153,23 @@ export function simulate(inputs: RiskSimInputs): RiskResult {
     const arr = eqAtT[t].slice().sort((a, b) => a - b);
     p05[t] = percentile(arr, 0.05);
     p25[t] = percentile(arr, 0.25);
-    p50[t] = percentile(arr, 0.50);
+    p50[t] = percentile(arr, 0.5);
     p75[t] = percentile(arr, 0.75);
     p95[t] = percentile(arr, 0.95);
   }
 
-  // --- Critical: resample to fixed resolution so SVG morph is stable ---
-  const RES = 121; // fixed points (0..horizon mapped)
-  const bands = {
-    p05: resampleLinear(p05, RES),
-    p25: resampleLinear(p25, RES),
-    p50: resampleLinear(p50, RES),
-    p75: resampleLinear(p75, RES),
-    p95: resampleLinear(p95, RES),
-  };
+  // Fixed resolution to eliminate cone jitter when horizon changes
+  const RES = 121;
 
   return {
     dd50Risk: ddHits / paths,
     horizonTrades: horizon,
-    bands,
+    bands: {
+      p05: resampleLinear(p05, RES),
+      p25: resampleLinear(p25, RES),
+      p50: resampleLinear(p50, RES),
+      p75: resampleLinear(p75, RES),
+      p95: resampleLinear(p95, RES),
+    },
   };
 }

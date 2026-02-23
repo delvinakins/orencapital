@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import { simulateMonteCarlo } from "./simulate";
+import { simulate } from "./simulate";
 import type { SimulationInputs, SimulationResult } from "./types";
 
 type WorkerRequest = {
@@ -23,11 +23,15 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
       return;
     }
 
-    const result = simulateMonteCarlo(msg.inputs);
+    const result = simulate(msg.inputs);
     const res: WorkerResponse = { id: msg.id, ok: true, result };
     self.postMessage(res);
   } catch (err: any) {
-    const res: WorkerResponse = { id: msg.id, ok: false, error: err?.message ?? "Worker error" };
+    const res: WorkerResponse = {
+      id: msg.id,
+      ok: false,
+      error: err?.message ?? "Worker error",
+    };
     self.postMessage(res);
   }
 };
