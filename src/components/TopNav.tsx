@@ -18,10 +18,12 @@ export default function TopNav() {
   const supabase = supabaseBrowser();
 
   const [email, setEmail] = useState<string | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [acctOpen, setAcctOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const acctRef = useRef<HTMLDivElement | null>(null);
+  const moreRef = useRef<HTMLDivElement | null>(null);
 
   const { isPro } = useProStatus(true);
 
@@ -40,6 +42,7 @@ export default function TopNav() {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         setAcctOpen(false);
+        setMoreOpen(false);
         setMobileOpen(false);
       }
     }
@@ -51,6 +54,7 @@ export default function TopNav() {
     function onClick(e: MouseEvent) {
       const t = e.target as Node;
       if (acctRef.current && !acctRef.current.contains(t)) setAcctOpen(false);
+      if (moreRef.current && !moreRef.current.contains(t)) setMoreOpen(false);
     }
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
@@ -82,27 +86,39 @@ export default function TopNav() {
                 <BrandMark className="h-8 w-8" />
                 <span className="pointer-events-none absolute -inset-2 rounded-full bg-emerald-600/10 blur-xl opacity-0 transition-opacity group-hover:opacity-100" />
               </span>
-
               <span className="text-base font-semibold tracking-tight text-white">
                 Oren <span className="text-slate-300">Capital</span>
               </span>
             </Link>
 
             {/* DESKTOP LINKS */}
-            <div className="hidden lg:flex items-center gap-1 text-sm text-slate-300">
-              <NavLink href="/risk" label="DD50 Risk" />
-              <NavLink href="/risk-engine" label="Risk Engine" />
-              <NavLink href="/variance" label="Simulator" />
+            <div className="hidden lg:flex items-center gap-5 text-sm text-slate-300">
+              <NavLink href="/risk" label="Survivability" />
+              <NavLink href="/risk-engine" label="Position Risk" />
 
-              <span className="mx-2 h-4 w-px bg-white/10" />
+              <div className="relative" ref={moreRef}>
+                <button
+                  onClick={() => setMoreOpen((v) => !v)}
+                  className="inline-flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-white/5 hover:text-white"
+                  aria-expanded={moreOpen}
+                  aria-label="More menu"
+                >
+                  More <span className="text-slate-500">▾</span>
+                </button>
 
-              <NavLink href="/portfolio" label="Portfolio" />
-              <NavLink href="/journal" label="Journal" />
-
-              <span className="mx-2 h-4 w-px bg-white/10" />
-
-              <NavLink href={labsHref} label={labsLabel} />
-              <NavLink href="/pricing" label="Pricing" />
+                {moreOpen && (
+                  <div
+                    className={`absolute left-0 mt-3 w-56 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}
+                  >
+                    <MenuItem href="/variance" label="Simulator" onClick={() => setMoreOpen(false)} />
+                    <MenuItem href="/portfolio" label="Portfolio" onClick={() => setMoreOpen(false)} />
+                    <MenuItem href="/journal" label="Journal" onClick={() => setMoreOpen(false)} />
+                    <MenuItem href={labsHref} label={labsLabel} onClick={() => setMoreOpen(false)} />
+                    <div className={`my-1 h-px ${border}`} />
+                    <MenuItem href="/pricing" label="Pricing" onClick={() => setMoreOpen(false)} />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -143,8 +159,8 @@ export default function TopNav() {
 
                 {acctOpen && (
                   <div className={`absolute right-0 mt-3 w-52 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
-                    <MenuItem href="/account" label="Account" />
-                    <MenuItem href="/account/billing" label="Billing" />
+                    <MenuItem href="/account" label="Account" onClick={() => setAcctOpen(false)} />
+                    <MenuItem href="/account/billing" label="Billing" onClick={() => setAcctOpen(false)} />
                     <div className={`my-1 h-px ${border}`} />
                     <button
                       onClick={logout}
@@ -176,26 +192,15 @@ export default function TopNav() {
           <div className="fixed left-0 right-0 top-16 z-50 px-4 pb-4">
             <div className={`overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
               <div className="p-2 flex flex-col gap-1">
-                <MobileItem href="/risk" label="DD50 Risk" onClick={() => setMobileOpen(false)} />
-                <MobileItem href="/risk-engine" label="Risk Engine" onClick={() => setMobileOpen(false)} />
+                <MobileItem href="/risk" label="Survivability" onClick={() => setMobileOpen(false)} />
+                <MobileItem href="/risk-engine" label="Position Risk" onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/variance" label="Simulator" onClick={() => setMobileOpen(false)} />
-
-                <div className="my-1 h-px bg-white/10" />
-
                 <MobileItem href="/portfolio" label="Portfolio" onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/journal" label="Journal" onClick={() => setMobileOpen(false)} />
-
-                <div className="my-1 h-px bg-white/10" />
-
                 <MobileItem href={labsHref} label={labsLabel} onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/pricing" label="Pricing" onClick={() => setMobileOpen(false)} />
 
-                {!signedIn && (
-                  <>
-                    <div className="my-1 h-px bg-white/10" />
-                    <MobileItem href="/login" label="Login" onClick={() => setMobileOpen(false)} />
-                  </>
-                )}
+                {!signedIn && <MobileItem href="/login" label="Login" onClick={() => setMobileOpen(false)} />}
               </div>
             </div>
           </div>
@@ -213,9 +218,13 @@ function NavLink({ href, label }: { href: string; label: string }) {
   );
 }
 
-function MenuItem({ href, label }: { href: string; label: string }) {
+function MenuItem({ href, label, onClick }: { href: string; label: string; onClick?: () => void }) {
   return (
-    <Link href={href} className="block px-4 py-2.5 text-sm text-slate-300 hover:bg-white/5 hover:text-white">
+    <Link
+      href={href}
+      onClick={onClick}
+      className="block px-4 py-2.5 text-sm text-slate-300 hover:bg-white/5 hover:text-white"
+    >
       {label}
     </Link>
   );

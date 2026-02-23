@@ -233,7 +233,7 @@ export default function RiskClient() {
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-6xl px-4 sm:px-6 py-10 sm:py-16 space-y-8 sm:space-y-10">
         <header>
-          <h1 className="text-3xl font-semibold tracking-tight">50% Drawdown Risk</h1>
+          <h1 className="text-3xl font-semibold tracking-tight">Survivability</h1>
           <p className="mt-2 text-sm text-foreground/70">
             Probability of hitting <span className="text-foreground">-50% equity</span> before a volatility-adjusted horizon.
           </p>
