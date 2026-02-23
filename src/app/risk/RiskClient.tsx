@@ -49,10 +49,6 @@ function useAnimatedNumber(target: number, durationMs = 420) {
   return display;
 }
 
-function volLabel(v: VolLevel) {
-  return v === "LOW" ? "Low" : v === "MED" ? "Med" : v === "HIGH" ? "High" : "Extreme";
-}
-
 function Segmented({
   value,
   onChange,
@@ -79,7 +75,7 @@ function Segmented({
             className={[
               "rounded-lg px-3 py-2 text-xs transition",
               active
-                ? "bg-foreground text-background"
+                ? "border border-emerald-400/50 bg-emerald-500/15 text-emerald-200 shadow-[0_0_0_1px_rgba(52,211,153,0.18)]"
                 : "text-foreground/70 hover:bg-black/20",
             ].join(" ")}
           >
@@ -169,20 +165,6 @@ function benchText(dd50Risk: number) {
   return "Critical relative to typical survivability range.";
 }
 
-function volCardTone(vol: VolLevel) {
-  // No colors, just tension via border + subtle background lift.
-  switch (vol) {
-    case "LOW":
-      return "border-[color:var(--border)] bg-[color:var(--card)]";
-    case "MED":
-      return "border-[color:var(--border)] bg-[color:var(--card)]";
-    case "HIGH":
-      return "border-[color:var(--border)] bg-black/20";
-    case "EXTREME":
-      return "border-foreground/35 bg-black/30";
-  }
-}
-
 export default function RiskClient() {
   const [inputs, setInputs] = useState<Inputs>({
     riskPerTradePct: 1.0,
@@ -191,7 +173,6 @@ export default function RiskClient() {
     volLevel: "MED",
   });
 
-  // Debounce to avoid spamming worker during drag
   const [debounced, setDebounced] = useState(inputs);
   useEffect(() => {
     const t = setTimeout(() => setDebounced(inputs), 160);
@@ -238,7 +219,6 @@ export default function RiskClient() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-xs tracking-[0.22em] text-foreground/50">OREN CAPITAL</div>
@@ -249,7 +229,6 @@ export default function RiskClient() {
         </div>
       </div>
 
-      {/* Dominant number */}
       <section className="oc-glass rounded-xl border border-[color:var(--border)] p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -262,18 +241,11 @@ export default function RiskClient() {
             </div>
             <div className="mt-2 text-sm text-foreground/70">{benchmark}</div>
 
-            {/* Always-visible horizon + volatility */}
             <div className="mt-3 flex flex-wrap gap-2 text-xs text-foreground/55">
-              <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
-                Volatility: <span className="text-foreground/80">{volLabel(inputs.volLevel)}</span>
-              </div>
-
               <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
                 <Tooltip label="Horizon">
                   <div className="space-y-2">
-                    <div>
-                      The simulation window, expressed in trades.
-                    </div>
+                    <div>The simulation window, expressed in trades.</div>
                     <div className="text-foreground/70">
                       Higher volatility compresses the horizon. Higher risk per trade compresses it further.
                     </div>
@@ -303,7 +275,6 @@ export default function RiskClient() {
           </div>
         </div>
 
-        {/* Cone placeholder */}
         <div className="mt-6 rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-4">
           <div className="flex items-center justify-between">
             <div className="text-xs tracking-[0.22em] text-foreground/50">EQUITY CONE</div>
@@ -320,7 +291,6 @@ export default function RiskClient() {
         </div>
       </section>
 
-      {/* Inputs */}
       <section className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-6">
         <div className="flex items-center justify-between">
           <div className="text-xs tracking-[0.22em] text-foreground/50">SCENARIO</div>
@@ -374,23 +344,15 @@ export default function RiskClient() {
             tip={<div>Average win size relative to average loss (loss is 1R).</div>}
           />
 
-          {/* Volatility box with selected-level emphasis */}
-          <div className={`oc-glass rounded-xl border p-5 transition ${volCardTone(inputs.volLevel)}`}>
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-foreground/80">
-                <Tooltip label="Volatility level">
-                  <div className="space-y-2">
-                    <div>Controls regime intensity. It compresses or extends the horizon.</div>
-                    <div className="text-foreground/70">
-                      Selected: <span className="text-foreground">{volLabel(inputs.volLevel)}</span>
-                    </div>
-                  </div>
-                </Tooltip>
-              </div>
-
-              <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1 text-[11px] text-foreground/60">
-                Selected: <span className="text-foreground/80">{volLabel(inputs.volLevel)}</span>
-              </div>
+          {/* Volatility box: emerald emphasis is on the selected segment */}
+          <div className="oc-glass rounded-xl border border-[color:var(--border)] p-5">
+            <div className="text-sm text-foreground/80">
+              <Tooltip label="Volatility level">
+                <div className="space-y-2">
+                  <div>Controls regime intensity. It compresses or extends the horizon.</div>
+                  <div className="text-foreground/70">Higher volatility → shorter horizon → less room to recover.</div>
+                </div>
+              </Tooltip>
             </div>
 
             <div className="mt-4">
@@ -404,7 +366,6 @@ export default function RiskClient() {
         </div>
       </section>
 
-      {/* Reduce risk */}
       <section className="oc-glass rounded-xl border border-[color:var(--border)] p-6">
         <div className="text-xs tracking-[0.22em] text-foreground/50">REDUCE RISK</div>
         <div className="mt-3 text-sm text-foreground/75">
@@ -420,7 +381,6 @@ export default function RiskClient() {
         )}
       </section>
 
-      {/* CTA */}
       <section className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
