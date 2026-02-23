@@ -4,6 +4,7 @@
 import type { CSSProperties } from "react";
 import { useMemo, useState } from "react";
 import ProGate from "@/components/ProGate";
+import LiveSurvivabilityCard from "@/components/portfolio/LiveSurvivabilityCard";
 
 type ViewMode = "overview" | "positions" | "exposure";
 
@@ -136,7 +137,10 @@ export default function PortfolioPage() {
           </div>
         </div>
 
-        <ProGate lockTitle="Portfolio is Pro" lockSubtitle="Upgrade to Pro to view portfolio exposure, drawdown context, and discipline metrics.">
+        <ProGate
+          lockTitle="Portfolio is Pro"
+          lockSubtitle="Upgrade to Pro to view portfolio exposure, drawdown context, and discipline metrics."
+        >
           <section className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-6">
             {/* Risk state */}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -173,13 +177,13 @@ export default function PortfolioPage() {
                   />
                 </div>
 
-                <div className="mt-4 text-xs text-foreground/55">
-                  This page is for awareness and control — not performance bragging.
-                </div>
+                <div className="mt-4 text-xs text-foreground/55">This page is for awareness and control — not performance bragging.</div>
               </div>
 
               {/* View body */}
-              <div className="lg:col-span-2">
+              <div className="lg:col-span-2 space-y-4">
+                <LiveSurvivabilityCard />
+
                 {view === "overview" ? (
                   <div className="grid gap-4 sm:grid-cols-2">
                     <Panel
@@ -194,11 +198,7 @@ export default function PortfolioPage() {
                     <Panel
                       title="Behavioral discipline"
                       desc="Wire to journal signals next: oversizing after wins/losses, % above cap, drift from baseline."
-                      lines={[
-                        "Avg risk per decision (last 20): —",
-                        "Decisions above cap: —",
-                        "Size escalation after loss: —",
-                      ]}
+                      lines={["Avg risk per decision (last 20): —", "Decisions above cap: —", "Size escalation after loss: —"]}
                     />
                   </div>
                 ) : null}
@@ -249,9 +249,7 @@ export default function PortfolioPage() {
                               style={{ width: `${Math.round(x.share * 100)}%` }}
                             />
                           </div>
-                          <div className="w-16 text-right text-sm text-foreground/70">
-                            {(x.share * 100).toFixed(0)}%
-                          </div>
+                          <div className="w-16 text-right text-sm text-foreground/70">{(x.share * 100).toFixed(0)}%</div>
                         </div>
                       ))}
                     </div>
@@ -273,8 +271,8 @@ export default function PortfolioPage() {
 function CardStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-[color:var(--border)] bg-black/20 p-5">
-      <div className="text-sm text-foreground/65">{label}</div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{value}</div>
+      <div className="text-sm text-foreground/70">{label}</div>
+      <div className="mt-2 text-2xl font-semibold tabular-nums text-foreground">{value}</div>
     </div>
   );
 }
@@ -287,7 +285,7 @@ function BarRow({ label, value, fill }: { label: string; value: string; fill: nu
         <div className="text-xs text-foreground/60 tabular-nums">{value}</div>
       </div>
       <div className="mt-2 rounded-full border border-[color:var(--border)] bg-black/20 p-1">
-        <div className="h-2 rounded-full bg-white/25" style={{ width: `${Math.round(fill * 100)}%` }} />
+        <div className="h-2 rounded-full bg-[color:var(--accent)]/80" style={{ width: `${Math.round(fill * 100)}%` }} />
       </div>
     </div>
   );
@@ -300,8 +298,8 @@ function Panel({ title, desc, lines }: { title: string; desc: string; lines: str
       <div className="mt-1 text-sm text-foreground/70">{desc}</div>
       <div className="mt-4 space-y-2 text-sm text-foreground/75">
         {lines.map((l) => (
-          <div key={l} className="rounded-lg border border-[color:var(--border)] bg-black/10 px-3 py-2">
-            {l}
+          <div key={l} className="flex items-center justify-between gap-3">
+            <span className="text-foreground/70">{l}</span>
           </div>
         ))}
       </div>
