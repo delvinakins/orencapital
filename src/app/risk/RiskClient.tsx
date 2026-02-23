@@ -2,13 +2,13 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Tooltip from "@/components/Tooltip";
-import { simulateMonteCarlo } from "@/lib/risk/simulate";
 import type { VolLevel } from "@/lib/risk/types";
+import { useRiskWorker } from "@/lib/risk/useRiskWorker";
 
 type Inputs = {
-  riskPerTradePct: number; // 1.0 => 1%
-  winRatePct: number; // 52 => 52%
-  avgR: number; // 1.15 => 1.15R
+  riskPerTradePct: number;
+  winRatePct: number;
+  avgR: number;
   volLevel: VolLevel;
 };
 
@@ -27,28 +27,22 @@ function useAnimatedNumber(target: number, durationMs = 420) {
   useEffect(() => {
     const from = display;
     const to = target;
-
     if (!Number.isFinite(to)) return;
 
     const start = performance.now();
-
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
 
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / durationMs);
       const eased = easeOutCubic(t);
-      const next = from + (to - from) * eased;
-      setDisplay(next);
-
+      setDisplay(from + (to - from) * eased);
       if (t < 1) rafRef.current = requestAnimationFrame(tick);
     };
 
     rafRef.current = requestAnimationFrame(tick);
-
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-    // intentionally not depending on `display` to avoid restarting mid-tween
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, durationMs]);
 
@@ -179,10 +173,10 @@ export default function RiskClient() {
     volLevel: "MED",
   });
 
-  // Debounced inputs for simulation (keeps UI smooth before we move to Worker)
-  const [simInputs, setSimInputs] = useState(inputs);
+  // Debounce to avoid spamming worker during drag
+  const [debounced, setDebounced] = useState(inputs);
   useEffect(() => {
-    const t = setTimeout(() => setSimInputs(inputs), 180);
+    const t = setTimeout(() => setDebounced(inputs), 160);
     return () => clearTimeout(t);
   }, [inputs]);
 
@@ -191,28 +185,33 @@ export default function RiskClient() {
     [inputs.riskPerTradePct]
   );
 
-  const simulation = useMemo(() => {
-    return simulateMonteCarlo({
-      riskPerTrade: simInputs.riskPerTradePct / 100,
-      winRate: simInputs.winRatePct / 100,
-      avgR: simInputs.avgR,
-      volLevel: simInputs.volLevel,
-      paths: 1200,
-    });
-  }, [simInputs]);
+  const primary = useRiskWorker();
+  const lower = useRiskWorker();
 
-  const lowerSimulation = useMemo(() => {
-    return simulateMonteCarlo({
+  useEffect(() => {
+    primary.run({
+      riskPerTrade: debounced.riskPerTradePct / 100,
+      winRate: debounced.winRatePct / 100,
+      avgR: debounced.avgR,
+      volLevel: debounced.volLevel,
+      paths: 1500,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debounced]);
+
+  useEffect(() => {
+    lower.run({
       riskPerTrade: lowerRiskPct / 100,
       winRate: inputs.winRatePct / 100,
       avgR: inputs.avgR,
       volLevel: inputs.volLevel,
-      paths: 1200,
+      paths: 1500,
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lowerRiskPct, inputs.winRatePct, inputs.avgR, inputs.volLevel]);
 
-  const dd50Risk = simulation.dd50Risk;
-  const dd50Lower = lowerSimulation.dd50Risk;
+  const dd50Risk = primary.result?.dd50Risk ?? 0;
+  const dd50Lower = lower.result?.dd50Risk ?? 0;
 
   const animatedPct = useAnimatedNumber(dd50Risk * 100);
   const benchmark = useMemo(() => benchText(dd50Risk), [dd50Risk]);
@@ -242,23 +241,34 @@ export default function RiskClient() {
               <div className="pb-2 text-sm text-foreground/60">to -50%</div>
             </div>
             <div className="mt-2 text-sm text-foreground/70">{benchmark}</div>
+
+            {(primary.isComputing || primary.error) && (
+              <div className="mt-2 text-xs text-foreground/50">
+                {primary.isComputing ? "Recomputing…" : primary.error}
+              </div>
+            )}
           </div>
 
           <div className="hidden sm:flex flex-col items-end gap-2 text-xs text-foreground/55">
             <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
-              Horizon: <span className="text-foreground/80">{simulation.horizonTrades} trades</span>
+              Horizon:{" "}
+              <span className="text-foreground/80">
+                {primary.result ? `${primary.result.horizonTrades} trades` : "—"}
+              </span>
             </div>
             <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
-              Paths: <span className="text-foreground/80">1,200</span>
+              Paths: <span className="text-foreground/80">1,500</span>
             </div>
           </div>
         </div>
 
-        {/* Cone placeholder (bands are computed and ready for Step 4) */}
+        {/* Cone placeholder (bands computed in worker) */}
         <div className="mt-6 rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-4">
           <div className="flex items-center justify-between">
             <div className="text-xs tracking-[0.22em] text-foreground/50">EQUITY CONE</div>
-            <div className="text-xs text-foreground/45">percentile bands computed</div>
+            <div className="text-xs text-foreground/45">
+              {primary.result ? "percentile bands ready" : "computing…"}
+            </div>
           </div>
 
           <div className="mt-4 h-[240px] rounded-lg border border-[color:var(--border)] bg-black/10">
@@ -344,6 +354,12 @@ export default function RiskClient() {
           <span className="text-foreground tabular-nums">{lowerRiskPct.toFixed(2)}%</span>, 50% drawdown risk falls to{" "}
           <span className="text-foreground tabular-nums">{(dd50Lower * 100).toFixed(1)}%</span>.
         </div>
+
+        {(lower.isComputing || lower.error) && (
+          <div className="mt-2 text-xs text-foreground/50">
+            {lower.isComputing ? "Recomputing…" : lower.error}
+          </div>
+        )}
       </section>
 
       {/* CTA */}
