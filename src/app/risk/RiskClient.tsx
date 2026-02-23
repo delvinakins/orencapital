@@ -169,6 +169,20 @@ function benchText(dd50Risk: number) {
   return "Critical relative to typical survivability range.";
 }
 
+function volCardTone(vol: VolLevel) {
+  // No colors, just tension via border + subtle background lift.
+  switch (vol) {
+    case "LOW":
+      return "border-[color:var(--border)] bg-[color:var(--card)]";
+    case "MED":
+      return "border-[color:var(--border)] bg-[color:var(--card)]";
+    case "HIGH":
+      return "border-[color:var(--border)] bg-black/20";
+    case "EXTREME":
+      return "border-foreground/35 bg-black/30";
+  }
+}
+
 export default function RiskClient() {
   const [inputs, setInputs] = useState<Inputs>({
     riskPerTradePct: 1.0,
@@ -253,12 +267,29 @@ export default function RiskClient() {
               <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
                 Volatility: <span className="text-foreground/80">{volLabel(inputs.volLevel)}</span>
               </div>
+
               <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
-                Horizon:{" "}
-                <span className="text-foreground/80">
-                  {horizonTrades !== null ? `${horizonTrades} trades` : "—"}
+                <Tooltip label="Horizon">
+                  <div className="space-y-2">
+                    <div>
+                      The simulation window, expressed in trades.
+                    </div>
+                    <div className="text-foreground/70">
+                      Higher volatility compresses the horizon. Higher risk per trade compresses it further.
+                    </div>
+                    <div className="text-foreground/70">
+                      Drawdown risk is measured as: hit -50% equity at any point before this horizon.
+                    </div>
+                  </div>
+                </Tooltip>
+                <span className="ml-2">
+                  <span className="text-foreground/60">:</span>{" "}
+                  <span className="text-foreground/80 tabular-nums">
+                    {horizonTrades !== null ? `${horizonTrades} trades` : "—"}
+                  </span>
                 </span>
               </div>
+
               <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1">
                 Paths: <span className="text-foreground/80">1,500</span>
               </div>
@@ -343,14 +374,31 @@ export default function RiskClient() {
             tip={<div>Average win size relative to average loss (loss is 1R).</div>}
           />
 
-          <div className="oc-glass rounded-xl border border-[color:var(--border)] p-5">
-            <div className="text-sm text-foreground/80">
-              <Tooltip label="Volatility level">
-                <div>Compresses or extends the horizon. Higher volatility shortens the window for survivability.</div>
-              </Tooltip>
+          {/* Volatility box with selected-level emphasis */}
+          <div className={`oc-glass rounded-xl border p-5 transition ${volCardTone(inputs.volLevel)}`}>
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-foreground/80">
+                <Tooltip label="Volatility level">
+                  <div className="space-y-2">
+                    <div>Controls regime intensity. It compresses or extends the horizon.</div>
+                    <div className="text-foreground/70">
+                      Selected: <span className="text-foreground">{volLabel(inputs.volLevel)}</span>
+                    </div>
+                  </div>
+                </Tooltip>
+              </div>
+
+              <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1 text-[11px] text-foreground/60">
+                Selected: <span className="text-foreground/80">{volLabel(inputs.volLevel)}</span>
+              </div>
             </div>
+
             <div className="mt-4">
               <Segmented value={inputs.volLevel} onChange={(v) => setInputs((s) => ({ ...s, volLevel: v }))} />
+            </div>
+
+            <div className="mt-3 text-[11px] text-foreground/50">
+              Higher volatility → shorter horizon → less room to recover.
             </div>
           </div>
         </div>
