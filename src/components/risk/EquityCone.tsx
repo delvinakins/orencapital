@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import Tooltip from "@/components/Tooltip";
 
 type Bands = {
   p05: number[];
@@ -22,14 +23,34 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
-function pathArea(
-  top: number[],
-  bottom: number[],
-  w: number,
-  h: number,
-  minY: number,
-  maxY: number
-) {
+function mixArrays(a: number[], b: number[], t: number) {
+  const n = Math.min(a.length, b.length);
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) out[i] = lerp(a[i], b[i], t);
+  return out;
+}
+
+function computeMinMax(b: Bands) {
+  const all = [b.p05, b.p25, b.p50, b.p75, b.p95].flat();
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+
+  for (const v of all) {
+    if (!Number.isFinite(v)) continue;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
+    min = 0.75;
+    max = 1.25;
+  }
+
+  const pad = (max - min) * 0.09;
+  return { min: min - pad, max: max + pad };
+}
+
+function pathArea(top: number[], bottom: number[], w: number, h: number, minY: number, maxY: number) {
   const n = Math.min(top.length, bottom.length);
   if (n < 2) return "";
 
@@ -49,13 +70,7 @@ function pathArea(
   return d;
 }
 
-function pathLine(
-  mid: number[],
-  w: number,
-  h: number,
-  minY: number,
-  maxY: number
-) {
+function pathLine(mid: number[], w: number, h: number, minY: number, maxY: number) {
   const n = mid.length;
   if (n < 2) return "";
 
@@ -70,40 +85,7 @@ function pathLine(
   return d;
 }
 
-function computeMinMax(b: Bands) {
-  const all = [b.p05, b.p25, b.p50, b.p75, b.p95].flat();
-  let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
-
-  for (const v of all) {
-    if (!Number.isFinite(v)) continue;
-    if (v < min) min = v;
-    if (v > max) max = v;
-  }
-
-  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
-    min = 0.5;
-    max = 1.5;
-  }
-
-  const pad = (max - min) * 0.08;
-  return { min: min - pad, max: max + pad };
-}
-
-function mixArrays(a: number[], b: number[], t: number) {
-  const n = Math.min(a.length, b.length);
-  const out = new Array(n);
-  for (let i = 0; i < n; i++) out[i] = lerp(a[i], b[i], t);
-  return out;
-}
-
-export default function EquityCone({
-  bands,
-  height = 240,
-}: {
-  bands: Bands | null;
-  height?: number;
-}) {
+export default function EquityCone({ bands, height = 240 }: { bands: Bands | null; height?: number }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [w, setW] = useState(0);
 
@@ -131,7 +113,7 @@ export default function EquityCone({
 
     setT(0);
     const start = performance.now();
-    const dur = 420;
+    const dur = 440;
 
     let raf = 0;
     const tick = (now: number) => {
@@ -161,7 +143,7 @@ export default function EquityCone({
   }, [bands, t]);
 
   const { min, max } = useMemo(() => {
-    if (!effective) return { min: 0.8, max: 1.2 };
+    if (!effective) return { min: 0.85, max: 1.15 };
     return computeMinMax(effective);
   }, [effective]);
 
@@ -178,34 +160,31 @@ export default function EquityCone({
     const innerW = dims.width - dims.pad * 2;
     const innerH = dims.h - dims.pad * 2;
 
-    const band95 = pathArea(effective.p95, effective.p05, innerW, innerH, min, max);
-    const band75 = pathArea(effective.p75, effective.p25, innerW, innerH, min, max);
+    const wide = pathArea(effective.p95, effective.p05, innerW, innerH, min, max);
+    const tight = pathArea(effective.p75, effective.p25, innerW, innerH, min, max);
     const mid = pathLine(effective.p50, innerW, innerH, min, max);
 
-    return { band95, band75, mid };
+    return { wide, tight, mid };
   }, [effective, dims, min, max]);
 
   return (
     <div ref={wrapRef} className="w-full">
       <div className="relative overflow-hidden rounded-lg border border-[color:var(--border)] bg-black/10">
+        {/* controlled glow (clinical, not flashy) */}
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0"
           style={{
             background:
-              "radial-gradient(800px 260px at 20% -10%, var(--accent-glow), transparent 60%)",
-            opacity: 0.55,
+              "radial-gradient(900px 320px at 18% -12%, var(--accent-glow), transparent 62%)",
+            opacity: 0.45,
           }}
         />
 
-        <svg
-          width={dims.width}
-          height={dims.h}
-          viewBox={`0 0 ${dims.width} ${dims.h}`}
-          className="block"
-        >
+        <svg width={dims.width} height={dims.h} viewBox={`0 0 ${dims.width} ${dims.h}`} className="block">
           <g transform={`translate(${dims.pad}, ${dims.pad})`}>
-            <g opacity={0.35}>
+            {/* almost-invisible grid */}
+            <g opacity={0.22}>
               {[0.25, 0.5, 0.75].map((p) => (
                 <line
                   key={p}
@@ -213,7 +192,7 @@ export default function EquityCone({
                   x2={dims.width - dims.pad * 2}
                   y1={(dims.h - dims.pad * 2) * p}
                   y2={(dims.h - dims.pad * 2) * p}
-                  stroke="rgba(255,255,255,0.08)"
+                  stroke="rgba(255,255,255,0.07)"
                   strokeWidth={1}
                 />
               ))}
@@ -221,24 +200,25 @@ export default function EquityCone({
 
             {paths && (
               <>
+                {/* Wide range (outer) */}
                 <path
-                  d={paths.band95}
-                  fill="rgba(43,203,119,0.08)"
+                  d={paths.wide}
+                  fill="rgba(43,203,119,0.055)"
+                  stroke="rgba(43,203,119,0.10)"
+                  strokeWidth={1}
+                />
+
+                {/* Tight range (inner) */}
+                <path
+                  d={paths.tight}
+                  fill="rgba(43,203,119,0.095)"
                   stroke="rgba(43,203,119,0.14)"
                   strokeWidth={1}
                 />
-                <path
-                  d={paths.band75}
-                  fill="rgba(43,203,119,0.14)"
-                  stroke="rgba(43,203,119,0.20)"
-                  strokeWidth={1}
-                />
-                <path
-                  d={paths.mid}
-                  fill="none"
-                  stroke="rgba(231,235,232,0.78)"
-                  strokeWidth={2}
-                />
+
+                {/* Median line: subtle “charged” edge + neutral spine */}
+                <path d={paths.mid} fill="none" stroke="rgba(43,203,119,0.28)" strokeWidth={4} />
+                <path d={paths.mid} fill="none" stroke="rgba(231,235,232,0.78)" strokeWidth={2} />
               </>
             )}
           </g>
@@ -251,10 +231,41 @@ export default function EquityCone({
         )}
       </div>
 
-      <div className="mt-2 flex items-center justify-between text-[11px] text-foreground/50">
-        <div>p05–p95 / p25–p75</div>
-        <div className="tabular-nums">
-          {effective ? `Scale: ${(min * 100).toFixed(0)}–${(max * 100).toFixed(0)}` : "—"}
+      {/* Plain-language legend */}
+      <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3 text-[11px] text-foreground/55">
+          <span className="inline-flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-sm border border-[rgba(43,203,119,0.14)] bg-[rgba(43,203,119,0.095)]" />
+            Tight range
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-sm border border-[rgba(43,203,119,0.10)] bg-[rgba(43,203,119,0.055)]" />
+            Wide range
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <span className="h-[2px] w-5 rounded bg-[rgba(231,235,232,0.75)]" />
+            Median
+          </span>
+        </div>
+
+        <div className="text-[11px] text-foreground/55">
+          <Tooltip label="What this means">
+            <div className="space-y-2">
+              <div>
+                This cone shows a range of outcomes if we replay the same “edge” many times (using your inputs).
+              </div>
+              <div className="text-foreground/70">
+                <span className="font-semibold">Tight range</span> = the middle half of outcomes.
+              </div>
+              <div className="text-foreground/70">
+                <span className="font-semibold">Wide range</span> = most outcomes (a few ugly, a few exceptional).
+              </div>
+              <div className="text-foreground/70">
+                Values are <span className="font-semibold">relative equity</span> (start = 1.00). This is about survivability shape, not dollar P&amp;L.
+              </div>
+            </div>
+          </Tooltip>
+          <span className="ml-2">How to read the cone</span>
         </div>
       </div>
     </div>
