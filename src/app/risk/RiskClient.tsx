@@ -217,7 +217,6 @@ function writeInputsToUrl(i: Inputs) {
   const url = new URL(window.location.href);
   const sp = url.searchParams;
 
-  // compact + stable formatting
   sp.set("r", i.riskPerTradePct.toFixed(2));
   sp.set("w", String(Math.round(i.winRatePct)));
   sp.set("a", i.avgR.toFixed(2));
@@ -235,7 +234,7 @@ export default function RiskClient() {
     volLevel: "MED",
   });
 
-  // Apply URL → state once (first mount only)
+  // Apply URL → state once
   const appliedUrlRef = useRef(false);
   useEffect(() => {
     if (appliedUrlRef.current) return;
@@ -252,14 +251,14 @@ export default function RiskClient() {
     }));
   }, []);
 
-  // Debounce the simulation inputs (already doing this)
+  // Debounce simulations
   const [debounced, setDebounced] = useState(inputs);
   useEffect(() => {
     const t = setTimeout(() => setDebounced(inputs), 160);
     return () => clearTimeout(t);
   }, [inputs]);
 
-  // Debounce URL writes (separate from sim debounce)
+  // Debounce URL writes (replaceState)
   const urlDebounceRef = useRef<number | null>(null);
   useEffect(() => {
     if (urlDebounceRef.current) window.clearTimeout(urlDebounceRef.current);
@@ -309,6 +308,20 @@ export default function RiskClient() {
   const line1 = useMemo(() => benchLine(dd50Risk), [dd50Risk]);
   const line2 = useMemo(() => benchExplain(dd50Risk), [dd50Risk]);
 
+  const [copied, setCopied] = useState(false);
+  async function copyLink() {
+    try {
+      const href = typeof window !== "undefined" ? window.location.href : "";
+      if (!href) return;
+
+      await navigator.clipboard.writeText(href);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // no-op: clipboard may be blocked; we keep UI quiet for V1
+    }
+  }
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-6xl px-4 sm:px-6 py-10 sm:py-16 space-y-8 sm:space-y-10">
@@ -332,7 +345,7 @@ export default function RiskClient() {
             <div className="text-sm text-foreground/60">{line2}</div>
           </div>
 
-          <div className="flex flex-wrap gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <div className="rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-3 py-1">
               Volatility: <span className="text-[color:var(--accent)]">{volLabel(inputs.volLevel)}</span>
             </div>
@@ -346,9 +359,18 @@ export default function RiskClient() {
 
             <div className="rounded-full border border-[color:var(--border)] px-3 py-1">Paths: 1,500</div>
 
-            <div className="rounded-full border border-[color:var(--border)] px-3 py-1 text-foreground/60">
-              Shareable URL enabled
-            </div>
+            <button
+              type="button"
+              onClick={copyLink}
+              className={[
+                "rounded-full border px-3 py-1 transition",
+                copied
+                  ? "border-emerald-700/40 bg-emerald-600/10 text-emerald-200"
+                  : "border-[color:var(--border)] bg-transparent text-foreground/70 hover:bg-white/5 hover:text-foreground",
+              ].join(" ")}
+            >
+              {copied ? "Copied" : "Copy link"}
+            </button>
           </div>
 
           <EquityCone bands={primary.result?.bands ?? null} height={240} />
