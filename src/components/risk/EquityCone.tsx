@@ -85,6 +85,27 @@ function pathLine(mid: number[], w: number, h: number, minY: number, maxY: numbe
   return d;
 }
 
+function coneSignal(b: Bands | null) {
+  if (!b) return { text: "—", tone: "neutral" as const };
+
+  const n = Math.min(b.p05.length, b.p95.length);
+  if (n < 2) return { text: "—", tone: "neutral" as const };
+
+  // Use end-of-horizon width as a simple, understandable stability proxy.
+  const end = n - 1;
+  const width = b.p95[end] - b.p05[end];
+
+  // Values are relative equity. Typical ranges:
+  // tight ~0.25–0.45, moderate ~0.45–0.75, wide >0.75 (depends on inputs)
+  if (width < 0.40) {
+    return { text: "Range is tight → outcomes are more controllable.", tone: "good" as const };
+  }
+  if (width < 0.75) {
+    return { text: "Range is widening → survivability is degrading.", tone: "warn" as const };
+  }
+  return { text: "Range is wide → recovery depends on favorable variance.", tone: "bad" as const };
+}
+
 export default function EquityCone({ bands, height = 240 }: { bands: Bands | null; height?: number }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [w, setW] = useState(0);
@@ -167,23 +188,30 @@ export default function EquityCone({ bands, height = 240 }: { bands: Bands | nul
     return { wide, tight, mid };
   }, [effective, dims, min, max]);
 
+  const sig = useMemo(() => coneSignal(effective), [effective]);
+  const sigClass =
+    sig.tone === "good"
+      ? "text-foreground/70"
+      : sig.tone === "warn"
+      ? "text-foreground/75"
+      : sig.tone === "bad"
+      ? "text-foreground/80"
+      : "text-foreground/55";
+
   return (
     <div ref={wrapRef} className="w-full">
       <div className="relative overflow-hidden rounded-lg border border-[color:var(--border)] bg-black/10">
-        {/* controlled glow (clinical, not flashy) */}
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0"
           style={{
-            background:
-              "radial-gradient(900px 320px at 18% -12%, var(--accent-glow), transparent 62%)",
+            background: "radial-gradient(900px 320px at 18% -12%, var(--accent-glow), transparent 62%)",
             opacity: 0.45,
           }}
         />
 
         <svg width={dims.width} height={dims.h} viewBox={`0 0 ${dims.width} ${dims.h}`} className="block">
           <g transform={`translate(${dims.pad}, ${dims.pad})`}>
-            {/* almost-invisible grid */}
             <g opacity={0.22}>
               {[0.25, 0.5, 0.75].map((p) => (
                 <line
@@ -200,23 +228,9 @@ export default function EquityCone({ bands, height = 240 }: { bands: Bands | nul
 
             {paths && (
               <>
-                {/* Wide range (outer) */}
-                <path
-                  d={paths.wide}
-                  fill="rgba(43,203,119,0.055)"
-                  stroke="rgba(43,203,119,0.10)"
-                  strokeWidth={1}
-                />
+                <path d={paths.wide} fill="rgba(43,203,119,0.055)" stroke="rgba(43,203,119,0.10)" strokeWidth={1} />
+                <path d={paths.tight} fill="rgba(43,203,119,0.095)" stroke="rgba(43,203,119,0.14)" strokeWidth={1} />
 
-                {/* Tight range (inner) */}
-                <path
-                  d={paths.tight}
-                  fill="rgba(43,203,119,0.095)"
-                  stroke="rgba(43,203,119,0.14)"
-                  strokeWidth={1}
-                />
-
-                {/* Median line: subtle “charged” edge + neutral spine */}
                 <path d={paths.mid} fill="none" stroke="rgba(43,203,119,0.28)" strokeWidth={4} />
                 <path d={paths.mid} fill="none" stroke="rgba(231,235,232,0.78)" strokeWidth={2} />
               </>
@@ -225,13 +239,10 @@ export default function EquityCone({ bands, height = 240 }: { bands: Bands | nul
         </svg>
 
         {!bands && (
-          <div className="absolute inset-0 flex items-center justify-center text-xs text-foreground/45">
-            computing…
-          </div>
+          <div className="absolute inset-0 flex items-center justify-center text-xs text-foreground/45">computing…</div>
         )}
       </div>
 
-      {/* Plain-language legend */}
       <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3 text-[11px] text-foreground/55">
           <span className="inline-flex items-center gap-2">
@@ -251,9 +262,7 @@ export default function EquityCone({ bands, height = 240 }: { bands: Bands | nul
         <div className="text-[11px] text-foreground/55">
           <Tooltip label="What this means">
             <div className="space-y-2">
-              <div>
-                This cone shows a range of outcomes if we replay the same “edge” many times (using your inputs).
-              </div>
+              <div>This cone shows a range of outcomes if we replay the same “edge” many times (using your inputs).</div>
               <div className="text-foreground/70">
                 <span className="font-semibold">Tight range</span> = the middle half of outcomes.
               </div>
@@ -267,6 +276,11 @@ export default function EquityCone({ bands, height = 240 }: { bands: Bands | nul
           </Tooltip>
           <span className="ml-2">How to read the cone</span>
         </div>
+      </div>
+
+      {/* Clinical interpretation line */}
+      <div className={`mt-2 text-xs ${sigClass}`}>
+        {sig.text}
       </div>
     </div>
   );
