@@ -162,7 +162,6 @@ function SliderField({
 }
 
 function benchLine(dd50: number) {
-  // One line, terminal-like. No judgement words.
   if (dd50 < 0.10) return "Survivability profile: stable.";
   if (dd50 < 0.25) return "Survivability profile: elevated drawdown risk.";
   if (dd50 < 0.45) return "Survivability profile: high drawdown risk.";
@@ -170,11 +169,62 @@ function benchLine(dd50: number) {
 }
 
 function benchExplain(dd50: number) {
-  // Short explanation line for retail users without being condescending.
   if (dd50 < 0.10) return "Drawdowns are less likely to compound before the horizon.";
   if (dd50 < 0.25) return "Outcome sequencing starts to matter. A bad streak can dominate the edge.";
   if (dd50 < 0.45) return "Sequence risk dominates. Recovery becomes path-dependent.";
   return "Most plausible paths hit deep stress before the horizon.";
+}
+
+function parseVol(v: string | null): VolLevel | null {
+  if (!v) return null;
+  const up = v.toUpperCase();
+  if (up === "LOW" || up === "MED" || up === "HIGH" || up === "EXTREME") return up;
+  return null;
+}
+
+function parseInitialInputsFromUrl(): Partial<Inputs> {
+  if (typeof window === "undefined") return {};
+  const sp = new URLSearchParams(window.location.search);
+
+  const r = sp.get("r");
+  const w = sp.get("w");
+  const a = sp.get("a");
+  const v = sp.get("v");
+
+  const out: Partial<Inputs> = {};
+
+  if (r !== null) {
+    const n = Number(r);
+    if (Number.isFinite(n)) out.riskPerTradePct = clamp(n, 0.1, 5);
+  }
+  if (w !== null) {
+    const n = Number(w);
+    if (Number.isFinite(n)) out.winRatePct = clamp(n, 20, 80);
+  }
+  if (a !== null) {
+    const n = Number(a);
+    if (Number.isFinite(n)) out.avgR = clamp(n, 0.5, 3);
+  }
+  const vol = parseVol(v);
+  if (vol) out.volLevel = vol;
+
+  return out;
+}
+
+function writeInputsToUrl(i: Inputs) {
+  if (typeof window === "undefined") return;
+
+  const url = new URL(window.location.href);
+  const sp = url.searchParams;
+
+  // compact + stable formatting
+  sp.set("r", i.riskPerTradePct.toFixed(2));
+  sp.set("w", String(Math.round(i.winRatePct)));
+  sp.set("a", i.avgR.toFixed(2));
+  sp.set("v", i.volLevel);
+
+  url.search = sp.toString();
+  window.history.replaceState({}, "", url.toString());
 }
 
 export default function RiskClient() {
@@ -185,11 +235,41 @@ export default function RiskClient() {
     volLevel: "MED",
   });
 
-  const [debounced, setDebounced] = useState(inputs);
+  // Apply URL → state once (first mount only)
+  const appliedUrlRef = useRef(false);
+  useEffect(() => {
+    if (appliedUrlRef.current) return;
+    appliedUrlRef.current = true;
 
+    const patch = parseInitialInputsFromUrl();
+    if (Object.keys(patch).length === 0) return;
+
+    setInputs((s) => ({
+      riskPerTradePct: patch.riskPerTradePct ?? s.riskPerTradePct,
+      winRatePct: patch.winRatePct ?? s.winRatePct,
+      avgR: patch.avgR ?? s.avgR,
+      volLevel: patch.volLevel ?? s.volLevel,
+    }));
+  }, []);
+
+  // Debounce the simulation inputs (already doing this)
+  const [debounced, setDebounced] = useState(inputs);
   useEffect(() => {
     const t = setTimeout(() => setDebounced(inputs), 160);
     return () => clearTimeout(t);
+  }, [inputs]);
+
+  // Debounce URL writes (separate from sim debounce)
+  const urlDebounceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (urlDebounceRef.current) window.clearTimeout(urlDebounceRef.current);
+    urlDebounceRef.current = window.setTimeout(() => {
+      writeInputsToUrl(inputs);
+    }, 220);
+
+    return () => {
+      if (urlDebounceRef.current) window.clearTimeout(urlDebounceRef.current);
+    };
   }, [inputs]);
 
   const lowerRiskPct = useMemo(
@@ -265,6 +345,10 @@ export default function RiskClient() {
             </div>
 
             <div className="rounded-full border border-[color:var(--border)] px-3 py-1">Paths: 1,500</div>
+
+            <div className="rounded-full border border-[color:var(--border)] px-3 py-1 text-foreground/60">
+              Shareable URL enabled
+            </div>
           </div>
 
           <EquityCone bands={primary.result?.bands ?? null} height={240} />
@@ -323,8 +407,8 @@ export default function RiskClient() {
             <div className="text-sm">Track this live with your actual positions.</div>
             <div className="text-xs text-foreground/55 mt-1">Smoothed updates. Regime state. Recompute cadence.</div>
           </div>
-          <a href="/portfolio" className="oc-btn oc-btn-primary">
-            Open Dashboard
+          <a href="/risk-engine" className="oc-btn oc-btn-primary">
+            Open Position Risk
           </a>
         </section>
       </div>
