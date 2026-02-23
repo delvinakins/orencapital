@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Tooltip from "@/components/Tooltip";
+import EquityCone from "@/components/risk/EquityCone";
 import type { VolLevel } from "@/lib/risk/types";
 import { useRiskWorker } from "@/lib/risk/useRiskWorker";
 
@@ -50,7 +51,13 @@ function useAnimatedNumber(target: number, durationMs = 420) {
 }
 
 function volLabel(v: VolLevel) {
-  return v === "LOW" ? "Low" : v === "MED" ? "Med" : v === "HIGH" ? "High" : "Extreme";
+  return v === "LOW"
+    ? "Low"
+    : v === "MED"
+    ? "Med"
+    : v === "HIGH"
+    ? "High"
+    : "Extreme";
 }
 
 function Segmented({
@@ -132,7 +139,7 @@ function SliderField({
               const n = Number(e.target.value);
               if (Number.isFinite(n)) onChange(clamp(n, min, max));
             }}
-            className="h-10 w-28 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-3 text-right text-sm text-foreground outline-none placeholder:text-foreground/30"
+            className="h-10 w-28 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-3 text-right text-sm text-foreground outline-none"
           />
           <div className="text-xs text-foreground/60">{suffix ?? ""}</div>
         </div>
@@ -150,18 +157,11 @@ function SliderField({
           style={{ accentColor: "var(--accent)" }}
         />
         <div className="mt-2 flex justify-between text-[11px] text-foreground/50">
-          <span>
-            {min}
-            {suffix ?? ""}
-          </span>
+          <span>{min}{suffix ?? ""}</span>
           <span className="tabular-nums text-foreground/70">
-            {value.toFixed(decimals)}
-            {suffix ?? ""}
+            {value.toFixed(decimals)}{suffix ?? ""}
           </span>
-          <span>
-            {max}
-            {suffix ?? ""}
-          </span>
+          <span>{max}{suffix ?? ""}</span>
         </div>
       </div>
     </div>
@@ -184,6 +184,7 @@ export default function RiskClient() {
   });
 
   const [debounced, setDebounced] = useState(inputs);
+
   useEffect(() => {
     const t = setTimeout(() => setDebounced(inputs), 160);
     return () => clearTimeout(t);
@@ -205,7 +206,6 @@ export default function RiskClient() {
       volLevel: debounced.volLevel,
       paths: 1500,
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced]);
 
   useEffect(() => {
@@ -216,7 +216,6 @@ export default function RiskClient() {
       volLevel: inputs.volLevel,
       paths: 1500,
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lowerRiskPct, inputs.winRatePct, inputs.avgR, inputs.volLevel]);
 
   const dd50Risk = primary.result?.dd50Risk ?? 0;
@@ -224,204 +223,118 @@ export default function RiskClient() {
 
   const animatedPct = useAnimatedNumber(dd50Risk * 100);
   const benchmark = useMemo(() => benchText(dd50Risk), [dd50Risk]);
-
   const horizonTrades = primary.result?.horizonTrades ?? null;
 
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-6xl px-4 sm:px-6 py-10 sm:py-16 space-y-8 sm:space-y-10">
-        <header className="space-y-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h1 className="text-3xl font-semibold tracking-tight">50% Drawdown Risk</h1>
-              <p className="mt-2 text-sm text-foreground/70">
-                Probability of hitting <span className="text-foreground">-50% equity</span> before a volatility-adjusted horizon.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() =>
-                  setInputs({
-                    riskPerTradePct: 1.0,
-                    winRatePct: 52,
-                    avgR: 1.15,
-                    volLevel: "MED",
-                  })
-                }
-                className="oc-btn oc-btn-secondary"
-              >
-                Reset
-              </button>
-            </div>
-          </div>
+        <header>
+          <h1 className="text-3xl font-semibold tracking-tight">50% Drawdown Risk</h1>
+          <p className="mt-2 text-sm text-foreground/70">
+            Probability of hitting <span className="text-foreground">-50% equity</span> before a volatility-adjusted horizon.
+          </p>
         </header>
 
-        {/* Dominant number */}
-        <section className="oc-glass rounded-2xl p-4 sm:p-6 space-y-4">
+        <section className="oc-glass rounded-2xl p-6 space-y-6">
           <div className="text-xs tracking-[0.22em] text-foreground/50">RISK</div>
 
-          <div className="flex items-end justify-between gap-6">
-            <div>
-              <div className="flex items-baseline gap-3">
-                <div className="text-6xl sm:text-7xl font-semibold tabular-nums text-foreground">
-                  {animatedPct.toFixed(1)}%
-                </div>
-                <div className="pb-3 text-sm text-foreground/60">to -50%</div>
-              </div>
-              <div className="mt-2 text-sm text-foreground/70">{benchmark}</div>
+          <div className="flex items-baseline gap-4">
+            <div className="text-6xl sm:text-7xl font-semibold tabular-nums">
+              {animatedPct.toFixed(1)}%
+            </div>
+            <div className="pb-3 text-sm text-foreground/60">to -50%</div>
+          </div>
 
-              <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                <div className="rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-3 py-1 text-foreground/70">
-                  Volatility:{" "}
-                  <span className="text-[color:var(--accent)] tabular-nums">{volLabel(inputs.volLevel)}</span>
-                </div>
+          <div className="text-sm text-foreground/70">{benchmark}</div>
 
-                <div className="rounded-full border border-[color:var(--accent)]/20 bg-[color:var(--card)] px-3 py-1 text-foreground/70">
-                  <Tooltip label="Horizon">
-                    <div className="space-y-2">
-                      <div>The simulation window, expressed in trades.</div>
-                      <div className="text-foreground/70">
-                        Higher volatility compresses the horizon. Higher risk per trade compresses it further.
-                      </div>
-                      <div className="text-foreground/70">
-                        Drawdown risk is measured as: hit -50% equity at any point before this horizon.
-                      </div>
-                    </div>
-                  </Tooltip>
-                  <span className="ml-2">
-                    <span className="text-foreground/50">:</span>{" "}
-                    <span className="text-foreground tabular-nums">
-                      {horizonTrades !== null ? `${horizonTrades} trades` : "—"}
-                    </span>
-                  </span>
-                </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            <div className="rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-3 py-1">
+              Volatility:{" "}
+              <span className="text-[color:var(--accent)]">{volLabel(inputs.volLevel)}</span>
+            </div>
 
-                <div className="rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1 text-foreground/70">
-                  Paths: <span className="text-foreground tabular-nums">1,500</span>
-                </div>
-              </div>
+            <div className="rounded-full border border-[color:var(--border)] px-3 py-1">
+              <Tooltip label="Horizon">
+                Simulation window in trades. Higher volatility and higher risk compress the horizon.
+              </Tooltip>
+              <span className="ml-2">
+                {horizonTrades !== null ? `${horizonTrades} trades` : "—"}
+              </span>
+            </div>
 
-              {(primary.isComputing || primary.error) && (
-                <div className="mt-2 text-xs text-foreground/50">
-                  {primary.isComputing ? "Recomputing…" : primary.error}
-                </div>
-              )}
+            <div className="rounded-full border border-[color:var(--border)] px-3 py-1">
+              Paths: 1,500
             </div>
           </div>
 
-          {/* Cone placeholder */}
-          <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-4">
-            <div className="flex items-center justify-between">
-              <div className="text-xs tracking-[0.22em] text-foreground/50">EQUITY CONE</div>
-              <div className="text-xs text-foreground/45">
-                {primary.result ? "percentile bands ready" : "computing…"}
-              </div>
-            </div>
+          <EquityCone bands={primary.result?.bands ?? null} height={240} />
+        </section>
 
-            <div className="mt-4 h-[240px] rounded-lg border border-[color:var(--border)] bg-black/10">
-              <div className="flex h-full items-center justify-center text-xs text-foreground/45">
-                Cone chart renders next (Step 4).
-              </div>
-            </div>
+        <section className="grid gap-4 sm:grid-cols-2">
+          <SliderField
+            label="Risk per trade"
+            value={inputs.riskPerTradePct}
+            min={0.1}
+            max={5}
+            step={0.05}
+            suffix="%"
+            onChange={(v) =>
+              setInputs((s) => ({ ...s, riskPerTradePct: clamp(v, 0.1, 5) }))
+            }
+          />
+
+          <SliderField
+            label="Win rate"
+            value={inputs.winRatePct}
+            min={20}
+            max={80}
+            step={1}
+            suffix="%"
+            onChange={(v) =>
+              setInputs((s) => ({ ...s, winRatePct: clamp(v, 20, 80) }))
+            }
+          />
+
+          <SliderField
+            label="Avg R multiple"
+            value={inputs.avgR}
+            min={0.5}
+            max={3}
+            step={0.05}
+            suffix="R"
+            onChange={(v) =>
+              setInputs((s) => ({ ...s, avgR: clamp(v, 0.5, 3) }))
+            }
+          />
+
+          <div className="oc-glass rounded-xl p-5">
+            <div className="text-sm text-foreground/80 mb-4">Volatility level</div>
+            <Segmented
+              value={inputs.volLevel}
+              onChange={(v) => setInputs((s) => ({ ...s, volLevel: v }))}
+            />
           </div>
         </section>
 
-        {/* Inputs */}
-        <section className="oc-glass rounded-2xl p-4 sm:p-6 space-y-4">
-          <div className="text-xs tracking-[0.22em] text-foreground/50">SCENARIO</div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <SliderField
-              label="Risk per trade"
-              value={inputs.riskPerTradePct}
-              min={0.1}
-              max={5.0}
-              step={0.05}
-              suffix="%"
-              onChange={(v) => setInputs((s) => ({ ...s, riskPerTradePct: clamp(v, 0.1, 5.0) }))}
-              tip={<div>Percent of equity at stake per trade. Higher values accelerate drawdown risk nonlinearly.</div>}
-            />
-
-            <SliderField
-              label="Win rate"
-              value={inputs.winRatePct}
-              min={20}
-              max={80}
-              step={1}
-              suffix="%"
-              onChange={(v) => setInputs((s) => ({ ...s, winRatePct: clamp(v, 20, 80) }))}
-              tip={<div>Probability a trade closes positive.</div>}
-            />
-
-            <SliderField
-              label="Avg R multiple"
-              value={inputs.avgR}
-              min={0.5}
-              max={3.0}
-              step={0.05}
-              suffix="R"
-              onChange={(v) => setInputs((s) => ({ ...s, avgR: clamp(v, 0.5, 3.0) }))}
-              tip={<div>Average win size relative to average loss (loss is 1R).</div>}
-            />
-
-            <div className="oc-glass rounded-xl p-5">
-              <div className="text-sm text-foreground/80">
-                <Tooltip label="Volatility level">
-                  <div className="space-y-2">
-                    <div>Controls regime intensity. It compresses or extends the horizon.</div>
-                    <div className="text-foreground/70">Higher volatility → shorter horizon → less room to recover.</div>
-                  </div>
-                </Tooltip>
-              </div>
-
-              <div className="mt-4">
-                <Segmented value={inputs.volLevel} onChange={(v) => setInputs((s) => ({ ...s, volLevel: v }))} />
-              </div>
-
-              <div className="mt-3 text-[11px] text-foreground/50">
-                Higher volatility → shorter horizon → less room to recover.
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Reduce risk */}
-        <section className="oc-glass rounded-2xl p-4 sm:p-6">
+        <section className="oc-glass rounded-xl p-5">
           <div className="text-xs tracking-[0.22em] text-foreground/50">REDUCE RISK</div>
           <div className="mt-3 text-sm text-foreground/75">
-            If you reduce risk per trade to{" "}
-            <span className="text-foreground tabular-nums">{lowerRiskPct.toFixed(2)}%</span>, 50% drawdown risk falls to{" "}
-            <span className="text-foreground tabular-nums">{(dd50Lower * 100).toFixed(1)}%</span>.
+            Reduce risk to{" "}
+            <span className="tabular-nums">{lowerRiskPct.toFixed(2)}%</span> → DD50 becomes{" "}
+            <span className="tabular-nums">{(dd50Lower * 100).toFixed(1)}%</span>.
           </div>
-
-          {(lower.isComputing || lower.error) && (
-            <div className="mt-2 text-xs text-foreground/50">
-              {lower.isComputing ? "Recomputing…" : lower.error}
-            </div>
-          )}
         </section>
 
-        {/* CTA */}
-        <section className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div className="text-sm text-foreground">Track this live with your actual positions.</div>
-              <div className="mt-1 text-xs text-foreground/55">
-                Smoothed updates. Regime state. Recompute cadence. Finished feel.
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <a href="/portfolio" className="oc-btn oc-btn-primary">
-                Open Dashboard
-              </a>
-              <a href="/pricing" className="oc-btn oc-btn-secondary">
-                Pricing
-              </a>
+        <section className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-6 flex justify-between items-center">
+          <div>
+            <div className="text-sm">Track this live with your actual positions.</div>
+            <div className="text-xs text-foreground/55 mt-1">
+              Smoothed updates. Regime state. Recompute cadence.
             </div>
           </div>
+          <a href="/portfolio" className="oc-btn oc-btn-primary">
+            Open Dashboard
+          </a>
         </section>
       </div>
     </main>
