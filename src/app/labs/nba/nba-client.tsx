@@ -135,6 +135,29 @@ function MoveGapTip() {
   );
 }
 
+/** NEW: Plain-language explainer + disclaimer (no math). */
+function MoveGapExplainer() {
+  return (
+    <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-2">
+          <div className="text-sm font-medium text-foreground">Move gap, explained</div>
+          <p className="max-w-3xl text-sm leading-relaxed text-foreground/70">
+            Move gap helps you spot games where the live spread has shifted <span className="font-medium">more than usual</span>{" "}
+            for this point in the game. It’s designed for scanning a slate—especially late 1Q and mid 2Q/3Q—so you can
+            quickly see where the market is behaving unusually and decide what deserves a closer look.
+          </p>
+        </div>
+
+        <div className="sm:max-w-sm rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-relaxed text-foreground/65">
+          This is <span className="font-medium text-foreground/80">not</span> a bet signal. It does not recommend a wager or
+          predict outcomes—only highlights market deviations for review.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type ViewMode = "slate" | "heatmap";
 
 type Row = {
@@ -167,10 +190,139 @@ type Row = {
   isLive: boolean;
 };
 
+/** -------- Treemap (squarify) layout (no deps) -------- */
+type Rect = { x: number; y: number; w: number; h: number };
+
+type TreeItem = {
+  id: string;
+  value: number;
+  row: Row;
+};
+
+type Placed = { item: TreeItem; rect: Rect };
+
+function sum(items: TreeItem[]) {
+  return items.reduce((a, b) => a + b.value, 0);
+}
+
+function worstAspect(row: TreeItem[], side: number) {
+  if (row.length === 0) return Infinity;
+  const s = sum(row);
+  if (s <= 0) return Infinity;
+
+  let minV = Infinity;
+  let maxV = 0;
+  for (const it of row) {
+    minV = Math.min(minV, it.value);
+    maxV = Math.max(maxV, it.value);
+  }
+  if (!Number.isFinite(minV) || minV <= 0) return Infinity;
+
+  const s2 = s * s;
+  const side2 = side * side;
+  return Math.max((side2 * maxV) / s2, s2 / (side2 * minV));
+}
+
+function layoutRow(row: TreeItem[], rect: Rect): { placed: Placed[]; remaining: Rect } {
+  const placed: Placed[] = [];
+  const s = sum(row);
+
+  if (row.length === 0 || s <= 0 || rect.w <= 0 || rect.h <= 0) {
+    return { placed, remaining: rect };
+  }
+
+  const horizontal = rect.w >= rect.h;
+
+  if (horizontal) {
+    const h = s / rect.w;
+    let x = rect.x;
+
+    for (const it of row) {
+      const w = it.value / h;
+      placed.push({ item: it, rect: { x, y: rect.y, w, h } });
+      x += w;
+    }
+
+    return {
+      placed,
+      remaining: { x: rect.x, y: rect.y + h, w: rect.w, h: rect.h - h },
+    };
+  } else {
+    const w = s / rect.h;
+    let y = rect.y;
+
+    for (const it of row) {
+      const h = it.value / w;
+      placed.push({ item: it, rect: { x: rect.x, y, w, h } });
+      y += h;
+    }
+
+    return {
+      placed,
+      remaining: { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h },
+    };
+  }
+}
+
+function squarify(items: TreeItem[], rect: Rect): Placed[] {
+  const placed: Placed[] = [];
+  const remaining = [...items]
+    .filter((it) => Number.isFinite(it.value) && it.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  let r: Rect = { ...rect };
+  let row: TreeItem[] = [];
+
+  while (remaining.length > 0) {
+    const next = remaining[0];
+    const side = Math.min(r.w, r.h);
+
+    if (row.length === 0) {
+      row.push(next);
+      remaining.shift();
+      continue;
+    }
+
+    const currentWorst = worstAspect(row, side);
+    const nextWorst = worstAspect([...row, next], side);
+
+    if (nextWorst <= currentWorst) {
+      row.push(next);
+      remaining.shift();
+    } else {
+      const res = layoutRow(row, r);
+      placed.push(...res.placed);
+      r = res.remaining;
+      row = [];
+      if (r.w <= 0 || r.h <= 0) break;
+    }
+  }
+
+  if (row.length > 0 && r.w > 0 && r.h > 0) {
+    const res = layoutRow(row, r);
+    placed.push(...res.placed);
+  }
+
+  return placed;
+}
+
 function toneFromAbsZ(absZ: number): Row["tone"] {
   if (absZ >= 1.5) return "accent";
   if (absZ >= 1.0) return "warn";
   return "neutral";
+}
+
+function bgFromTone(tone: Row["tone"], intensity01: number) {
+  const a = clamp(intensity01, 0, 1);
+  if (tone === "accent") return `rgba(43, 203, 119, ${0.10 + 0.22 * a})`;
+  if (tone === "warn") return `rgba(245, 158, 11, ${0.08 + 0.18 * a})`;
+  return `rgba(255, 255, 255, ${0.03 + 0.06 * a})`;
+}
+
+function borderFromTone(tone: Row["tone"]) {
+  if (tone === "accent") return "rgba(43, 203, 119, 0.22)";
+  if (tone === "warn") return "rgba(245, 158, 11, 0.22)";
+  return "rgba(255, 255, 255, 0.10)";
 }
 
 function textToneClass(tone: Row["tone"]) {
@@ -199,6 +351,7 @@ function formatClockFromGame(g: any): { clock: string; phase: Row["phase"]; isLi
 
 /**
  * Flashscore-style logos via ESPN CDN.
+ * We keep the mapping local and simple (no Next/Image config needed).
  */
 const NBA_ABBR: Record<string, string> = {
   "atlanta hawks": "ATL",
@@ -241,6 +394,7 @@ function teamAbbr(name: string): string {
 function teamLogoUrl(name: string): string | null {
   const abbr = teamAbbr(name).toLowerCase();
   if (!abbr || abbr.length < 2) return null;
+  // ESPN CDN (works well for tiny icons)
   return `https://a.espncdn.com/i/teamlogos/nba/500/${abbr}.png`;
 }
 
@@ -256,7 +410,9 @@ function ScoreLine({
   homeScore: number | null;
 }) {
   const hasScore = typeof awayScore === "number" && typeof homeScore === "number";
-  if (!hasScore) return <span className="text-foreground/55">Score unavailable</span>;
+  if (!hasScore) {
+    return <span className="text-foreground/55">Score unavailable</span>;
+  }
 
   const awayWin = (awayScore ?? 0) > (homeScore ?? 0);
   const homeWin = (homeScore ?? 0) > (awayScore ?? 0);
@@ -277,9 +433,7 @@ function ScoreLine({
         {logo ? <img src={logo} alt={`${name} logo`} className={logoClass} loading="lazy" /> : null}
         <div className="min-w-0 truncate text-sm">
           <span className="font-medium tracking-wide">{abbr}</span>
-          <span className="ml-2 hidden sm:inline text-xs text-foreground/50">
-            {name}
-          </span>
+          <span className="ml-2 hidden sm:inline text-xs text-foreground/50">{name}</span>
         </div>
       </div>
     );
@@ -313,6 +467,7 @@ export default function NbaClient() {
   const [indexSource, setIndexSource] = useState<"stub" | "remote">("stub");
 
   const [view, setView] = useState<ViewMode>("slate");
+
   const [nowTick, setNowTick] = useState(() => Date.now());
 
   useEffect(() => {
@@ -323,26 +478,6 @@ export default function NbaClient() {
   // 2pm gate is now DISPLAY-ONLY (spreads), not computation.
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
-
-  // Load distributions (seed season for now)
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/labs/nba/distributions?season=seed", { cache: "no-store" });
-        const ct = res.headers.get("content-type") || "";
-        if (!ct.includes("application/json")) return;
-
-        const json = await res.json().catch(() => null);
-        if (json?.ok && Array.isArray(json.items) && json.items.length > 0) {
-          const idx = buildDistributionIndex(json.items);
-          setSpreadIndex(idx);
-          setIndexSource("remote");
-        }
-      } catch {
-        // keep stub
-      }
-    })();
-  }, []);
 
   async function load() {
     setLoadError(null);
@@ -383,6 +518,26 @@ export default function NbaClient() {
     const interval = setInterval(load, 90 * 1000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load distributions (seed season for now)
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/labs/nba/distributions?season=seed", { cache: "no-store" });
+        const ct = res.headers.get("content-type") || "";
+        if (!ct.includes("application/json")) return;
+
+        const json = await res.json().catch(() => null);
+        if (json?.ok && Array.isArray(json.items) && json.items.length > 0) {
+          const idx = buildDistributionIndex(json.items);
+          setSpreadIndex(idx);
+          setIndexSource("remote");
+        }
+      } catch {
+        // keep stub
+      }
+    })();
   }, []);
 
   const updatedAtLabel = useMemo(() => formatUpdatedAtPT(meta?.updatedAt), [meta?.updatedAt]);
@@ -446,6 +601,7 @@ export default function NbaClient() {
     });
 
     const phaseRank = (r: Row) => {
+      // live first, then pregame, then finals, unknown in between
       if (r.phase === "live") return 0;
       if (r.phase === "pregame") return 1;
       if (r.phase === "unknown") return 2;
@@ -461,7 +617,7 @@ export default function NbaClient() {
       // rank bigger dislocations higher
       if (b.abs !== a.abs) return b.abs - a.abs;
 
-      // stable ordering
+      // stable, readable ordering
       return a.matchup.localeCompare(b.matchup);
     });
 
@@ -472,6 +628,44 @@ export default function NbaClient() {
     // without spreads unlocked, still useful: keep live + notable dislocations
     return rows.filter((r) => r.abs >= 0.6 || r.isLive);
   }, [rows]);
+
+  const treemap = useMemo(() => {
+    const W = 1000;
+    const H = 720;
+    const area = W * H;
+
+    const items: TreeItem[] = heatRows.map((r) => {
+      const capped = clamp(r.abs, 0, 4.0);
+      const liveBump = r.isLive ? 0.35 : 0;
+      const weight = 1 + (capped + liveBump) * 3.0;
+      return { id: r.key, value: weight, row: r };
+    });
+
+    const total = items.reduce((a, b) => a + b.value, 0);
+    if (!Number.isFinite(total) || total <= 0) return [];
+
+    const scaled: TreeItem[] = items.map((it) => ({ ...it, value: (it.value / total) * area }));
+    const placed = squarify(scaled, { x: 0, y: 0, w: W, h: H });
+
+    const gutterPx = 12;
+
+    return placed.map(({ item, rect }) => {
+      const leftPct = (rect.x / W) * 100;
+      const topPct = (rect.y / H) * 100;
+      const widthPct = (rect.w / W) * 100;
+      const heightPct = (rect.h / H) * 100;
+
+      return {
+        item,
+        left: `calc(${leftPct}% + ${gutterPx / 2}px)`,
+        top: `calc(${topPct}% + ${gutterPx / 2}px)`,
+        width: `calc(${widthPct}% - ${gutterPx}px)`,
+        height: `calc(${heightPct}% - ${gutterPx}px)`,
+        widthPct,
+        heightPct,
+      };
+    });
+  }, [heatRows]);
 
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
@@ -511,9 +705,7 @@ export default function NbaClient() {
               </div>
             </div>
 
-            <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">
-              Live Deviation Heat Map
-            </h1>
+            <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">Live Deviation Heat Map</h1>
 
             <p className="mt-4 max-w-3xl text-lg text-foreground/75">
               Highlights games where the live market move differs from what’s typical for similar game states.
@@ -543,6 +735,9 @@ export default function NbaClient() {
             </button>
           </div>
         </div>
+
+        {/* NEW: Quick explanation + disclaimer */}
+        <MoveGapExplainer />
 
         <section className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-6">
           {loading ? (
