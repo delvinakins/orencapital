@@ -47,10 +47,8 @@ function roundToHalf(x: any): number | null {
 
 function formatSpread(x: any, digits = 1) {
   if (x == null) return "—";
-
   const v = typeof x === "number" ? x : Number(String(x).trim());
   if (!Number.isFinite(v)) return "—";
-
   const s = v.toFixed(digits);
   if (v > 0) return `+${s}`;
   if (v < 0) return s;
@@ -169,122 +167,6 @@ type Row = {
   isLive: boolean;
 };
 
-/** -------- Treemap (squarify) layout (no deps) -------- */
-type Rect = { x: number; y: number; w: number; h: number };
-
-type TreeItem = {
-  id: string;
-  value: number;
-  row: Row;
-};
-
-type Placed = { item: TreeItem; rect: Rect };
-
-function sum(items: TreeItem[]) {
-  return items.reduce((a, b) => a + b.value, 0);
-}
-
-function worstAspect(row: TreeItem[], side: number) {
-  if (row.length === 0) return Infinity;
-  const s = sum(row);
-  if (s <= 0) return Infinity;
-
-  let minV = Infinity;
-  let maxV = 0;
-  for (const it of row) {
-    minV = Math.min(minV, it.value);
-    maxV = Math.max(maxV, it.value);
-  }
-  if (!Number.isFinite(minV) || minV <= 0) return Infinity;
-
-  const s2 = s * s;
-  const side2 = side * side;
-  return Math.max((side2 * maxV) / s2, s2 / (side2 * minV));
-}
-
-function layoutRow(row: TreeItem[], rect: Rect): { placed: Placed[]; remaining: Rect } {
-  const placed: Placed[] = [];
-  const s = sum(row);
-
-  if (row.length === 0 || s <= 0 || rect.w <= 0 || rect.h <= 0) {
-    return { placed, remaining: rect };
-  }
-
-  const horizontal = rect.w >= rect.h;
-
-  if (horizontal) {
-    const h = s / rect.w;
-    let x = rect.x;
-
-    for (const it of row) {
-      const w = it.value / h;
-      placed.push({ item: it, rect: { x, y: rect.y, w, h } });
-      x += w;
-    }
-
-    return {
-      placed,
-      remaining: { x: rect.x, y: rect.y + h, w: rect.w, h: rect.h - h },
-    };
-  } else {
-    const w = s / rect.h;
-    let y = rect.y;
-
-    for (const it of row) {
-      const h = it.value / w;
-      placed.push({ item: it, rect: { x: rect.x, y, w, h } });
-      y += h;
-    }
-
-    return {
-      placed,
-     remaining: { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h },
-    };
-  }
-}
-
-function squarify(items: TreeItem[], rect: Rect): Placed[] {
-  const placed: Placed[] = [];
-  const remaining = [...items]
-    .filter((it) => Number.isFinite(it.value) && it.value > 0)
-    .sort((a, b) => b.value - a.value);
-
-  let r: Rect = { ...rect };
-  let row: TreeItem[] = [];
-
-  while (remaining.length > 0) {
-    const next = remaining[0];
-    const side = Math.min(r.w, r.h);
-
-    if (row.length === 0) {
-      row.push(next);
-      remaining.shift();
-      continue;
-    }
-
-    const currentWorst = worstAspect(row, side);
-    const nextWorst = worstAspect([...row, next], side);
-
-    if (nextWorst <= currentWorst) {
-      row.push(next);
-      remaining.shift();
-    } else {
-      const res = layoutRow(row, r);
-      placed.push(...res.placed);
-      r = res.remaining;
-      row = [];
-      if (r.w <= 0 || r.h <= 0) break;
-    }
-  }
-
-  if (row.length > 0 && r.w > 0 && r.h > 0) {
-    const res = layoutRow(row, r);
-    placed.push(...res.placed);
-  }
-
-  return placed;
-}
-
 function toneFromAbsZ(absZ: number): Row["tone"] {
   if (absZ >= 1.5) return "accent";
   if (absZ >= 1.0) return "warn";
@@ -374,9 +256,7 @@ function ScoreLine({
   homeScore: number | null;
 }) {
   const hasScore = typeof awayScore === "number" && typeof homeScore === "number";
-  if (!hasScore) {
-    return <span className="text-foreground/55">Score unavailable</span>;
-  }
+  if (!hasScore) return <span className="text-foreground/55">Score unavailable</span>;
 
   const awayWin = (awayScore ?? 0) > (homeScore ?? 0);
   const homeWin = (homeScore ?? 0) > (awayScore ?? 0);
@@ -397,7 +277,9 @@ function ScoreLine({
         {logo ? <img src={logo} alt={`${name} logo`} className={logoClass} loading="lazy" /> : null}
         <div className="min-w-0 truncate text-sm">
           <span className="font-medium tracking-wide">{abbr}</span>
-          <span className="ml-2 hidden sm:inline text-xs text-foreground/50">{name}</span>
+          <span className="ml-2 hidden sm:inline text-xs text-foreground/50">
+            {name}
+          </span>
         </div>
       </div>
     );
@@ -426,6 +308,7 @@ export default function NbaClient() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [meta, setMeta] = useState<LiveMeta>(undefined);
 
+  // Always have a working baseline
   const [spreadIndex, setSpreadIndex] = useState<any>(() => makeStubIndex());
   const [indexSource, setIndexSource] = useState<"stub" | "remote">("stub");
 
@@ -437,19 +320,20 @@ export default function NbaClient() {
     return () => clearInterval(t);
   }, []);
 
+  // 2pm gate is now DISPLAY-ONLY (spreads), not computation.
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
+  // Load distributions (seed season for now)
   useEffect(() => {
     (async () => {
       try {
-        // 🔑 Explicit season while we're in seed mode
         const res = await fetch("/api/labs/nba/distributions?season=seed", { cache: "no-store" });
         const ct = res.headers.get("content-type") || "";
         if (!ct.includes("application/json")) return;
 
         const json = await res.json().catch(() => null);
-        if (json?.ok && json?.items) {
+        if (json?.ok && Array.isArray(json.items) && json.items.length > 0) {
           const idx = buildDistributionIndex(json.items);
           setSpreadIndex(idx);
           setIndexSource("remote");
@@ -508,20 +392,17 @@ export default function NbaClient() {
     const computed = games.map((g: any) => {
       const { clock, phase, isLive } = formatClockFromGame(g);
 
-      const result = after2pm ? computeDeviation(g, { spreadIndex }) : null;
+      // ✅ Compute deviation ALWAYS (no 2pm gate)
+      const result = computeDeviation(g, { spreadIndex });
 
-      const abs =
-        after2pm && result && Number.isFinite(result.absDislocationPts) ? result.absDislocationPts : 0;
-      const moveGapPts =
-        after2pm && result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : 0;
+      const abs = result && Number.isFinite(result.absDislocationPts) ? result.absDislocationPts : 0;
+      const moveGapPts = result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : 0;
 
-      const observedMove =
-        after2pm && result && Number.isFinite(result.observedMove) ? result.observedMove : 0;
-      const expectedMove =
-        after2pm && result && Number.isFinite(result.expectedMove) ? result.expectedMove : 0;
+      const observedMove = result && Number.isFinite(result.observedMove) ? result.observedMove : 0;
+      const expectedMove = result && Number.isFinite(result.expectedMove) ? result.expectedMove : 0;
 
-      const absZ = after2pm && result && Number.isFinite(result.absZ) ? result.absZ : 0;
-      const tone = after2pm ? toneFromAbsZ(absZ) : "neutral";
+      const absZ = result && Number.isFinite(result.absZ) ? result.absZ : 0;
+      const tone = toneFromAbsZ(absZ);
 
       const awayTeam = String(g?.awayTeam ?? "—");
       const homeTeam = String(g?.homeTeam ?? "—");
@@ -530,6 +411,10 @@ export default function NbaClient() {
 
       const liveRounded = roundToHalf(g?.liveSpreadHome);
       const closeRounded = roundToHalf(g?.closingSpreadHome);
+
+      // 2pm gate is DISPLAY ONLY:
+      const liveLabel = after2pm ? formatSpread(liveRounded, 1) : "—";
+      const closeLabel = after2pm ? formatSpread(closeRounded, 1) : "—";
 
       return {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
@@ -548,10 +433,10 @@ export default function NbaClient() {
         matchup: `${awayTeam} @ ${homeTeam}`,
         clock,
 
-        live: after2pm ? formatSpread(liveRounded, 1) : "—",
-        close: after2pm ? formatSpread(closeRounded, 1) : "—",
+        live: liveLabel,
+        close: closeLabel,
 
-        scoreText: after2pm ? formatSigned(moveGapPts, 1) : "—",
+        scoreText: formatSigned(moveGapPts, 1),
         tone,
         absZ,
 
@@ -573,20 +458,20 @@ export default function NbaClient() {
       const rb = phaseRank(b);
       if (ra !== rb) return ra - rb;
 
-      if (after2pm) {
-        if (b.abs !== a.abs) return b.abs - a.abs;
-      }
+      // rank bigger dislocations higher
+      if (b.abs !== a.abs) return b.abs - a.abs;
 
+      // stable ordering
       return a.matchup.localeCompare(b.matchup);
     });
 
     return computed;
-  }, [games, after2pm, spreadIndex]);
+  }, [games, spreadIndex, after2pm]);
 
   const heatRows = useMemo(() => {
-    if (!after2pm) return rows;
+    // without spreads unlocked, still useful: keep live + notable dislocations
     return rows.filter((r) => r.abs >= 0.6 || r.isLive);
-  }, [rows, after2pm]);
+  }, [rows]);
 
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
@@ -621,14 +506,14 @@ export default function NbaClient() {
                 </div>
               ) : null}
 
-              {after2pm ? (
-                <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
-                  Index: {indexSource === "remote" ? "Market" : "Stub"}
-                </div>
-              ) : null}
+              <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
+                Index: {indexSource === "remote" ? "Market" : "Stub"}
+              </div>
             </div>
 
-            <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">Live Deviation Heat Map</h1>
+            <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">
+              Live Deviation Heat Map
+            </h1>
 
             <p className="mt-4 max-w-3xl text-lg text-foreground/75">
               Highlights games where the live market move differs from what’s typical for similar game states.
