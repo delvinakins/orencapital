@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Tooltip } from "@/components/Tooltip";
-import ProLock from "@/components/ProLock";
+import Tooltip from "@/components/Tooltip";
+import ProGate from "@/components/ProGate";
 import JournalTradeActions from "./JournalTradeActions";
 
 type InstrumentType = "stock" | "option" | "future" | "crypto" | "fx" | "other";
@@ -121,9 +121,7 @@ function EVTipBody() {
       <div className="text-foreground/70">
         EV is your <span className="font-semibold">average result per trade</span>, measured in R.
       </div>
-      <div className="text-foreground/70">
-        Over time: positive EV trends upward; negative EV trends downward.
-      </div>
+      <div className="text-foreground/70">Over time: positive EV trends upward; negative EV trends downward.</div>
       <div className="text-foreground/70">This isn’t a guarantee—just the average of what you’ve logged.</div>
     </div>
   );
@@ -135,9 +133,7 @@ function StopTipBody() {
       <div>
         <span className="font-semibold">Stop</span>: the price level that invalidates your trade idea.
       </div>
-      <div className="text-foreground/70">
-        It defines where you are wrong and prevents small losses from becoming large ones.
-      </div>
+      <div className="text-foreground/70">It defines where you are wrong and prevents small losses from becoming large ones.</div>
       <div className="text-foreground/70">
         It also defines <span className="font-semibold">1R</span> (your risk unit), so Oren can measure consistency.
       </div>
@@ -172,9 +168,7 @@ function TradeIdeaTipBody() {
   return (
     <div className="space-y-2 max-w-sm">
       <div className="font-semibold">Trade idea</div>
-      <div className="text-foreground/70">
-        Your “why.” One sentence about what you expected—and what would prove you wrong.
-      </div>
+      <div className="text-foreground/70">Your “why.” One sentence about what you expected—and what would prove you wrong.</div>
       <div className="text-foreground/70">
         Example: “Price reclaimed VWAP; I expected a push to highs. If it loses VWAP and fails to reclaim, I’m out.”
       </div>
@@ -188,8 +182,7 @@ function SmallSampleTipBody() {
       <div className="font-semibold">Small samples</div>
       <div className="text-foreground/70">With only a few trades, results can swing a lot due to randomness.</div>
       <div className="text-foreground/70">
-        By default, Oren shows strategies with at least <span className="font-semibold">{MIN_TRACKED}</span> tracked
-        trades.
+        By default, Oren shows strategies with at least <span className="font-semibold">{MIN_TRACKED}</span> tracked trades.
       </div>
     </div>
   );
@@ -380,7 +373,6 @@ export default function JournalClient() {
   const strategyFiltered = useMemo(() => {
     if (!strategyStats) return [];
     if (showSmallSamples) return strategyStats;
-
     return strategyStats.filter((s) => (s.tracked ?? 0) >= MIN_TRACKED);
   }, [strategyStats, showSmallSamples]);
 
@@ -390,7 +382,6 @@ export default function JournalClient() {
     return strategyStats.filter((s) => !shown.has(s.strategy)).length;
   }, [strategyStats, strategyFiltered]);
 
-  // B2: Local patch helpers
   function patchTrade(updated: JournalTrade) {
     setTrades((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
   }
@@ -460,7 +451,12 @@ export default function JournalClient() {
           }
         />
         <Card label="Avg R" value={fmtR(summary.avgR, 3)} tip={<RTipBody />} />
-        <Card label="EV (average outcome)" value={fmtR(summary.ev, 3)} tone={toneFromEV(summary.ev)} tip={<EVTipBody />} />
+        <Card
+          label="EV (average outcome)"
+          value={fmtR(summary.ev, 3)}
+          tone={toneFromEV(summary.ev)}
+          tip={<EVTipBody />}
+        />
         <Card label="Total R" value={fmtR(summary.totalR, 2)} tip={<RTipBody />} />
         <Card
           label="Trades Logged"
@@ -477,8 +473,6 @@ export default function JournalClient() {
             <div className="text-base font-semibold tracking-tight">Log a trade</div>
             <div className="mt-1 text-[15px] text-foreground/70">Structured input. Calm defaults.</div>
           </div>
-
-        
         </div>
 
         <div className="grid gap-4 sm:grid-cols-3">
@@ -510,7 +504,14 @@ export default function JournalClient() {
 
           <Input label="Entry Price" value={entry} onChange={setEntry} type="number" placeholder="190.25" />
 
-          <Input label="Stop Price" value={stop} onChange={setStop} type="number" placeholder="187.50" tip={<StopTipBody />} />
+          <Input
+            label="Stop Price"
+            value={stop}
+            onChange={setStop}
+            type="number"
+            placeholder="187.50"
+            tip={<StopTipBody />}
+          />
 
           <Input label="Exit Price" value={exit} onChange={setExit} type="number" placeholder="194.10" />
 
@@ -567,9 +568,9 @@ export default function JournalClient() {
       </section>
 
       {/* Strategy Breakdown (Pro) */}
-      <ProLock
-        feature="Strategy breakdown"
-        description="See results grouped by your strategy labels. Small samples can be noisy—Oren filters by default."
+      <ProGate
+        lockTitle="Strategy breakdown"
+        lockSubtitle="See results grouped by your strategy labels. Small samples can be noisy—Oren filters by default."
         mode="overlay"
       >
         <section className="oc-glass rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
@@ -686,7 +687,7 @@ export default function JournalClient() {
             </div>
           )}
         </section>
-      </ProLock>
+      </ProGate>
 
       {/* Trades Table */}
       <section className="oc-glass rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
@@ -760,9 +761,7 @@ export default function JournalClient() {
                         <div className="flex justify-end">
                           <JournalTradeActions
                             trade={t}
-                            onUpdated={(updated: Record<string, any>) =>
-                              patchTrade(updated as JournalTrade)
-                            }
+                            onUpdated={(updated: Record<string, any>) => patchTrade(updated as JournalTrade)}
                             onDeleted={(id: string) => removeTrade(id)}
                           />
                         </div>
@@ -775,7 +774,6 @@ export default function JournalClient() {
           </div>
         )}
 
-        {/* Calm nudge: strategy stats may be stale after edits */}
         {!loading && trades.length > 0 && (
           <div className="mt-3 text-sm text-foreground/55">
             Note: Strategy breakdown updates on refresh. Small samples can be noisy.

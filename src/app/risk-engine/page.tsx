@@ -64,7 +64,6 @@ function Tooltip({ label, children }: { label: string; children: React.ReactNode
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
 
-  // Keep tooltip inside viewport
   useEffect(() => {
     if (!open) return;
     const box = boxRef.current;
@@ -221,8 +220,8 @@ function Card({
     tone === "good"
       ? "border-emerald-800/60"
       : tone === "warn"
-      ? "border-amber-800/60"
-      : "border-[color:var(--border)]";
+        ? "border-amber-800/60"
+        : "border-[color:var(--border)]";
 
   return (
     <div className={`oc-glass rounded-xl p-5 sm:p-6 ${toneClass}`}>
@@ -268,17 +267,35 @@ function downloadText(filename: string, text: string) {
   URL.revokeObjectURL(url);
 }
 
-function InlineProNotice({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]/60 px-4 py-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="text-sm text-foreground/80">{children}</div>
-        <Link href="/pricing" className="oc-btn oc-btn-secondary self-start sm:self-auto">
-          Upgrade
-        </Link>
-      </div>
-    </div>
-  );
+/* =========================================================
+   Local save/load (Free) — browser-only
+========================================================= */
+const LOCAL_KEY = "oren_risk_engine_portfolios_v1";
+
+type LocalPortfolio = {
+  id: string;
+  name: string;
+  updated_at: string;
+  data: any;
+};
+
+function readLocalPortfolios(): LocalPortfolio[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalPortfolios(items: LocalPortfolio[]) {
+  try {
+    localStorage.setItem(LOCAL_KEY, JSON.stringify(items));
+  } catch {
+    // ignore
+  }
 }
 
 /* =========================================================
@@ -297,10 +314,18 @@ export default function RiskEnginePage() {
 
   // Positions
   const [positions, setPositions] = useState<Position[]>([
-    { id: uid(), label: "AAPL", side: "long", entry: "190", stop: "185", qty: "10", multiplier: "1" },
+    {
+      id: uid(),
+      label: "AAPL",
+      side: "long",
+      entry: "190",
+      stop: "185",
+      qty: "10",
+      multiplier: "1",
+    },
   ]);
 
-  // Portfolio save/load state (Pro)
+  // Save/load UI state
   const [portfolioName, setPortfolioName] = useState("");
   const [portfolios, setPortfolios] = useState<PortfolioRow[]>([]);
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>("");
@@ -362,19 +387,30 @@ export default function RiskEnginePage() {
     setPositions((prev) => prev.filter((p) => p.id !== id));
   }
 
-  // -------- Portfolios list/save/load (Pro) ----------
+  /* =========================================================
+     Save/Load — Pro uses API, Free uses localStorage
+  ========================================================= */
   async function refreshPortfolios() {
-    try {
-      setMsg("");
-      setBusy("list");
-      const res = await fetch("/api/portfolios/list", { cache: "no-store" });
-      const json = await res.json().catch(() => ({}));
+    setMsg("");
+    setBusy("list");
 
-      if (res.status === 402) {
-        setMsg("Pro required for Save/Load portfolios.");
+    try {
+      if (!isPro) {
+        const locals = readLocalPortfolios();
+        setPortfolios(
+          locals.map((x) => ({
+            id: x.id,
+            name: x.name,
+            updated_at: x.updated_at,
+            data: x.data,
+          }))
+        );
         setBusy(null);
         return;
       }
+
+      const res = await fetch("/api/portfolios/list", { cache: "no-store" });
+      const json = await res.json().catch(() => ({}));
 
       if (!res.ok) {
         setMsg(json?.error || "Could not load portfolios.");
@@ -391,55 +427,57 @@ export default function RiskEnginePage() {
   }
 
   async function savePortfolio() {
-    if (!isPro) {
-      setMsg("Pro required to Save/Load portfolios.");
+    setMsg("");
+    setBusy("save");
+
+    const name = portfolioName.trim();
+    if (!name) {
+      setMsg("Name your portfolio first.");
+      setBusy(null);
       return;
     }
 
-    try {
-      setMsg("");
-      setBusy("save");
+    const payloadData = {
+      accountSize,
+      sizingMode,
+      riskPct,
+      fixedRisk,
+      positions,
+      savedAt: new Date().toISOString(),
+    };
 
-      const name = portfolioName.trim();
-      if (!name) {
-        setMsg("Name your portfolio first.");
+    try {
+      if (!isPro) {
+        const locals = readLocalPortfolios();
+        const now = new Date().toISOString();
+        const id = uid();
+
+        const next: LocalPortfolio[] = [
+          { id, name, updated_at: now, data: payloadData },
+          ...locals.filter((p) => p.name !== name).slice(0, 49),
+        ];
+
+        writeLocalPortfolios(next);
+        setMsg("Saved locally ✅ (Free)");
         setBusy(null);
+        await refreshPortfolios();
         return;
       }
-
-      const payload = {
-        name,
-        data: {
-          accountSize,
-          sizingMode,
-          riskPct,
-          fixedRisk,
-          positions,
-          savedAt: new Date().toISOString(),
-        },
-      };
 
       const res = await fetch("/api/portfolios/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ name, data: payloadData }),
       });
 
       const json = await res.json().catch(() => ({}));
-
-      if (res.status === 402) {
-        setMsg("Pro required to Save/Load portfolios.");
-        setBusy(null);
-        return;
-      }
-
       if (!res.ok) {
         setMsg(json?.error || "Save failed.");
         setBusy(null);
         return;
       }
 
-      setMsg("Portfolio saved ✅");
+      setMsg("Portfolio saved ✅ (Cloud)");
       setBusy(null);
       await refreshPortfolios();
     } catch (e: any) {
@@ -449,52 +487,47 @@ export default function RiskEnginePage() {
   }
 
   async function loadPortfolio() {
-    if (!isPro) {
-      setMsg("Pro required to Save/Load portfolios.");
+    setMsg("");
+    setBusy("load");
+
+    if (!selectedPortfolioId) {
+      setMsg("Select a portfolio to load.");
+      setBusy(null);
       return;
     }
 
     try {
-      setMsg("");
-      setBusy("load");
+      let data: any = null;
 
-      if (!selectedPortfolioId) {
-        setMsg("Select a portfolio to load.");
-        setBusy(null);
-        return;
+      if (!isPro) {
+        const locals = readLocalPortfolios();
+        const found = locals.find((p) => p.id === selectedPortfolioId) ?? null;
+        data = found?.data ?? null;
+      } else {
+        const res = await fetch(`/api/portfolios/get?id=${encodeURIComponent(selectedPortfolioId)}`, { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setMsg(json?.error || "Load failed.");
+          setBusy(null);
+          return;
+        }
+        const item = json?.item?.data || json?.item || null;
+        data = item?.data ? item.data : item;
       }
 
-      const res = await fetch(`/api/portfolios/get?id=${encodeURIComponent(selectedPortfolioId)}`, { cache: "no-store" });
-      const json = await res.json().catch(() => ({}));
-
-      if (res.status === 402) {
-        setMsg("Pro required to Save/Load portfolios.");
-        setBusy(null);
-        return;
-      }
-
-      if (!res.ok) {
-        setMsg(json?.error || "Load failed.");
-        setBusy(null);
-        return;
-      }
-
-      const data = json?.item?.data || json?.item || null;
       if (!data) {
         setMsg("Load failed: no data returned.");
         setBusy(null);
         return;
       }
 
-      const p = data.data ? data.data : data;
+      setAccountSize(String(data.accountSize ?? "10000"));
+      setSizingMode((data.sizingMode as SizingMode) ?? "constant-fraction");
+      setRiskPct(String(data.riskPct ?? "1"));
+      setFixedRisk(String(data.fixedRisk ?? "100"));
+      setPositions(Array.isArray(data.positions) ? data.positions : []);
 
-      setAccountSize(String(p.accountSize ?? "10000"));
-      setSizingMode((p.sizingMode as SizingMode) ?? "constant-fraction");
-      setRiskPct(String(p.riskPct ?? "1"));
-      setFixedRisk(String(p.fixedRisk ?? "100"));
-      setPositions(Array.isArray(p.positions) ? p.positions : []);
-
-      setMsg("Portfolio loaded ✅");
+      setMsg(isPro ? "Portfolio loaded ✅ (Cloud)" : "Portfolio loaded ✅ (Local)");
       setBusy(null);
     } catch (e: any) {
       setBusy(null);
@@ -503,11 +536,10 @@ export default function RiskEnginePage() {
   }
 
   useEffect(() => {
-    if (isPro) refreshPortfolios().catch(() => {});
+    refreshPortfolios().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPro]);
 
-  // CSV Export = FREE
   function exportCsv() {
     const headers = ["Label", "Side", "Entry", "Stop", "Qty", "Multiplier", "DollarRisk"];
     const lines = [
@@ -617,7 +649,11 @@ export default function RiskEnginePage() {
 
         {/* Summary */}
         <section className="grid gap-4 sm:grid-cols-3">
-          <Card label="Target Dollar Risk" value={money(targetDollarRisk)} tip="How much you intend to risk on this trade idea (based on sizing mode)." />
+          <Card
+            label="Target Dollar Risk"
+            value={money(targetDollarRisk)}
+            tip="How much you intend to risk on this trade idea (based on sizing mode)."
+          />
           <Card
             label="Current Total Risk"
             value={money(totals.totalRisk)}
@@ -637,9 +673,14 @@ export default function RiskEnginePage() {
         <section className="oc-glass rounded-2xl p-4 sm:p-6 space-y-4 overflow-visible">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-lg font-semibold">Positions</div>
-            <button onClick={addPosition} className="oc-btn oc-btn-secondary">
-              + Add position
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button onClick={addPosition} className="oc-btn oc-btn-secondary">
+                + Add position
+              </button>
+              <button onClick={exportCsv} className="oc-btn oc-btn-secondary">
+                Export CSV
+              </button>
+            </div>
           </div>
 
           <div className="space-y-3">
@@ -733,44 +774,36 @@ export default function RiskEnginePage() {
               );
             })}
           </div>
-
-          {/* CSV Export (FREE) */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
-            <div className="text-xs text-foreground/55">Export positions + risk metrics for tracking, journaling, or analysis.</div>
-            <button onClick={exportCsv} className="oc-btn oc-btn-secondary">
-              Export CSV
-            </button>
-          </div>
         </section>
 
-        {/* Save / Load (PRO) */}
+        {/* Save / Load (Free local, Pro cloud) */}
         <section className="oc-glass rounded-2xl p-4 sm:p-6 space-y-4 overflow-visible">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="text-lg font-semibold">Save / Load Portfolios</div>
-              <div className="mt-1 text-xs text-foreground/55">Save setups (account + sizing + positions) and reload them instantly.</div>
+              <div className="text-lg font-semibold">Save / Load</div>
+              <div className="mt-1 text-sm text-foreground/70">
+                {isPro ? "Cloud save/load (Pro): sync across devices." : "Local save/load (Free): stored in this browser only."}
+              </div>
             </div>
 
-            <button
-              onClick={refreshPortfolios}
-              disabled={!isPro || busy === "list"}
-              className="oc-btn oc-btn-secondary disabled:opacity-60"
-              title={!isPro ? "Pro required" : undefined}
-            >
+            <button onClick={refreshPortfolios} disabled={busy === "list"} className="oc-btn oc-btn-secondary disabled:opacity-60">
               {busy === "list" ? "Refreshing..." : "Refresh list"}
             </button>
           </div>
 
-          {!isPro && (
-            <InlineProNotice>
-              <span className="text-foreground/80">Pro required:</span>{" "}
-              <span className="text-foreground/60">Save/load is a workflow feature.</span>
-            </InlineProNotice>
-          )}
-
           {!!msg && (
             <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]/55 backdrop-blur-[2px] p-3 text-sm text-foreground">
               {msg}
+            </div>
+          )}
+
+          {!isPro && (
+            <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]/55 backdrop-blur-[2px] p-3 text-sm text-foreground/80">
+              Want this on every device?{" "}
+              <Link href="/pricing" className="underline underline-offset-2">
+                Upgrade to Pro
+              </Link>{" "}
+              for cloud save/load.
             </div>
           )}
 
@@ -785,15 +818,16 @@ export default function RiskEnginePage() {
 
             <div className="flex flex-col gap-2 md:col-span-2">
               <label className="text-sm text-foreground/70">
-                <Tooltip label="Saved portfolios">Your saved configurations. Loading replaces the current editor state.</Tooltip>
+                <Tooltip label="Saved portfolios">
+                  Your saved configurations. Loading replaces the current editor state.
+                </Tooltip>
               </label>
 
               <div className="flex flex-col sm:flex-row gap-2">
                 <select
                   value={selectedPortfolioId}
                   onChange={(e) => setSelectedPortfolioId(e.target.value)}
-                  disabled={!isPro}
-                  className="h-12 flex-1 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none disabled:opacity-60"
+                  className="h-12 flex-1 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none"
                 >
                   <option value="">Select…</option>
                   {portfolios.map((pp) => (
@@ -803,17 +837,13 @@ export default function RiskEnginePage() {
                   ))}
                 </select>
 
-                <button onClick={savePortfolio} disabled={!isPro || busy === "save"} className="oc-btn oc-btn-accent disabled:opacity-60">
+                <button onClick={savePortfolio} disabled={busy === "save"} className="oc-btn oc-btn-accent disabled:opacity-60">
                   {busy === "save" ? "Saving..." : "Save"}
                 </button>
 
-                <button onClick={loadPortfolio} disabled={!isPro || busy === "load"} className="oc-btn oc-btn-secondary disabled:opacity-60">
+                <button onClick={loadPortfolio} disabled={busy === "load"} className="oc-btn oc-btn-secondary disabled:opacity-60">
                   {busy === "load" ? "Loading..." : "Load"}
                 </button>
-              </div>
-
-              <div className="text-xs text-foreground/55">
-                {isPro ? "Saved portfolios are tied to your account." : "Upgrade to save setups and reload them instantly."}
               </div>
             </div>
           </div>
