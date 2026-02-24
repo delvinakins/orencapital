@@ -30,8 +30,6 @@ function makeStubIndex() {
   return buildDistributionIndex(samples);
 }
 
-const spreadIndex = makeStubIndex();
-
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
@@ -240,7 +238,7 @@ function layoutRow(row: TreeItem[], rect: Rect): { placed: Placed[]; remaining: 
 
     return {
       placed,
-      remaining: { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h },
+     remaining: { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h },
     };
   }
 }
@@ -293,19 +291,6 @@ function toneFromAbsZ(absZ: number): Row["tone"] {
   return "neutral";
 }
 
-function bgFromTone(tone: Row["tone"], intensity01: number) {
-  const a = clamp(intensity01, 0, 1);
-  if (tone === "accent") return `rgba(43, 203, 119, ${0.10 + 0.22 * a})`;
-  if (tone === "warn") return `rgba(245, 158, 11, ${0.08 + 0.18 * a})`;
-  return `rgba(255, 255, 255, ${0.03 + 0.06 * a})`;
-}
-
-function borderFromTone(tone: Row["tone"]) {
-  if (tone === "accent") return "rgba(43, 203, 119, 0.22)";
-  if (tone === "warn") return "rgba(245, 158, 11, 0.22)";
-  return "rgba(255, 255, 255, 0.10)";
-}
-
 function textToneClass(tone: Row["tone"]) {
   if (tone === "accent") return "text-[color:var(--accent)]";
   if (tone === "warn") return "text-amber-200";
@@ -332,7 +317,6 @@ function formatClockFromGame(g: any): { clock: string; phase: Row["phase"]; isLi
 
 /**
  * Flashscore-style logos via ESPN CDN.
- * We keep the mapping local and simple (no Next/Image config needed).
  */
 const NBA_ABBR: Record<string, string> = {
   "atlanta hawks": "ATL",
@@ -375,7 +359,6 @@ function teamAbbr(name: string): string {
 function teamLogoUrl(name: string): string | null {
   const abbr = teamAbbr(name).toLowerCase();
   if (!abbr || abbr.length < 2) return null;
-  // ESPN CDN (works well for tiny icons)
   return `https://a.espncdn.com/i/teamlogos/nba/500/${abbr}.png`;
 }
 
@@ -443,8 +426,10 @@ export default function NbaClient() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [meta, setMeta] = useState<LiveMeta>(undefined);
 
-  const [view, setView] = useState<ViewMode>("slate");
+  const [spreadIndex, setSpreadIndex] = useState<any>(() => makeStubIndex());
+  const [indexSource, setIndexSource] = useState<"stub" | "remote">("stub");
 
+  const [view, setView] = useState<ViewMode>("slate");
   const [nowTick, setNowTick] = useState(() => Date.now());
 
   useEffect(() => {
@@ -454,6 +439,26 @@ export default function NbaClient() {
 
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        // 🔑 Explicit season while we're in seed mode
+        const res = await fetch("/api/labs/nba/distributions?season=seed", { cache: "no-store" });
+        const ct = res.headers.get("content-type") || "";
+        if (!ct.includes("application/json")) return;
+
+        const json = await res.json().catch(() => null);
+        if (json?.ok && json?.items) {
+          const idx = buildDistributionIndex(json.items);
+          setSpreadIndex(idx);
+          setIndexSource("remote");
+        }
+      } catch {
+        // keep stub
+      }
+    })();
+  }, []);
 
   async function load() {
     setLoadError(null);
@@ -556,7 +561,6 @@ export default function NbaClient() {
     });
 
     const phaseRank = (r: Row) => {
-      // live first, then pregame, then finals, unknown in between
       if (r.phase === "live") return 0;
       if (r.phase === "pregame") return 1;
       if (r.phase === "unknown") return 2;
@@ -569,63 +573,20 @@ export default function NbaClient() {
       const rb = phaseRank(b);
       if (ra !== rb) return ra - rb;
 
-      // within buckets
       if (after2pm) {
-        // rank bigger dislocations higher
         if (b.abs !== a.abs) return b.abs - a.abs;
       }
 
-      // stable, readable ordering
       return a.matchup.localeCompare(b.matchup);
     });
 
     return computed;
-  }, [games, after2pm]);
+  }, [games, after2pm, spreadIndex]);
 
   const heatRows = useMemo(() => {
     if (!after2pm) return rows;
     return rows.filter((r) => r.abs >= 0.6 || r.isLive);
   }, [rows, after2pm]);
-
-  const treemap = useMemo(() => {
-    const W = 1000;
-    const H = 720;
-    const area = W * H;
-
-    const items: TreeItem[] = heatRows.map((r) => {
-      if (!after2pm) return { id: r.key, value: 1, row: r };
-
-      const capped = clamp(r.abs, 0, 4.0);
-      const liveBump = r.isLive ? 0.35 : 0;
-      const weight = 1 + (capped + liveBump) * 3.0;
-      return { id: r.key, value: weight, row: r };
-    });
-
-    const total = items.reduce((a, b) => a + b.value, 0);
-    if (!Number.isFinite(total) || total <= 0) return [];
-
-    const scaled: TreeItem[] = items.map((it) => ({ ...it, value: (it.value / total) * area }));
-    const placed = squarify(scaled, { x: 0, y: 0, w: W, h: H });
-
-    const gutterPx = 12;
-
-    return placed.map(({ item, rect }) => {
-      const leftPct = (rect.x / W) * 100;
-      const topPct = (rect.y / H) * 100;
-      const widthPct = (rect.w / W) * 100;
-      const heightPct = (rect.h / H) * 100;
-
-      return {
-        item,
-        left: `calc(${leftPct}% + ${gutterPx / 2}px)`,
-        top: `calc(${topPct}% + ${gutterPx / 2}px)`,
-        width: `calc(${widthPct}% - ${gutterPx}px)`,
-        height: `calc(${heightPct}% - ${gutterPx}px)`,
-        widthPct,
-        heightPct,
-      };
-    });
-  }, [heatRows, after2pm]);
 
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
@@ -657,6 +618,12 @@ export default function NbaClient() {
               {!after2pm ? (
                 <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
                   Spreads unlock at 2pm PT
+                </div>
+              ) : null}
+
+              {after2pm ? (
+                <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
+                  Index: {indexSource === "remote" ? "Market" : "Stub"}
                 </div>
               ) : null}
             </div>
