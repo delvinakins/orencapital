@@ -1,36 +1,14 @@
-// src/app/api/journal/delete/route.ts
+// FILE: src/app/api/journal/delete/route.ts
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type DeletePayload = { id: string };
 
-const SAFE_USER_ERROR =
-  "We couldn’t delete that trade right now. Please try again in a moment.";
-
-async function getSupabaseServerClient() {
-  const cookieStore = await cookies();
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key =
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !key) throw new Error("Missing Supabase env vars");
-
-  return createServerClient(url, key, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll() {},
-    },
-  });
-}
+const SAFE_USER_ERROR = "We couldn’t delete that trade right now. Please try again in a moment.";
 
 export async function POST(req: Request) {
   try {
-    const supabase = await getSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
 
     const {
       data: { user },
@@ -55,10 +33,7 @@ export async function POST(req: Request) {
       .eq("user_id", user.id);
 
     if (error) {
-      console.error("[journal/delete] supabase error:", {
-        code: error.code,
-        message: error.message,
-      });
+      console.error("[journal/delete] supabase error:", { code: error.code, message: error.message });
       return NextResponse.json({ error: SAFE_USER_ERROR }, { status: 500 });
     }
 

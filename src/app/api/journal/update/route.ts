@@ -1,40 +1,17 @@
-// src/app/api/journal/update/route.ts
+// FILE: src/app/api/journal/update/route.ts
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type UpdatePayload = {
   id: string;
   updates: Record<string, unknown>;
 };
 
-const SAFE_USER_ERROR =
-  "We couldn’t update that trade right now. Please try again in a moment.";
-
-async function getSupabaseServerClient() {
-  const cookieStore = await cookies(); // <-- async in your Next version
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key =
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !key) throw new Error("Missing Supabase env vars");
-
-  return createServerClient(url, key, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      // We don't need to set cookies for these routes; avoid typing/runtime issues.
-      setAll() {},
-    },
-  });
-}
+const SAFE_USER_ERROR = "We couldn’t update that trade right now. Please try again in a moment.";
 
 export async function POST(req: Request) {
   try {
-    const supabase = await getSupabaseServerClient();
+    const supabase = await createSupabaseServerClient();
 
     const {
       data: { user },
@@ -47,20 +24,14 @@ export async function POST(req: Request) {
 
     const body = (await req.json()) as Partial<UpdatePayload>;
     const id = typeof body.id === "string" ? body.id : "";
-    const updates =
-      body.updates && typeof body.updates === "object" ? body.updates : null;
+    const updates = body.updates && typeof body.updates === "object" ? body.updates : null;
 
     if (!id || !updates) {
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });
     }
 
-    const forbidden = new Set([
-      "user_id",
-      "owner_id",
-      "email",
-      "created_at",
-      "updated_at",
-    ]);
+    // Prevent privilege escalation / ownership tampering / timestamps
+    const forbidden = new Set(["user_id", "owner_id", "email", "created_at", "updated_at"]);
 
     const cleanedUpdates: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(updates)) {
@@ -80,10 +51,7 @@ export async function POST(req: Request) {
       .single();
 
     if (error) {
-      console.error("[journal/update] supabase error:", {
-        code: error.code,
-        message: error.message,
-      });
+      console.error("[journal/update] supabase error:", { code: error.code, message: error.message });
       return NextResponse.json({ error: SAFE_USER_ERROR }, { status: 500 });
     }
 

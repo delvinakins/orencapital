@@ -1,3 +1,4 @@
+// FILE: src/app/api/journal/list/route.ts
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isUserPro } from "@/lib/pro/isPro";
@@ -29,11 +30,12 @@ function cleanStrategy(s: any): string | null {
   if (typeof s !== "string") return null;
   const t = s.trim();
   if (!t) return null;
-  // keep it calm; avoid insane lengths
   return t.length > 80 ? t.slice(0, 80) : t;
 }
 
-function computeResultR(row: Pick<JournalTradeRow, "result_r" | "entry_price" | "stop_price" | "exit_price" | "side">): number | null {
+function computeResultR(
+  row: Pick<JournalTradeRow, "result_r" | "entry_price" | "stop_price" | "exit_price" | "side">
+): number | null {
   const rr = n(row.result_r);
   if (rr !== null) return rr;
 
@@ -55,11 +57,11 @@ function computeResultR(row: Pick<JournalTradeRow, "result_r" | "entry_price" | 
 
 type StrategyStat = {
   strategy: string;
-  trades: number;         // total trades with this strategy (all)
-  tracked: number;        // trades included in R stats (has result_r or computable)
+  trades: number; // total trades with this strategy (all)
+  tracked: number; // trades included in R stats (has result_r or computable)
   winRate: number | null; // tracked only
-  avgR: number | null;    // tracked only
-  totalR: number | null;  // tracked only
+  avgR: number | null; // tracked only
+  totalR: number | null; // tracked only
   expectancy: number | null; // tracked only (same as avgR)
   largestLoss: number | null; // tracked only (min R)
 };
@@ -80,29 +82,45 @@ export async function GET(req: Request) {
   let isPro = false;
   try {
     const pro = await isUserPro(user.id);
-    isPro = !!pro.isPro;
+    isPro = !!pro?.isPro;
   } catch {
     isPro = false;
   }
 
-  // Optional: allow simple pagination later; for now pull recent
   const url = new URL(req.url);
-  const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 200), 1), 1000);
+  const rawLimit = Number(url.searchParams.get("limit") || 200);
+  const limit = Math.min(Math.max(rawLimit, 1), 1000);
 
   const { data, error } = await supabase
     .from("journal_trades")
     .select(
-      "id,user_id,symbol,instrument,side,entry_price,stop_price,exit_price,result_r,strategy,notes,created_at,closed_at"
+      [
+        "id",
+        "user_id",
+        "symbol",
+        "instrument",
+        "side",
+        "entry_price",
+        "stop_price",
+        "exit_price",
+        "result_r",
+        "strategy",
+        "notes",
+        "created_at",
+        "closed_at",
+      ].join(",")
     )
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .limit(limit)
+    // ✅ Fix TS union issue by asserting the row type at the query level
+    .returns<JournalTradeRow[]>();
 
   if (error) {
     return NextResponse.json({ error: error.message || "Failed to list trades" }, { status: 500 });
   }
 
-  const trades = (data ?? []) as JournalTradeRow[];
+  const trades = data ?? [];
 
   // Strategy stats (Pro only)
   let strategyStats: StrategyStat[] | null = null;
@@ -123,16 +141,7 @@ export async function GET(req: Request) {
       const strategy = cleanStrategy(t.strategy);
       if (!strategy) continue;
 
-      const cur =
-        map.get(strategy) ??
-        ({
-          trades: 0,
-          tracked: 0,
-          sumR: 0,
-          wins: 0,
-          minR: null,
-        } as const);
-
+      const cur = map.get(strategy) ?? { trades: 0, tracked: 0, sumR: 0, wins: 0, minR: null };
       const next = { ...cur };
       next.trades += 1;
 
@@ -159,7 +168,7 @@ export async function GET(req: Request) {
         winRate,
         avgR: avg,
         totalR,
-        expectancy: avg, // calm: expectancy == avg R per trade in this model
+        expectancy: avg,
         largestLoss: v.minR,
       };
     });
