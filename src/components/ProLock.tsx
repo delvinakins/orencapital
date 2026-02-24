@@ -10,6 +10,11 @@ function cn(...classes: Array<string | false | null | undefined>) {
 type Mode = "overlay" | "inline" | "card" | "minimal" | string;
 
 type ProLockProps = {
+  // ✅ SAFETY SWITCH
+  // If false, ProLock renders nothing (or renders children, if you provided them).
+  // Use: <ProLock enabled={!isPro} ... />
+  enabled?: boolean;
+
   // ✅ New API (recommended)
   title?: string;
   subtitle?: string;
@@ -27,6 +32,12 @@ type ProLockProps = {
 };
 
 export default function ProLock(props: ProLockProps) {
+  const enabled = props.enabled ?? true;
+
+  // If disabled, render nothing (or children, if you explicitly want that).
+  // This makes it safe to include ProLock in layouts without accidentally blocking Pro users.
+  if (!enabled) return props.children ? <>{props.children}</> : null;
+
   const accentStyle = { "--accent": "#2BCB77" } as CSSProperties;
   const pathname = usePathname();
 
@@ -43,7 +54,6 @@ export default function ProLock(props: ProLockProps) {
   const secondaryLabel = props.secondaryLabel ?? "Sign in";
 
   // Mode only affects whether we draw the full-page overlay layer.
-  // Keep calm defaults; allow existing 'mode' prop to keep working.
   const mode = props.mode ?? "overlay";
   const showBackdrop = mode === "overlay";
 
@@ -62,13 +72,11 @@ export default function ProLock(props: ProLockProps) {
       <h2 className="mt-4 text-2xl font-semibold tracking-tight sm:text-3xl">
         <span className="oren-accent relative inline-block align-baseline">
           <span className="relative z-10 text-[color:var(--accent)]">{title}</span>
-
           <span
             key={`underline-${pathname}`}
             aria-hidden
             className="oren-underline pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.9]"
           />
-
           <span
             aria-hidden
             className="pointer-events-none absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-[0.10]"
@@ -127,7 +135,14 @@ export default function ProLock(props: ProLockProps) {
     <div className="relative" style={accentStyle}>
       {showBackdrop ? <div className="absolute inset-0 z-10 bg-black/35 backdrop-blur-[6px]" /> : null}
 
-      <div className={cn("relative z-20 mx-auto", showBackdrop ? "flex min-h-[420px] max-w-2xl items-center justify-center px-6 py-14" : "max-w-2xl px-0 py-0")}>
+      <div
+        className={cn(
+          "relative z-20 mx-auto",
+          showBackdrop
+            ? "flex min-h-[420px] max-w-2xl items-center justify-center px-6 py-14"
+            : "max-w-2xl px-0 py-0"
+        )}
+      >
         {content}
       </div>
     </div>
