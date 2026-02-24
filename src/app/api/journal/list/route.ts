@@ -1,4 +1,4 @@
-// FILE: src/app/api/journal/list/route.ts
+// src/app/api/journal/list/route.ts
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isUserPro } from "@/lib/pro/isPro";
@@ -19,6 +19,17 @@ type JournalTradeRow = {
   notes: string | null;
   created_at: string | null;
   closed_at: string | null;
+};
+
+type StrategyStat = {
+  strategy: string;
+  trades: number; // all trades tagged with this strategy
+  tracked: number; // trades with usable R
+  winRate: number | null;
+  avgR: number | null;
+  totalR: number | null;
+  expectancy: number | null; // same as avgR here
+  largestLoss: number | null; // min R
 };
 
 function n(x: any): number | null {
@@ -55,136 +66,115 @@ function computeResultR(
   return Number.isFinite(r) ? r : null;
 }
 
-type StrategyStat = {
-  strategy: string;
-  trades: number; // total trades with this strategy (all)
-  tracked: number; // trades included in R stats (has result_r or computable)
-  winRate: number | null; // tracked only
-  avgR: number | null; // tracked only
-  totalR: number | null; // tracked only
-  expectancy: number | null; // tracked only (same as avgR)
-  largestLoss: number | null; // tracked only (min R)
-};
-
 export async function GET(req: Request) {
-  const supabase = await createSupabaseServerClient();
-
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-
-  if (userErr || !user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // server-truth Pro check
-  let isPro = false;
   try {
-    const pro = await isUserPro(user.id);
-    isPro = !!pro?.isPro;
-  } catch {
-    isPro = false;
-  }
+    const supabase = await createSupabaseServerClient();
 
-  const url = new URL(req.url);
-  const rawLimit = Number(url.searchParams.get("limit") || 200);
-  const limit = Math.min(Math.max(rawLimit, 1), 1000);
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
 
-  const { data, error } = await supabase
-    .from("journal_trades")
-    .select(
-      [
-        "id",
-        "user_id",
-        "symbol",
-        "instrument",
-        "side",
-        "entry_price",
-        "stop_price",
-        "exit_price",
-        "result_r",
-        "strategy",
-        "notes",
-        "created_at",
-        "closed_at",
-      ].join(",")
-    )
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
-    .limit(limit)
-    // ✅ Fix TS union issue by asserting the row type at the query level
-    .returns<JournalTradeRow[]>();
-
-  if (error) {
-    return NextResponse.json({ error: error.message || "Failed to list trades" }, { status: 500 });
-  }
-
-  const trades = data ?? [];
-
-  // Strategy stats (Pro only)
-  let strategyStats: StrategyStat[] | null = null;
-
-  if (isPro) {
-    const map = new Map<
-      string,
-      {
-        trades: number;
-        tracked: number;
-        sumR: number;
-        wins: number;
-        minR: number | null;
-      }
-    >();
-
-    for (const t of trades) {
-      const strategy = cleanStrategy(t.strategy);
-      if (!strategy) continue;
-
-      const cur = map.get(strategy) ?? { trades: 0, tracked: 0, sumR: 0, wins: 0, minR: null };
-      const next = { ...cur };
-      next.trades += 1;
-
-      const r = computeResultR(t);
-      if (r !== null) {
-        next.tracked += 1;
-        next.sumR += r;
-        if (r > 0) next.wins += 1;
-        next.minR = next.minR === null ? r : Math.min(next.minR, r);
-      }
-
-      map.set(strategy, next);
+    if (userErr || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    strategyStats = Array.from(map.entries()).map(([strategy, v]) => {
-      const avg = v.tracked > 0 ? v.sumR / v.tracked : null;
-      const winRate = v.tracked > 0 ? v.wins / v.tracked : null;
-      const totalR = v.tracked > 0 ? v.sumR : null;
+    // server-truth Pro check
+    let isPro = false;
+    try {
+      const pro = await isUserPro(user.id);
+      isPro = !!pro?.isPro;
+    } catch {
+      isPro = false;
+    }
 
-      return {
-        strategy,
-        trades: v.trades,
-        tracked: v.tracked,
-        winRate,
-        avgR: avg,
-        totalR,
-        expectancy: avg,
-        largestLoss: v.minR,
-      };
-    });
+    const url = new URL(req.url);
+    const rawLimit = Number(url.searchParams.get("limit") || 200);
+    const limit = Math.min(Math.max(rawLimit, 1), 1000);
 
-    // Sort: highest Total R first, then by trades
-    strategyStats.sort((a, b) => {
-      const at = a.totalR ?? -Infinity;
-      const bt = b.totalR ?? -Infinity;
-      if (bt !== at) return bt - at;
-      return (b.trades ?? 0) - (a.trades ?? 0);
+    const { data, error } = await supabase
+      .from("journal_trades")
+      .select(
+        "id,user_id,symbol,instrument,side,entry_price,stop_price,exit_price,result_r,strategy,notes,created_at,closed_at"
+      )
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(limit)
+      .returns<JournalTradeRow[]>(); // ✅ key fix: no unsafe casts
+
+    if (error) {
+      return NextResponse.json(
+        { error: error.message || "Failed to list trades" },
+        { status: 500 }
+      );
+    }
+
+    const trades = data ?? [];
+
+    // Strategy stats (Pro only)
+    let strategyStats: StrategyStat[] | null = null;
+
+    if (isPro) {
+      const map = new Map<
+        string,
+        { trades: number; tracked: number; sumR: number; wins: number; minR: number | null }
+      >();
+
+      for (const t of trades) {
+        const strat = cleanStrategy(t.strategy);
+        if (!strat) continue;
+
+        const cur = map.get(strat) ?? { trades: 0, tracked: 0, sumR: 0, wins: 0, minR: null };
+        const next = { ...cur };
+
+        next.trades += 1;
+
+        const r = computeResultR(t);
+        if (r !== null) {
+          next.tracked += 1;
+          next.sumR += r;
+          if (r > 0) next.wins += 1;
+          next.minR = next.minR === null ? r : Math.min(next.minR, r);
+        }
+
+        map.set(strat, next);
+      }
+
+      strategyStats = Array.from(map.entries()).map(([strategy, v]) => {
+        const avg = v.tracked > 0 ? v.sumR / v.tracked : null;
+        const winRate = v.tracked > 0 ? v.wins / v.tracked : null;
+        const totalR = v.tracked > 0 ? v.sumR : null;
+
+        return {
+          strategy,
+          trades: v.trades,
+          tracked: v.tracked,
+          winRate,
+          avgR: avg,
+          totalR,
+          expectancy: avg,
+          largestLoss: v.minR,
+        };
+      });
+
+      // Sort: highest Total R first, then by trades
+      strategyStats.sort((a, b) => {
+        const at = a.totalR ?? -Infinity;
+        const bt = b.totalR ?? -Infinity;
+        if (bt !== at) return bt - at;
+        return (b.trades ?? 0) - (a.trades ?? 0);
+      });
+    }
+
+    return NextResponse.json({
+      items: trades,
+      pro: { isPro },
+      strategyStats, // null for free
     });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: e?.message || "Failed to list trades" },
+      { status: 500 }
+    );
   }
-
-  return NextResponse.json({
-    items: trades,
-    pro: { isPro },
-    strategyStats, // null for free
-  });
 }
