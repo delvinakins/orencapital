@@ -4,7 +4,6 @@ import type React from "react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import JournalPanel from "@/components/JournalPanel";
-import ProLock from "@/components/ProLock";
 import JournalQuickAdd from "@/components/journal/JournalQuickAdd";
 
 type SizingMode = "constant-fraction" | "fixed-dollar";
@@ -269,6 +268,19 @@ function downloadText(filename: string, text: string) {
   URL.revokeObjectURL(url);
 }
 
+function InlineProNotice({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]/60 px-4 py-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-sm text-foreground/80">{children}</div>
+        <Link href="/pricing" className="oc-btn oc-btn-secondary self-start sm:self-auto">
+          Upgrade
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 /* =========================================================
    Page
 ========================================================= */
@@ -285,18 +297,10 @@ export default function RiskEnginePage() {
 
   // Positions
   const [positions, setPositions] = useState<Position[]>([
-    {
-      id: uid(),
-      label: "AAPL",
-      side: "long",
-      entry: "190",
-      stop: "185",
-      qty: "10",
-      multiplier: "1",
-    },
+    { id: uid(), label: "AAPL", side: "long", entry: "190", stop: "185", qty: "10", multiplier: "1" },
   ]);
 
-  // Pro portfolio save/load state
+  // Portfolio save/load state (Pro)
   const [portfolioName, setPortfolioName] = useState("");
   const [portfolios, setPortfolios] = useState<PortfolioRow[]>([]);
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>("");
@@ -358,7 +362,7 @@ export default function RiskEnginePage() {
     setPositions((prev) => prev.filter((p) => p.id !== id));
   }
 
-  // -------- Pro: portfolios list/save/load ----------
+  // -------- Portfolios list/save/load (Pro) ----------
   async function refreshPortfolios() {
     try {
       setMsg("");
@@ -387,6 +391,11 @@ export default function RiskEnginePage() {
   }
 
   async function savePortfolio() {
+    if (!isPro) {
+      setMsg("Pro required to Save/Load portfolios.");
+      return;
+    }
+
     try {
       setMsg("");
       setBusy("save");
@@ -440,6 +449,11 @@ export default function RiskEnginePage() {
   }
 
   async function loadPortfolio() {
+    if (!isPro) {
+      setMsg("Pro required to Save/Load portfolios.");
+      return;
+    }
+
     try {
       setMsg("");
       setBusy("load");
@@ -493,12 +507,8 @@ export default function RiskEnginePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPro]);
 
+  // CSV Export = FREE
   function exportCsv() {
-    if (!isPro) {
-      setMsg("CSV export is Pro. Upgrade to unlock.");
-      return;
-    }
-
     const headers = ["Label", "Side", "Entry", "Stop", "Qty", "Multiplier", "DollarRisk"];
     const lines = [
       headers.join(","),
@@ -607,11 +617,7 @@ export default function RiskEnginePage() {
 
         {/* Summary */}
         <section className="grid gap-4 sm:grid-cols-3">
-          <Card
-            label="Target Dollar Risk"
-            value={money(targetDollarRisk)}
-            tip="How much you intend to risk on this trade idea (based on sizing mode)."
-          />
+          <Card label="Target Dollar Risk" value={money(targetDollarRisk)} tip="How much you intend to risk on this trade idea (based on sizing mode)." />
           <Card
             label="Current Total Risk"
             value={money(totals.totalRisk)}
@@ -728,83 +734,90 @@ export default function RiskEnginePage() {
             })}
           </div>
 
-          {/* Pro: CSV Export overlay */}
-          <ProLock
-            feature="CSV Export"
-            description="Export your positions + risk metrics to CSV for tracking, journaling, or analysis."
-            mode="overlay"
-          >
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              <button onClick={exportCsv} className="oc-btn oc-btn-secondary">
-                Export CSV (Pro)
-              </button>
-              <div className="text-xs text-foreground/60">CSV export is Pro because it’s an “operational workflow” feature.</div>
-            </div>
-          </ProLock>
+          {/* CSV Export (FREE) */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+            <div className="text-xs text-foreground/55">Export positions + risk metrics for tracking, journaling, or analysis.</div>
+            <button onClick={exportCsv} className="oc-btn oc-btn-secondary">
+              Export CSV
+            </button>
+          </div>
         </section>
 
-        {/* Pro: Save / Load overlay */}
-        <ProLock feature="Portfolio Save/Load" description="Save setups (account + sizing + positions) and reload them instantly." mode="overlay">
-          <section className="oc-glass rounded-2xl p-4 sm:p-6 space-y-4 overflow-visible">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-lg font-semibold">Save / Load Portfolios (Pro)</div>
-              <button onClick={refreshPortfolios} disabled={busy === "list"} className="oc-btn oc-btn-secondary disabled:opacity-60">
-                {busy === "list" ? "Refreshing..." : "Refresh list"}
-              </button>
+        {/* Save / Load (PRO) */}
+        <section className="oc-glass rounded-2xl p-4 sm:p-6 space-y-4 overflow-visible">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-lg font-semibold">Save / Load Portfolios</div>
+              <div className="mt-1 text-xs text-foreground/55">Save setups (account + sizing + positions) and reload them instantly.</div>
             </div>
 
-            {!!msg && (
-              <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]/55 backdrop-blur-[2px] p-3 text-sm text-foreground">
-                {msg}
+            <button
+              onClick={refreshPortfolios}
+              disabled={!isPro || busy === "list"}
+              className="oc-btn oc-btn-secondary disabled:opacity-60"
+              title={!isPro ? "Pro required" : undefined}
+            >
+              {busy === "list" ? "Refreshing..." : "Refresh list"}
+            </button>
+          </div>
+
+          {!isPro && (
+            <InlineProNotice>
+              <span className="text-foreground/80">Pro required:</span>{" "}
+              <span className="text-foreground/60">Save/load is a workflow feature.</span>
+            </InlineProNotice>
+          )}
+
+          {!!msg && (
+            <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]/55 backdrop-blur-[2px] p-3 text-sm text-foreground">
+              {msg}
+            </div>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <Input
+              label="Portfolio name"
+              value={portfolioName}
+              onChange={setPortfolioName}
+              placeholder="My swing watchlist"
+              tip="Name to save this current state (account + sizing + positions)."
+            />
+
+            <div className="flex flex-col gap-2 md:col-span-2">
+              <label className="text-sm text-foreground/70">
+                <Tooltip label="Saved portfolios">Your saved configurations. Loading replaces the current editor state.</Tooltip>
+              </label>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <select
+                  value={selectedPortfolioId}
+                  onChange={(e) => setSelectedPortfolioId(e.target.value)}
+                  disabled={!isPro}
+                  className="h-12 flex-1 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none disabled:opacity-60"
+                >
+                  <option value="">Select…</option>
+                  {portfolios.map((pp) => (
+                    <option key={pp.id} value={pp.id}>
+                      {pp.name}
+                    </option>
+                  ))}
+                </select>
+
+                <button onClick={savePortfolio} disabled={!isPro || busy === "save"} className="oc-btn oc-btn-accent disabled:opacity-60">
+                  {busy === "save" ? "Saving..." : "Save"}
+                </button>
+
+                <button onClick={loadPortfolio} disabled={!isPro || busy === "load"} className="oc-btn oc-btn-secondary disabled:opacity-60">
+                  {busy === "load" ? "Loading..." : "Load"}
+                </button>
               </div>
-            )}
 
-            <div className="grid gap-4 md:grid-cols-3">
-              <Input
-                label="Portfolio name"
-                value={portfolioName}
-                onChange={setPortfolioName}
-                placeholder="My swing watchlist"
-                tip="Name to save this current state (account + sizing + positions)."
-              />
-
-              <div className="flex flex-col gap-2 md:col-span-2">
-                <label className="text-sm text-foreground/70">
-                  <Tooltip label="Saved portfolios">Your saved configurations. Loading replaces the current editor state.</Tooltip>
-                </label>
-
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <select
-                    value={selectedPortfolioId}
-                    onChange={(e) => setSelectedPortfolioId(e.target.value)}
-                    className="h-12 flex-1 rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-4 text-foreground outline-none"
-                  >
-                    <option value="">Select…</option>
-                    {portfolios.map((pp) => (
-                      <option key={pp.id} value={pp.id}>
-                        {pp.name}
-                      </option>
-                    ))}
-                  </select>
-
-                  <button onClick={savePortfolio} disabled={busy === "save"} className="oc-btn oc-btn-accent disabled:opacity-60">
-                    {busy === "save" ? "Saving..." : "Save"}
-                  </button>
-
-                  <button onClick={loadPortfolio} disabled={busy === "load"} className="oc-btn oc-btn-secondary disabled:opacity-60">
-                    {busy === "load" ? "Loading..." : "Load"}
-                  </button>
-                </div>
-
-                {!isPro && (
-                  <div className="text-xs text-amber-200">
-                    Pro required. This is a “workflow” feature (people pay for saving time).
-                  </div>
-                )}
+              <div className="text-xs text-foreground/55">
+                {isPro ? "Saved portfolios are tied to your account." : "Upgrade to save setups and reload them instantly."}
               </div>
             </div>
-          </section>
-        </ProLock>
+          </div>
+        </section>
 
         {/* Journal panel (existing) */}
         <JournalPanel
