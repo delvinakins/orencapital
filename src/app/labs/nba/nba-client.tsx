@@ -7,28 +7,7 @@ import { computeDeviation } from "@/lib/labs/nba/heatmap";
 import { buildDistributionIndex } from "@/lib/nba/deviation-engine";
 
 type GameClockState = any;
-
 type LiveMeta = { stale?: boolean; updatedAt?: string; window?: "active" | "offhours" } | undefined;
-
-function makeStubIndex() {
-  const samples = Array.from({ length: 1200 }).map((_, i) => {
-    const spread = [-8, -6, -4, -2, 0, 2, 4, 6][i % 8];
-    return {
-      gameId: `stub-${i}`,
-      state: {
-        period: (i % 4) + 1,
-        secondsRemainingInPeriod: (i * 37) % 720,
-        scoreDiff: ((i * 13) % 20) - 10,
-      },
-      market: {
-        closingHomeSpread: spread,
-        liveHomeSpread: spread + (((i * 17) % 10) - 5) * 0.2,
-      },
-    };
-  });
-
-  return buildDistributionIndex(samples);
-}
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -163,15 +142,13 @@ type ViewMode = "slate" | "heatmap";
 type Row = {
   key: string;
 
-  abs: number;
-  moveGapPts: number;
-
+  abs: number; // abs dislocation points
+  moveGapPts: number; // signed dislocation
   observedMove: number;
   expectedMove: number;
 
   awayTeam: string;
   homeTeam: string;
-
   awayScore: number | null;
   homeScore: number | null;
 
@@ -189,122 +166,6 @@ type Row = {
   phase: "pregame" | "live" | "final" | "unknown";
   isLive: boolean;
 };
-
-/** -------- Treemap (squarify) layout (no deps) -------- */
-type Rect = { x: number; y: number; w: number; h: number };
-
-type TreeItem = {
-  id: string;
-  value: number;
-  row: Row;
-};
-
-type Placed = { item: TreeItem; rect: Rect };
-
-function sum(items: TreeItem[]) {
-  return items.reduce((a, b) => a + b.value, 0);
-}
-
-function worstAspect(row: TreeItem[], side: number) {
-  if (row.length === 0) return Infinity;
-  const s = sum(row);
-  if (s <= 0) return Infinity;
-
-  let minV = Infinity;
-  let maxV = 0;
-  for (const it of row) {
-    minV = Math.min(minV, it.value);
-    maxV = Math.max(maxV, it.value);
-  }
-  if (!Number.isFinite(minV) || minV <= 0) return Infinity;
-
-  const s2 = s * s;
-  const side2 = side * side;
-  return Math.max((side2 * maxV) / s2, s2 / (side2 * minV));
-}
-
-function layoutRow(row: TreeItem[], rect: Rect): { placed: Placed[]; remaining: Rect } {
-  const placed: Placed[] = [];
-  const s = sum(row);
-
-  if (row.length === 0 || s <= 0 || rect.w <= 0 || rect.h <= 0) {
-    return { placed, remaining: rect };
-  }
-
-  const horizontal = rect.w >= rect.h;
-
-  if (horizontal) {
-    const h = s / rect.w;
-    let x = rect.x;
-
-    for (const it of row) {
-      const w = it.value / h;
-      placed.push({ item: it, rect: { x, y: rect.y, w, h } });
-      x += w;
-    }
-
-    return {
-      placed,
-      remaining: { x: rect.x, y: rect.y + h, w: rect.w, h: rect.h - h },
-    };
-  } else {
-    const w = s / rect.h;
-    let y = rect.y;
-
-    for (const it of row) {
-      const h = it.value / w;
-      placed.push({ item: it, rect: { x: rect.x, y, w, h } });
-      y += h;
-    }
-
-    return {
-      placed,
-      remaining: { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h },
-    };
-  }
-}
-
-function squarify(items: TreeItem[], rect: Rect): Placed[] {
-  const placed: Placed[] = [];
-  const remaining = [...items]
-    .filter((it) => Number.isFinite(it.value) && it.value > 0)
-    .sort((a, b) => b.value - a.value);
-
-  let r: Rect = { ...rect };
-  let row: TreeItem[] = [];
-
-  while (remaining.length > 0) {
-    const next = remaining[0];
-    const side = Math.min(r.w, r.h);
-
-    if (row.length === 0) {
-      row.push(next);
-      remaining.shift();
-      continue;
-    }
-
-    const currentWorst = worstAspect(row, side);
-    const nextWorst = worstAspect([...row, next], side);
-
-    if (nextWorst <= currentWorst) {
-      row.push(next);
-      remaining.shift();
-    } else {
-      const res = layoutRow(row, r);
-      placed.push(...res.placed);
-      r = res.remaining;
-      row = [];
-      if (r.w <= 0 || r.h <= 0) break;
-    }
-  }
-
-  if (row.length > 0 && r.w > 0 && r.h > 0) {
-    const res = layoutRow(row, r);
-    placed.push(...res.placed);
-  }
-
-  return placed;
-}
 
 function toneFromAbsZ(absZ: number): Row["tone"] {
   if (absZ >= 1.5) return "accent";
@@ -500,14 +361,133 @@ function SlateMobileCard({ r }: { r: Row }) {
   );
 }
 
+/** -------- Heat map (treemap) layout (no deps) -------- */
+type Rect = { x: number; y: number; w: number; h: number };
+type TreeItem = { id: string; value: number; row: Row };
+type Placed = { item: TreeItem; rect: Rect };
+
+function sum(items: TreeItem[]) {
+  return items.reduce((a, b) => a + b.value, 0);
+}
+
+function worstAspect(row: TreeItem[], side: number) {
+  if (row.length === 0) return Infinity;
+  const s = sum(row);
+  if (s <= 0) return Infinity;
+
+  let minV = Infinity;
+  let maxV = 0;
+  for (const it of row) {
+    minV = Math.min(minV, it.value);
+    maxV = Math.max(maxV, it.value);
+  }
+  if (!Number.isFinite(minV) || minV <= 0) return Infinity;
+
+  const s2 = s * s;
+  const side2 = side * side;
+  return Math.max((side2 * maxV) / s2, s2 / (side2 * minV));
+}
+
+function layoutRow(row: TreeItem[], rect: Rect): { placed: Placed[]; remaining: Rect } {
+  const placed: Placed[] = [];
+  const s = sum(row);
+
+  if (row.length === 0 || s <= 0 || rect.w <= 0 || rect.h <= 0) return { placed, remaining: rect };
+
+  const horizontal = rect.w >= rect.h;
+
+  if (horizontal) {
+    const h = s / rect.w;
+    let x = rect.x;
+    for (const it of row) {
+      const w = it.value / h;
+      placed.push({ item: it, rect: { x, y: rect.y, w, h } });
+      x += w;
+    }
+    return { placed, remaining: { x: rect.x, y: rect.y + h, w: rect.w, h: rect.h - h } };
+  } else {
+    const w = s / rect.h;
+    let y = rect.y;
+    for (const it of row) {
+      const h = it.value / w;
+      placed.push({ item: it, rect: { x: rect.x, y, w, h } });
+      y += h;
+    }
+    return { placed, remaining: { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h } };
+  }
+}
+
+function squarify(items: TreeItem[], rect: Rect): Placed[] {
+  const placed: Placed[] = [];
+  const remaining = [...items].filter((it) => Number.isFinite(it.value) && it.value > 0).sort((a, b) => b.value - a.value);
+
+  let r: Rect = { ...rect };
+  let row: TreeItem[] = [];
+
+  while (remaining.length > 0) {
+    const next = remaining[0];
+    const side = Math.min(r.w, r.h);
+
+    if (row.length === 0) {
+      row.push(next);
+      remaining.shift();
+      continue;
+    }
+
+    const currentWorst = worstAspect(row, side);
+    const nextWorst = worstAspect([...row, next], side);
+
+    if (nextWorst <= currentWorst) {
+      row.push(next);
+      remaining.shift();
+    } else {
+      const res = layoutRow(row, r);
+      placed.push(...res.placed);
+      r = res.remaining;
+      row = [];
+      if (r.w <= 0 || r.h <= 0) break;
+    }
+  }
+
+  if (row.length > 0 && r.w > 0 && r.h > 0) {
+    const res = layoutRow(row, r);
+    placed.push(...res.placed);
+  }
+
+  return placed;
+}
+
+/**
+ * Merge indices defensively:
+ * - if Map: seed first, then market overrides
+ * - if plain object: shallow merge seed -> market
+ * This makes move-gap usable even when real season is sparse.
+ */
+function mergeIndices(seedIdx: any, marketIdx: any) {
+  if (!seedIdx && marketIdx) return marketIdx;
+  if (seedIdx && !marketIdx) return seedIdx;
+  if (!seedIdx && !marketIdx) return null;
+
+  if (seedIdx instanceof Map && marketIdx instanceof Map) {
+    return new Map([...seedIdx.entries(), ...marketIdx.entries()]);
+  }
+
+  if (typeof seedIdx === "object" && typeof marketIdx === "object") {
+    return { ...seedIdx, ...marketIdx };
+  }
+
+  // If unknown shape, prefer market.
+  return marketIdx;
+}
+
 export default function NbaClient() {
   const [games, setGames] = useState<GameClockState[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [meta, setMeta] = useState<LiveMeta>(undefined);
 
-  const [spreadIndex, setSpreadIndex] = useState<any>(() => makeStubIndex());
-  const [indexSource, setIndexSource] = useState<"stub" | "seed" | "market">("stub");
+  const [spreadIndex, setSpreadIndex] = useState<any>(null);
+  const [indexLabel, setIndexLabel] = useState<"Market" | "Seed" | "Stub">("Stub");
 
   const [view, setView] = useState<ViewMode>("slate");
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -520,11 +500,14 @@ export default function NbaClient() {
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
-  // ✅ NEW: try real season first, then fall back to seed, then stub
+  // ✅ Build index:
+  // - fetch seed + real season
+  // - build each
+  // - merge so market overrides seed where it exists, seed fills gaps
   useEffect(() => {
     let cancelled = false;
 
-    async function tryFetchSeason(season: string) {
+    async function fetchSeason(season: string) {
       const res = await fetch(`/api/labs/nba/distributions?season=${encodeURIComponent(season)}`, { cache: "no-store" });
       const ct = res.headers.get("content-type") || "";
       if (!ct.includes("application/json")) return null;
@@ -535,26 +518,49 @@ export default function NbaClient() {
 
     (async () => {
       try {
-        const realSeason = "2025-2026";
-        const realItems = await tryFetchSeason(realSeason);
-        if (!cancelled && realItems) {
-          const idx = buildDistributionIndex(realItems);
-          setSpreadIndex(idx);
-          setIndexSource("market");
+        const [seedItems, marketItems] = await Promise.all([fetchSeason("seed"), fetchSeason("2025-2026")]);
+
+        const seedIdx = seedItems ? buildDistributionIndex(seedItems) : null;
+        const marketIdx = marketItems ? buildDistributionIndex(marketItems) : null;
+
+        const merged = mergeIndices(seedIdx, marketIdx);
+
+        if (!cancelled && merged) {
+          setSpreadIndex(merged);
+          setIndexLabel(marketIdx ? "Market" : seedIdx ? "Seed" : "Stub");
           return;
         }
 
-        const seedItems = await tryFetchSeason("seed");
-        if (!cancelled && seedItems) {
-          const idx = buildDistributionIndex(seedItems);
-          setSpreadIndex(idx);
-          setIndexSource("seed");
-          return;
+        if (!cancelled) {
+          // absolute fallback: keep something that won't crash computeDeviation
+          const stub = buildDistributionIndex(
+            Array.from({ length: 1200 }).map((_, i) => {
+              const spread = [-8, -6, -4, -2, 0, 2, 4, 6][i % 8];
+              return {
+                gameId: `stub-${i}`,
+                state: { period: (i % 4) + 1, secondsRemainingInPeriod: (i * 37) % 720, scoreDiff: ((i * 13) % 20) - 10 },
+                market: { closingHomeSpread: spread, liveHomeSpread: spread + (((i * 17) % 10) - 5) * 0.2 },
+              };
+            })
+          );
+          setSpreadIndex(stub);
+          setIndexLabel("Stub");
         }
-
-        // keep stub
       } catch {
-        // keep stub
+        if (!cancelled) {
+          const stub = buildDistributionIndex(
+            Array.from({ length: 1200 }).map((_, i) => {
+              const spread = [-8, -6, -4, -2, 0, 2, 4, 6][i % 8];
+              return {
+                gameId: `stub-${i}`,
+                state: { period: (i % 4) + 1, secondsRemainingInPeriod: (i * 37) % 720, scoreDiff: ((i * 13) % 20) - 10 },
+                market: { closingHomeSpread: spread, liveHomeSpread: spread + (((i * 17) % 10) - 5) * 0.2 },
+              };
+            })
+          );
+          setSpreadIndex(stub);
+          setIndexLabel("Stub");
+        }
       }
     })();
 
@@ -611,7 +617,7 @@ export default function NbaClient() {
     const computed = games.map((g: any) => {
       const { clock, phase, isLive } = formatClockFromGame(g);
 
-      const result = computeDeviation(g, { spreadIndex });
+      const result = spreadIndex ? computeDeviation(g, { spreadIndex }) : null;
 
       const abs = result && Number.isFinite(result.absDislocationPts) ? result.absDislocationPts : 0;
       const moveGapPts = result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : 0;
@@ -675,6 +681,7 @@ export default function NbaClient() {
       const rb = phaseRank(b);
       if (ra !== rb) return ra - rb;
 
+      // strongest dislocations first
       if (b.abs !== a.abs) return b.abs - a.abs;
 
       return a.matchup.localeCompare(b.matchup);
@@ -684,16 +691,18 @@ export default function NbaClient() {
   }, [games, spreadIndex, after2pm]);
 
   const heatRows = useMemo(() => rows.filter((r) => r.abs >= 0.6 || r.isLive), [rows]);
+  const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
+  // Heat map layout (treemap)
   const treemap = useMemo(() => {
     const W = 1000;
     const H = 720;
     const area = W * H;
 
     const items: TreeItem[] = heatRows.map((r) => {
-      const capped = clamp(r.abs, 0, 4.0);
-      const liveBump = r.isLive ? 0.35 : 0;
-      const weight = 1 + (capped + liveBump) * 3.0;
+      const cappedAbs = clamp(r.abs, 0, 4.0);
+      const liveBump = r.isLive ? 0.45 : 0;
+      const weight = 1 + (cappedAbs + liveBump) * 3.2;
       return { id: r.key, value: weight, row: r };
     });
 
@@ -723,9 +732,99 @@ export default function NbaClient() {
     });
   }, [heatRows]);
 
-  const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
+  function HeatTile({ r, style }: { r: Row; style: React.CSSProperties }) {
+    const away = teamAbbr(r.awayTeam);
+    const home = teamAbbr(r.homeTeam);
+    const awayLogo = teamLogoUrl(r.awayTeam);
+    const homeLogo = teamLogoUrl(r.homeTeam);
 
-  const indexLabel = indexSource === "market" ? "Market" : indexSource === "seed" ? "Seed" : "Stub";
+    // intensity uses absZ (more stable), fall back to abs if needed
+    const intensity = clamp((r.absZ || 0) / 2.0, 0, 1);
+    const bg = bgFromTone(r.tone, intensity);
+    const border = borderFromTone(r.tone);
+
+    const showMeta = r.isLive || r.phase === "pregame";
+    const big = (style as any)?._big === true; // internal flag, ignore
+
+    return (
+      <div
+        className={cn(
+          "absolute rounded-2xl border overflow-hidden",
+          "backdrop-blur-[2px]",
+          r.isLive && "ring-1 ring-[color:var(--accent)]/25"
+        )}
+        style={{
+          ...style,
+          background: bg,
+          borderColor: border,
+        }}
+        title={`${r.matchup} • ${r.clock} • Move gap ${r.scoreText}`}
+      >
+        <div className="flex h-full flex-col p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                {awayLogo ? (
+                  <img
+                    src={awayLogo}
+                    alt={`${r.awayTeam} logo`}
+                    className="h-4 w-4 rounded-sm bg-white/5 ring-1 ring-white/10 object-contain"
+                    loading="lazy"
+                  />
+                ) : null}
+                <div className="text-sm font-semibold text-foreground truncate">
+                  {away} <span className="text-foreground/60">@</span> {home}
+                </div>
+                {homeLogo ? (
+                  <img
+                    src={homeLogo}
+                    alt={`${r.homeTeam} logo`}
+                    className="h-4 w-4 rounded-sm bg-white/5 ring-1 ring-white/10 object-contain"
+                    loading="lazy"
+                  />
+                ) : null}
+              </div>
+
+              <div className="mt-1 text-xs text-foreground/60">{r.clock}</div>
+            </div>
+
+            <div className={cn("text-right tabular-nums font-semibold", textToneClass(r.tone))}>
+              <div className="text-[11px] text-foreground/55">Move gap</div>
+              <div className="text-base">{r.scoreText}</div>
+            </div>
+          </div>
+
+          <div className="mt-auto pt-3">
+            <div className="flex items-center justify-between gap-2 text-xs text-foreground/70">
+              <div className="truncate">
+                {r.isLive ? (
+                  <span className="inline-flex items-center gap-2 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-2 py-0.5 text-[11px] text-[color:var(--accent)]">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
+                    LIVE
+                  </span>
+                ) : (
+                  <span className="text-foreground/60">{r.phase}</span>
+                )}
+              </div>
+
+              {showMeta ? (
+                <div className="flex items-center gap-3">
+                  <div className="tabular-nums">
+                    <span className="text-foreground/50">L</span>{" "}
+                    <span className="text-foreground">{r.live}</span>
+                  </div>
+                  <div className="tabular-nums">
+                    <span className="text-foreground/50">C</span>{" "}
+                    <span className="text-foreground">{r.close}</span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -863,12 +962,7 @@ export default function NbaClient() {
                               ) : null}
                             </div>
 
-                            <ScoreLine
-                              awayTeam={r.awayTeam}
-                              homeTeam={r.homeTeam}
-                              awayScore={r.awayScore}
-                              homeScore={r.homeScore}
-                            />
+                            <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
                           </td>
 
                           <td className="px-4 py-3">
@@ -902,9 +996,44 @@ export default function NbaClient() {
               </div>
             </>
           ) : (
-            <div className="text-foreground/70">
-              Heat map view unchanged here (logos already help slate most).
-            </div>
+            <>
+              {treemap.length === 0 ? (
+                <div className="text-foreground/70">
+                  No heat map tiles yet. This usually means there are no live games (or no games meeting the display threshold).
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="text-sm text-foreground/60">
+                    Tiles grow with larger deviations. Color intensity reflects how unusual the move is for that game state.
+                  </div>
+
+                  <div className="relative w-full overflow-hidden rounded-2xl border border-white/10 bg-black/10">
+                    {/* Responsive canvas: 1000x720 aspect */}
+                    <div className="relative w-full" style={{ paddingTop: `${(720 / 1000) * 100}%` }}>
+                      {treemap.map((t) => {
+                        const r = t.item.row;
+                        return (
+                          <HeatTile
+                            key={t.item.id}
+                            r={r}
+                            style={{
+                              left: t.left,
+                              top: t.top,
+                              width: t.width,
+                              height: t.height,
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-foreground/55">
+                    Tip: late 1Q + mid 2Q/3Q are the most actionable scan windows. This is still a watchlist view — not a bet button.
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </section>
       </div>
