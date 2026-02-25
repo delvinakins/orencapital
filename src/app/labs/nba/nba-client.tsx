@@ -142,13 +142,15 @@ type ViewMode = "slate" | "heatmap";
 type Row = {
   key: string;
 
-  abs: number; // abs dislocation points
-  moveGapPts: number; // signed dislocation
+  abs: number;
+  moveGapPts: number;
+
   observedMove: number;
   expectedMove: number;
 
   awayTeam: string;
   homeTeam: string;
+
   awayScore: number | null;
   homeScore: number | null;
 
@@ -457,27 +459,54 @@ function squarify(items: TreeItem[], rect: Rect): Placed[] {
   return placed;
 }
 
-/**
- * Merge indices defensively:
- * - if Map: seed first, then market overrides
- * - if plain object: shallow merge seed -> market
- * This makes move-gap usable even when real season is sparse.
- */
-function mergeIndices(seedIdx: any, marketIdx: any) {
-  if (!seedIdx && marketIdx) return marketIdx;
-  if (seedIdx && !marketIdx) return seedIdx;
-  if (!seedIdx && !marketIdx) return null;
+function makeStubIndex() {
+  const samples = Array.from({ length: 1200 }).map((_, i) => {
+    const spread = [-8, -6, -4, -2, 0, 2, 4, 6][i % 8];
+    return {
+      gameId: `stub-${i}`,
+      state: {
+        period: (i % 4) + 1,
+        secondsRemainingInPeriod: (i * 37) % 720,
+        scoreDiff: ((i * 13) % 20) - 10,
+      },
+      market: {
+        closingHomeSpread: spread,
+        liveHomeSpread: spread + (((i * 17) % 10) - 5) * 0.2,
+      },
+    };
+  });
 
-  if (seedIdx instanceof Map && marketIdx instanceof Map) {
-    return new Map([...seedIdx.entries(), ...marketIdx.entries()]);
-  }
+  return buildDistributionIndex(samples);
+}
 
-  if (typeof seedIdx === "object" && typeof marketIdx === "object") {
-    return { ...seedIdx, ...marketIdx };
-  }
+// Merge distribution ROWS (seed + market), market overrides seed by bucket key.
+// This avoids trying to merge opaque index structures.
+function mergeDistributionRows(seedRows: any[] | null, marketRows: any[] | null) {
+  const out = new Map<string, any>();
 
-  // If unknown shape, prefer market.
-  return marketIdx;
+  const keyOf = (r: any) => {
+    const t =
+      r?.time_bucket_id ??
+      r?.timeBucketId ??
+      r?.time_bucket ??
+      `${r?.time_bucket_start ?? r?.timeBucketStart ?? ""}_${r?.time_bucket_end ?? r?.timeBucketEnd ?? ""}`;
+
+    const s =
+      r?.spread_bucket_id ??
+      r?.spreadBucketId ??
+      r?.spread_bucket ??
+      `${r?.spread_bucket_start ?? r?.spreadBucketStart ?? ""}_${r?.spread_bucket_end ?? r?.spreadBucketEnd ?? ""}`;
+
+    // include league/sport if present to be safe
+    const league = r?.league ?? "";
+    const sport = r?.sport ?? "";
+    return `${sport}|${league}|${t}|${s}`;
+  };
+
+  for (const r of seedRows ?? []) out.set(keyOf(r), r);
+  for (const r of marketRows ?? []) out.set(keyOf(r), r); // override
+
+  return Array.from(out.values());
 }
 
 export default function NbaClient() {
@@ -486,8 +515,8 @@ export default function NbaClient() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [meta, setMeta] = useState<LiveMeta>(undefined);
 
-  const [spreadIndex, setSpreadIndex] = useState<any>(null);
-  const [indexLabel, setIndexLabel] = useState<"Market" | "Seed" | "Stub">("Stub");
+  const [spreadIndex, setSpreadIndex] = useState<any>(() => makeStubIndex());
+  const [indexLabel, setIndexLabel] = useState<"Market+Seed" | "Seed" | "Stub">("Stub");
 
   const [view, setView] = useState<ViewMode>("slate");
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -500,10 +529,7 @@ export default function NbaClient() {
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
-  // ✅ Build index:
-  // - fetch seed + real season
-  // - build each
-  // - merge so market overrides seed where it exists, seed fills gaps
+  // ✅ Build index by MERGING ROWS FIRST, then building once.
   useEffect(() => {
     let cancelled = false;
 
@@ -512,55 +538,23 @@ export default function NbaClient() {
       const ct = res.headers.get("content-type") || "";
       if (!ct.includes("application/json")) return null;
       const json = await res.json().catch(() => null);
-      if (json?.ok && Array.isArray(json.items) && json.items.length > 0) return json.items;
+      if (json?.ok && Array.isArray(json.items) && json.items.length > 0) return json.items as any[];
       return null;
     }
 
     (async () => {
       try {
-        const [seedItems, marketItems] = await Promise.all([fetchSeason("seed"), fetchSeason("2025-2026")]);
+        const [seedRows, marketRows] = await Promise.all([fetchSeason("seed"), fetchSeason("2025-2026")]);
+        const mergedRows = mergeDistributionRows(seedRows, marketRows);
 
-        const seedIdx = seedItems ? buildDistributionIndex(seedItems) : null;
-        const marketIdx = marketItems ? buildDistributionIndex(marketItems) : null;
-
-        const merged = mergeIndices(seedIdx, marketIdx);
-
-        if (!cancelled && merged) {
-          setSpreadIndex(merged);
-          setIndexLabel(marketIdx ? "Market" : seedIdx ? "Seed" : "Stub");
+        if (!cancelled && mergedRows.length > 0) {
+          const idx = buildDistributionIndex(mergedRows);
+          setSpreadIndex(idx);
+          setIndexLabel(marketRows && marketRows.length > 0 ? "Market+Seed" : seedRows && seedRows.length > 0 ? "Seed" : "Stub");
           return;
         }
-
-        if (!cancelled) {
-          // absolute fallback: keep something that won't crash computeDeviation
-          const stub = buildDistributionIndex(
-            Array.from({ length: 1200 }).map((_, i) => {
-              const spread = [-8, -6, -4, -2, 0, 2, 4, 6][i % 8];
-              return {
-                gameId: `stub-${i}`,
-                state: { period: (i % 4) + 1, secondsRemainingInPeriod: (i * 37) % 720, scoreDiff: ((i * 13) % 20) - 10 },
-                market: { closingHomeSpread: spread, liveHomeSpread: spread + (((i * 17) % 10) - 5) * 0.2 },
-              };
-            })
-          );
-          setSpreadIndex(stub);
-          setIndexLabel("Stub");
-        }
       } catch {
-        if (!cancelled) {
-          const stub = buildDistributionIndex(
-            Array.from({ length: 1200 }).map((_, i) => {
-              const spread = [-8, -6, -4, -2, 0, 2, 4, 6][i % 8];
-              return {
-                gameId: `stub-${i}`,
-                state: { period: (i % 4) + 1, secondsRemainingInPeriod: (i * 37) % 720, scoreDiff: ((i * 13) % 20) - 10 },
-                market: { closingHomeSpread: spread, liveHomeSpread: spread + (((i * 17) % 10) - 5) * 0.2 },
-              };
-            })
-          );
-          setSpreadIndex(stub);
-          setIndexLabel("Stub");
-        }
+        // keep stub
       }
     })();
 
@@ -617,7 +611,7 @@ export default function NbaClient() {
     const computed = games.map((g: any) => {
       const { clock, phase, isLive } = formatClockFromGame(g);
 
-      const result = spreadIndex ? computeDeviation(g, { spreadIndex }) : null;
+      const result = computeDeviation(g, { spreadIndex });
 
       const abs = result && Number.isFinite(result.absDislocationPts) ? result.absDislocationPts : 0;
       const moveGapPts = result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : 0;
@@ -681,9 +675,7 @@ export default function NbaClient() {
       const rb = phaseRank(b);
       if (ra !== rb) return ra - rb;
 
-      // strongest dislocations first
       if (b.abs !== a.abs) return b.abs - a.abs;
-
       return a.matchup.localeCompare(b.matchup);
     });
 
@@ -693,7 +685,6 @@ export default function NbaClient() {
   const heatRows = useMemo(() => rows.filter((r) => r.abs >= 0.6 || r.isLive), [rows]);
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
-  // Heat map layout (treemap)
   const treemap = useMemo(() => {
     const W = 1000;
     const H = 720;
@@ -726,8 +717,6 @@ export default function NbaClient() {
         top: `calc(${topPct}% + ${gutterPx / 2}px)`,
         width: `calc(${widthPct}% - ${gutterPx}px)`,
         height: `calc(${heightPct}% - ${gutterPx}px)`,
-        widthPct,
-        heightPct,
       };
     });
   }, [heatRows]);
@@ -738,13 +727,11 @@ export default function NbaClient() {
     const awayLogo = teamLogoUrl(r.awayTeam);
     const homeLogo = teamLogoUrl(r.homeTeam);
 
-    // intensity uses absZ (more stable), fall back to abs if needed
     const intensity = clamp((r.absZ || 0) / 2.0, 0, 1);
     const bg = bgFromTone(r.tone, intensity);
     const border = borderFromTone(r.tone);
 
     const showMeta = r.isLive || r.phase === "pregame";
-    const big = (style as any)?._big === true; // internal flag, ignore
 
     return (
       <div
@@ -905,7 +892,6 @@ export default function NbaClient() {
             </div>
           ) : view === "slate" ? (
             <>
-              {/* Mobile: readable cards */}
               <div className="md:hidden space-y-3">
                 {rows.map((r) => (
                   <SlateMobileCard key={r.key} r={r} />
@@ -922,7 +908,6 @@ export default function NbaClient() {
                 <div className="text-xs text-foreground/55">Spreads are rounded to the nearest 0.5 for readability.</div>
               </div>
 
-              {/* Desktop: table */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="min-w-[960px] w-full text-[15px]">
                   <thead>
@@ -962,7 +947,12 @@ export default function NbaClient() {
                               ) : null}
                             </div>
 
-                            <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
+                            <ScoreLine
+                              awayTeam={r.awayTeam}
+                              homeTeam={r.homeTeam}
+                              awayScore={r.awayScore}
+                              homeScore={r.homeScore}
+                            />
                           </td>
 
                           <td className="px-4 py-3">
@@ -1008,28 +998,25 @@ export default function NbaClient() {
                   </div>
 
                   <div className="relative w-full overflow-hidden rounded-2xl border border-white/10 bg-black/10">
-                    {/* Responsive canvas: 1000x720 aspect */}
                     <div className="relative w-full" style={{ paddingTop: `${(720 / 1000) * 100}%` }}>
-                      {treemap.map((t) => {
-                        const r = t.item.row;
-                        return (
-                          <HeatTile
-                            key={t.item.id}
-                            r={r}
-                            style={{
-                              left: t.left,
-                              top: t.top,
-                              width: t.width,
-                              height: t.height,
-                            }}
-                          />
-                        );
-                      })}
+                      {treemap.map((t) => (
+                        <HeatTile
+                          key={t.item.id}
+                          r={t.item.row}
+                          style={{
+                            left: t.left,
+                            top: t.top,
+                            width: t.width,
+                            height: t.height,
+                          }}
+                        />
+                      ))}
                     </div>
                   </div>
 
                   <div className="text-xs text-foreground/55">
-                    Tip: late 1Q + mid 2Q/3Q are the most actionable scan windows. This is still a watchlist view — not a bet button.
+                    Tip: late 1Q + mid 2Q/3Q are the most actionable scan windows. This is still a watchlist view — not a bet
+                    button.
                   </div>
                 </div>
               )}
