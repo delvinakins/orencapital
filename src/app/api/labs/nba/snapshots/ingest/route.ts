@@ -10,7 +10,9 @@ export const dynamic = "force-dynamic";
  * - Calls your existing /api/labs/nba/live-games
  * - Stores periodic snapshots into public.nba_line_snapshots
  *
- * This is what makes "real distributions" possible over time.
+ * Fix in this version:
+ * - Tolerant field mapping for period/clock/spreads + supports multiple payload shapes
+ * - Debug mode to return why rows are being skipped
  *
  * Security:
  * - Requires header: x-admin-token == process.env.ADMIN_SEED_TOKEN
@@ -43,6 +45,104 @@ function supabaseAdmin() {
 
 type LiveGame = any;
 
+function pick<T>(...vals: T[]): T | null {
+  for (const v of vals) {
+    if (v !== undefined && v !== null) return v;
+  }
+  return null;
+}
+
+function getGameId(g: any): string | null {
+  const v = pick(g?.gameId, g?.game_id, g?.id, g?.eventId, g?.event_id);
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s ? s : null;
+}
+
+function getPeriod(g: any): number | null {
+  // common
+  const direct = int(pick(g?.period, g?.q, g?.quarter, g?.currentPeriod, g?.current_period));
+  if (direct != null) return direct;
+
+  // sometimes nested: g.clock.period, g.game.clock.period, g.state.period
+  const nested = int(
+    pick(
+      g?.clock?.period,
+      g?.game?.clock?.period,
+      g?.state?.period,
+      g?.status?.period,
+      g?.status?.periodNumber
+    )
+  );
+  return nested;
+}
+
+function getSecondsRemaining(g: any): number | null {
+  // common
+  const direct = int(
+    pick(
+      g?.secondsRemaining,
+      g?.seconds_remaining,
+      g?.secondsRemainingInPeriod,
+      g?.seconds_remaining_in_period,
+      g?.clockSecondsRemaining,
+      g?.clock_seconds_remaining
+    )
+  );
+  if (direct != null) return direct;
+
+  // sometimes nested: g.clock.secondsRemainingInPeriod, g.state.secondsRemainingInPeriod
+  const nested = int(
+    pick(
+      g?.clock?.secondsRemaining,
+      g?.clock?.secondsRemainingInPeriod,
+      g?.game?.clock?.secondsRemainingInPeriod,
+      g?.state?.secondsRemainingInPeriod,
+      g?.status?.clock?.secondsRemainingInPeriod
+    )
+  );
+  return nested;
+}
+
+function getClosingHomeSpread(g: any): number | null {
+  const v = num(
+    pick(
+      g?.closingSpreadHome,
+      g?.closing_spread_home,
+      g?.closingSpread,
+      g?.closing_spread,
+      g?.closingHomeSpread,
+      g?.market?.closingHomeSpread,
+      g?.market?.closing_home_spread,
+      g?.lines?.closing?.spreadHome,
+      g?.lines?.closing?.homeSpread,
+      g?.closing?.homeSpread,
+      g?.close?.homeSpread,
+      g?.closingSpread?.home
+    )
+  );
+  return v;
+}
+
+function getLiveHomeSpread(g: any): number | null {
+  const v = num(
+    pick(
+      g?.liveSpreadHome,
+      g?.live_spread_home,
+      g?.liveSpread,
+      g?.live_spread,
+      g?.liveHomeSpread,
+      g?.market?.liveHomeSpread,
+      g?.market?.live_home_spread,
+      g?.lines?.live?.spreadHome,
+      g?.lines?.live?.homeSpread,
+      g?.live?.homeSpread,
+      g?.inplay?.homeSpread
+    )
+  );
+  return v;
+}
+
 export async function POST(req: Request) {
   const adminToken = req.headers.get("x-admin-token") || "";
   const expected = process.env.ADMIN_SEED_TOKEN || "";
@@ -58,8 +158,10 @@ export async function POST(req: Request) {
 
   // dryRun=1 will validate + count without writing
   const dryRun = searchParams.get("dryRun") === "1";
+  // debug=1 returns sample of skip reasons + first item keys
+  const debug = searchParams.get("debug") === "1";
 
-  // Call your live feed API (server-side) so we reuse whatever provider logic you already built.
+  // Call your live feed API (server-side) so we reuse provider logic
   const liveRes = await fetch(`${origin}/api/labs/nba/live-games`, { cache: "no-store" }).catch(() => null);
   if (!liveRes) return jsonError(502, "Unable to reach live feed route.");
 
@@ -78,27 +180,84 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, inserted: 0, skipped: 0, note: "No games available." });
   }
 
-  // Map live feed items -> snapshots rows
   const payload: any[] = [];
   let skipped = 0;
 
+  const skipReasons: Record<string, number> = {
+    missing_game_id: 0,
+    missing_period: 0,
+    missing_seconds_remaining: 0,
+    missing_closing_spread: 0,
+    missing_live_spread: 0,
+    non_regulation_period: 0,
+  };
+
+  const firstItemKeys = debug
+    ? Object.keys(items[0] || {}).slice(0, 80) // enough to see the shape
+    : null;
+
+  const examples: any[] = [];
+
   for (const g of items) {
-    const gameId = String(g?.gameId ?? g?.id ?? "").trim();
-    const period = int(g?.period);
-    const secondsRemaining = int(g?.secondsRemaining ?? g?.seconds_remaining);
+    const gameId = getGameId(g);
+    const period = getPeriod(g);
+    const secondsRemaining = getSecondsRemaining(g);
+    const closing = getClosingHomeSpread(g);
+    const live = getLiveHomeSpread(g);
 
-    // Your client uses these names; keep tolerant mapping anyway.
-    const closing = num(g?.closingSpreadHome ?? g?.closing_home_spread ?? g?.closingSpread);
-    const live = num(g?.liveSpreadHome ?? g?.live_home_spread ?? g?.liveSpread);
+    let ok = true;
 
-    if (!gameId || period == null || secondsRemaining == null || closing == null || live == null) {
-      skipped++;
-      continue;
+    if (!gameId) {
+      skipReasons.missing_game_id++;
+      ok = false;
+    }
+    if (period == null) {
+      skipReasons.missing_period++;
+      ok = false;
+    }
+    if (secondsRemaining == null) {
+      skipReasons.missing_seconds_remaining++;
+      ok = false;
+    }
+    if (closing == null) {
+      skipReasons.missing_closing_spread++;
+      ok = false;
+    }
+    if (live == null) {
+      skipReasons.missing_live_spread++;
+      ok = false;
+    }
+    if (period != null && (period < 1 || period > 4)) {
+      skipReasons.non_regulation_period++;
+      ok = false;
     }
 
-    // Only regulation for now. OT can be added later.
-    if (period < 1 || period > 4) {
+    if (!ok) {
       skipped++;
+      if (debug && examples.length < 3) {
+        examples.push({
+          gameId,
+          period,
+          secondsRemaining,
+          closing,
+          live,
+          // show a small slice of the object so we can adapt mapping further if needed
+          sample: {
+            gameId: g?.gameId,
+            id: g?.id,
+            period: g?.period,
+            secondsRemaining: g?.secondsRemaining,
+            secondsRemainingInPeriod: g?.secondsRemainingInPeriod,
+            closingSpreadHome: g?.closingSpreadHome,
+            liveSpreadHome: g?.liveSpreadHome,
+            market: g?.market,
+            clock: g?.clock,
+            state: g?.state,
+            lines: g?.lines,
+            phase: g?.phase,
+          },
+        });
+      }
       continue;
     }
 
@@ -111,7 +270,6 @@ export async function POST(req: Request) {
       seconds_remaining_in_period: secondsRemaining,
       closing_home_spread: closing,
       live_home_spread: live,
-      // created_at defaults to now()
     });
   }
 
@@ -119,7 +277,15 @@ export async function POST(req: Request) {
     return jsonError(
       400,
       "No usable rows to ingest.",
-      `All games were skipped. skipped=${skipped}. Check live-games payload fields.`
+      debug
+        ? {
+            message: `All games were skipped. skipped=${skipped}.`,
+            skipReasons,
+            firstItemKeys,
+            examples,
+            hint: "Your live-games route likely uses different field names for period/clock/spreads. Use debug output above to update mapping.",
+          }
+        : `All games were skipped. skipped=${skipped}. Check live-games payload fields.`
     );
   }
 
@@ -132,10 +298,10 @@ export async function POST(req: Request) {
       league,
       wouldInsert: payload.length,
       skipped,
+      ...(debug ? { skipReasons, firstItemKeys, examples } : {}),
     });
   }
 
-  // Write
   let sb;
   try {
     sb = supabaseAdmin();
