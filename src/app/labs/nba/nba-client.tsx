@@ -47,10 +47,8 @@ function roundToHalf(x: any): number | null {
 
 function formatSpread(x: any, digits = 1) {
   if (x == null) return "—";
-
   const v = typeof x === "number" ? x : Number(String(x).trim());
   if (!Number.isFinite(v)) return "—";
-
   const s = v.toFixed(digits);
   if (v > 0) return `+${s}`;
   if (v < 0) return s;
@@ -410,9 +408,7 @@ function ScoreLine({
   homeScore: number | null;
 }) {
   const hasScore = typeof awayScore === "number" && typeof homeScore === "number";
-  if (!hasScore) {
-    return <span className="text-foreground/55">Score unavailable</span>;
-  }
+  if (!hasScore) return <span className="text-foreground/55">Score unavailable</span>;
 
   const awayWin = (awayScore ?? 0) > (homeScore ?? 0);
   const homeWin = (homeScore ?? 0) > (awayScore ?? 0);
@@ -488,12 +484,7 @@ function SlateMobileCard({ r }: { r: Row }) {
         </div>
       </div>
 
-      <ScoreLine
-        awayTeam={r.awayTeam}
-        homeTeam={r.homeTeam}
-        awayScore={r.awayScore}
-        homeScore={r.homeScore}
-      />
+      <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
 
       <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
         <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
@@ -516,7 +507,7 @@ export default function NbaClient() {
   const [meta, setMeta] = useState<LiveMeta>(undefined);
 
   const [spreadIndex, setSpreadIndex] = useState<any>(() => makeStubIndex());
-  const [indexSource, setIndexSource] = useState<"stub" | "remote">("stub");
+  const [indexSource, setIndexSource] = useState<"stub" | "seed" | "market">("stub");
 
   const [view, setView] = useState<ViewMode>("slate");
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -529,24 +520,47 @@ export default function NbaClient() {
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
-  // Load distributions (seed season for now)
+  // ✅ NEW: try real season first, then fall back to seed, then stub
   useEffect(() => {
+    let cancelled = false;
+
+    async function tryFetchSeason(season: string) {
+      const res = await fetch(`/api/labs/nba/distributions?season=${encodeURIComponent(season)}`, { cache: "no-store" });
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("application/json")) return null;
+      const json = await res.json().catch(() => null);
+      if (json?.ok && Array.isArray(json.items) && json.items.length > 0) return json.items;
+      return null;
+    }
+
     (async () => {
       try {
-        const res = await fetch("/api/labs/nba/distributions?season=seed", { cache: "no-store" });
-        const ct = res.headers.get("content-type") || "";
-        if (!ct.includes("application/json")) return;
-
-        const json = await res.json().catch(() => null);
-        if (json?.ok && Array.isArray(json.items) && json.items.length > 0) {
-          const idx = buildDistributionIndex(json.items);
+        const realSeason = "2025-2026";
+        const realItems = await tryFetchSeason(realSeason);
+        if (!cancelled && realItems) {
+          const idx = buildDistributionIndex(realItems);
           setSpreadIndex(idx);
-          setIndexSource("remote");
+          setIndexSource("market");
+          return;
         }
+
+        const seedItems = await tryFetchSeason("seed");
+        if (!cancelled && seedItems) {
+          const idx = buildDistributionIndex(seedItems);
+          setSpreadIndex(idx);
+          setIndexSource("seed");
+          return;
+        }
+
+        // keep stub
       } catch {
         // keep stub
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function load() {
@@ -669,9 +683,7 @@ export default function NbaClient() {
     return computed;
   }, [games, spreadIndex, after2pm]);
 
-  const heatRows = useMemo(() => {
-    return rows.filter((r) => r.abs >= 0.6 || r.isLive);
-  }, [rows]);
+  const heatRows = useMemo(() => rows.filter((r) => r.abs >= 0.6 || r.isLive), [rows]);
 
   const treemap = useMemo(() => {
     const W = 1000;
@@ -713,6 +725,8 @@ export default function NbaClient() {
 
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
+  const indexLabel = indexSource === "market" ? "Market" : indexSource === "seed" ? "Seed" : "Stub";
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-5xl space-y-8 px-6 py-16">
@@ -727,9 +741,7 @@ export default function NbaClient() {
                 {isStale ? "Snapshot" : "Live"}
               </div>
 
-              {updatedAtLabel ? (
-                <div className="text-xs text-foreground/55">Last updated {updatedAtLabel} PT</div>
-              ) : null}
+              {updatedAtLabel ? <div className="text-xs text-foreground/55">Last updated {updatedAtLabel} PT</div> : null}
 
               {liveCount > 0 ? (
                 <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-3 py-1 text-xs text-[color:var(--accent)]">
@@ -745,7 +757,7 @@ export default function NbaClient() {
               ) : null}
 
               <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
-                Index: {indexSource === "remote" ? "Market" : "Stub"}
+                Index: {indexLabel}
               </div>
             </div>
 
@@ -800,9 +812,7 @@ export default function NbaClient() {
                   <SlateMobileCard key={r.key} r={r} />
                 ))}
 
-                <div className="pt-2 text-xs text-foreground/55">
-                  Lab preview. All signals require review.
-                </div>
+                <div className="pt-2 text-xs text-foreground/55">Lab preview. All signals require review.</div>
 
                 {!after2pm ? (
                   <div className="text-xs text-foreground/55">
@@ -839,10 +849,7 @@ export default function NbaClient() {
                       return (
                         <tr
                           key={r.key}
-                          className={cn(
-                            "border-t border-[color:var(--border)]",
-                            r.isLive && "bg-[color:var(--accent)]/5"
-                          )}
+                          className={cn("border-t border-[color:var(--border)]", r.isLive && "bg-[color:var(--accent)]/5")}
                           style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.18)" } : undefined}
                         >
                           <td className="px-4 py-3">
