@@ -6,36 +6,35 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Historical Conditional Signal (Phase 1)
+ * Historical Conditional Signal (Phase 1A - snapshots only)
  *
- * Returns: "In similar spots (time window + move magnitude + live ML), the underdog covered X% (n=Y)."
+ * Purpose:
+ *   A historical-trigger "context" badge that is NOT a prediction and does NOT require final scores.
+ *
+ * Metric:
+ *   observedMove = live_home_spread - closing_home_spread   (home perspective)
+ *
+ * Buckets:
+ *  - time bucket: 120s windows over game elapsed time (0..2880), aligned with distributions/build
+ *  - absMove bucket: based on abs(observedMove)
+ *  - live ML bucket: based on underdog moneyline (derived from live_home_moneyline/live_away_moneyline)
  *
  * Inputs (query params):
  *  - season (default 2025-2026)
  *  - league (default nba)
  *  - sport  (default basketball)
- *  - period (1..4)                          [required]
- *  - secondsRemaining (0..720)              [required]
- *  - absMove (absolute move in points)      [required]  // abs(live - close), home-perspective
- *  - liveMl (underdog moneyline, ex: 180)   [required]  // pass positive; if negative, we abs() it
+ *  - period (1..4)                         [required]
+ *  - secondsRemaining (0..720)             [required]
+ *  - absMove (abs(live-close) in points)   [required]
+ *  - liveMl (underdog ML, ex: 180)         [required]  // positive preferred; abs() used for bucketing
  *
- * Data sources:
- *  - public.nba_line_snapshots
- *      requires: game_id, period, seconds_remaining_in_period, closing_home_spread, live_home_spread,
- *                live_home_moneyline, live_away_moneyline, created_at
- *
- *  - public.nba_game_results  (REQUIRED for Phase 1 label)
- *      expected columns:
- *        game_id (text)  [join key]
- *        final_home_score (numeric/int)
- *        final_away_score (numeric/int)
+ * Output:
+ *  - conditioned stats in bucket: median/p25/p75 of observedMove, n
+ *  - baseline stats: same time bucket only (no absMove/ml conditioning), median/p25/p75, n
  *
  * Notes:
- *  - De-dupes to ONE snapshot per game per time-bucket (earliest in that bucket).
- *  - Buckets:
- *      time bucket: same 120s buckets used in distributions build (based on elapsed time)
- *      absMove bucket: stable bands
- *      live ML bucket: stable bands (dog ML)
+ *  - De-dupes to ONE snapshot per game per time-bucket (earliest created_at in that bucket).
+ *  - Requires snapshots table to have live_home_moneyline/live_away_moneyline populated (nullable is fine).
  */
 
 function jsonError(status: number, error: string, detail?: any) {
@@ -57,6 +56,26 @@ function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
 
+function percentile(xsSorted: number[], p: number) {
+  const n = xsSorted.length;
+  if (n === 0) return null;
+  const pp = clamp(p, 0, 1);
+  const idx = (n - 1) * pp;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return xsSorted[lo];
+  const t = idx - lo;
+  return xsSorted[lo] * (1 - t) + xsSorted[hi] * t;
+}
+
+function median(xsSorted: number[]) {
+  const n = xsSorted.length;
+  if (n === 0) return null;
+  const mid = Math.floor(n / 2);
+  if (n % 2 === 1) return xsSorted[mid];
+  return (xsSorted[mid - 1] + xsSorted[mid]) / 2;
+}
+
 function supabaseAdmin() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -70,7 +89,6 @@ function supabaseAdmin() {
 // --- Bucketing helpers (stable + interpretable) ---
 
 function timeElapsedSeconds(period: number, secondsRemainingInPeriod: number) {
-  // NBA regulation: 4 periods x 12 min = 720s each
   const p = clamp(period, 1, 4);
   const rem = clamp(secondsRemainingInPeriod, 0, 720);
   const elapsedThisQ = 720 - rem;
@@ -118,20 +136,10 @@ type Snapshot = {
   created_at?: string | null;
 };
 
-type ResultRow = {
-  game_id: string | null;
-  final_home_score?: number | null;
-  final_away_score?: number | null;
-};
-
 function inferDogSideFromMoneyline(mlHome: number | null, mlAway: number | null): "home" | "away" | null {
-  // Moneyline convention: negative=favorite, positive=underdog.
-  // If one is positive and the other negative => positive is dog.
-  // If both positive => larger positive is "more dog".
-  // If both negative => larger (less negative) is "less favorite" but still favorite; return the one with higher value.
   if (mlHome == null && mlAway == null) return null;
-  if (mlHome != null && mlAway == null) return mlHome >= 0 ? "home" : "home";
-  if (mlAway != null && mlHome == null) return mlAway >= 0 ? "away" : "away";
+  if (mlHome != null && mlAway == null) return "home";
+  if (mlAway != null && mlHome == null) return "away";
 
   const h = mlHome as number;
   const a = mlAway as number;
@@ -139,7 +147,7 @@ function inferDogSideFromMoneyline(mlHome: number | null, mlAway: number | null)
   if (h >= 0 && a < 0) return "home";
   if (a >= 0 && h < 0) return "away";
 
-  // both positive or both negative => choose larger number
+  // both positive or both negative => choose larger number as "doggier"
   return h >= a ? "home" : "away";
 }
 
@@ -147,43 +155,6 @@ function dogMoneyline(mlHome: number | null, mlAway: number | null): number | nu
   const side = inferDogSideFromMoneyline(mlHome, mlAway);
   if (!side) return null;
   return side === "home" ? mlHome : mlAway;
-}
-
-function dogCoversCloseSpread(args: {
-  dogSide: "home" | "away";
-  closeHomeSpread: number;
-  finalHome: number;
-  finalAway: number;
-}): boolean {
-  const { dogSide, closeHomeSpread, finalHome, finalAway } = args;
-
-  if (dogSide === "away") {
-    const closeAwaySpread = -closeHomeSpread;
-    // ATS margin for away dog:
-    // (away - home) + closeAwaySpread > 0
-    return finalAway - finalHome + closeAwaySpread > 0;
-  }
-
-  // home dog:
-  // (home - away) + closeHomeSpread > 0  (closeHomeSpread should be positive usually)
-  return finalHome - finalAway + closeHomeSpread > 0;
-}
-
-async function chunkedIn<T extends { game_id: string | null }>(
-  sb: any,
-  table: string,
-  columns: string,
-  gameIds: string[],
-  chunkSize = 500
-): Promise<any[]> {
-  const out: any[] = [];
-  for (let i = 0; i < gameIds.length; i += chunkSize) {
-    const chunk = gameIds.slice(i, i + chunkSize);
-    const { data, error } = await sb.from(table).select(columns).in("game_id", chunk);
-    if (error) throw new Error(error.message || `Failed reading ${table}`);
-    out.push(...(data || []));
-  }
-  return out;
 }
 
 export async function GET(req: Request) {
@@ -195,34 +166,28 @@ export async function GET(req: Request) {
 
   const period = int(searchParams.get("period"));
   const secondsRemaining = int(searchParams.get("secondsRemaining"));
-  const absMove = num(searchParams.get("absMove"));
+  const absMoveInput = num(searchParams.get("absMove"));
   const liveMlRaw = num(searchParams.get("liveMl"));
 
   if (period == null || period < 1 || period > 4) return jsonError(400, "Missing/invalid period.");
-  if (secondsRemaining == null || secondsRemaining < 0 || secondsRemaining > 720)
+  if (secondsRemaining == null || secondsRemaining < 0 || secondsRemaining > 720) {
     return jsonError(400, "Missing/invalid secondsRemaining.");
-  if (absMove == null) return jsonError(400, "Missing/invalid absMove.");
+  }
+  if (absMoveInput == null) return jsonError(400, "Missing/invalid absMove.");
   if (liveMlRaw == null) return jsonError(400, "Missing/invalid liveMl.");
 
-  // Build bucket ids (what the client will display / cache key)
   const tElapsed = timeElapsedSeconds(period, secondsRemaining);
   const tb = timeBucket120(tElapsed);
-  const mBucket = absMoveBucketId(absMove);
+  const mBucket = absMoveBucketId(absMoveInput);
   const mlBucket = mlBucketId(liveMlRaw);
 
-  // Pull snapshots only in the time bucket window (tight and fast)
   const sb = supabaseAdmin();
 
-  // Convert time bucket start/end back into (period, secondsRemaining) ranges:
-  // We simply use elapsed seconds range [start, end) and filter in-memory after pulling a narrow supabase range
-  // because table stores (period, seconds_remaining) not elapsed.
-  // To keep DB filter tight, we filter by period first and seconds_remaining as coarse bounds for that period.
+  // Candidate pull (at most two periods due to bucket boundary)
   const pStart = Math.floor(tb.time_bucket_start / 720) + 1;
   const pEnd = Math.floor((tb.time_bucket_end - 1) / 720) + 1;
-
   const periods = [pStart, pEnd].filter((x, i, a) => x >= 1 && x <= 4 && a.indexOf(x) === i);
 
-  // Pull candidates (at most 2 adjacent periods due to 120s window boundary)
   const { data, error } = await sb
     .from("nba_line_snapshots")
     .select(
@@ -238,13 +203,13 @@ export async function GET(req: Request) {
 
   const rows = (data || []) as Snapshot[];
 
-  // Filter into exact time bucket (elapsed seconds) and compute derived values
-  const inBucket: Array<
+  // Filter into exact time bucket and compute observedMove + derived ML buckets
+  const candidates: Array<
     Snapshot & {
       tElapsed: number;
+      observedMove: number;
       absMove: number;
       absMoveBucket: string;
-      dogSide: "home" | "away" | null;
       dogMl: number | null;
       dogMlBucket: string | null;
     }
@@ -263,20 +228,17 @@ export async function GET(req: Request) {
     const t = timeElapsedSeconds(p, rem);
     if (t < tb.time_bucket_start || t >= tb.time_bucket_end) continue;
 
-    const obsMove = live - close;
-    if (!Number.isFinite(obsMove)) continue;
-
-    const aMove = Math.abs(obsMove);
-    const aMoveBucket = absMoveBucketId(aMove);
+    const observedMove = live - close;
+    if (!Number.isFinite(observedMove)) continue;
 
     const mlH = num((r as any).live_home_moneyline);
     const mlA = num((r as any).live_away_moneyline);
-    const dSide = inferDogSideFromMoneyline(mlH, mlA);
     const dMl = dogMoneyline(mlH, mlA);
+    if (dMl == null) continue;
 
-    const dMlBucket = dMl == null ? null : mlBucketId(dMl);
+    const aMove = Math.abs(observedMove);
 
-    inBucket.push({
+    candidates.push({
       ...r,
       game_id: gid,
       period: p,
@@ -284,15 +246,15 @@ export async function GET(req: Request) {
       closing_home_spread: close,
       live_home_spread: live,
       tElapsed: t,
+      observedMove,
       absMove: aMove,
-      absMoveBucket: aMoveBucket,
-      dogSide: dSide,
+      absMoveBucket: absMoveBucketId(aMove),
       dogMl: dMl,
-      dogMlBucket: dMlBucket,
+      dogMlBucket: mlBucketId(dMl),
     });
   }
 
-  if (inBucket.length === 0) {
+  if (candidates.length === 0) {
     return NextResponse.json({
       ok: true,
       sport,
@@ -300,15 +262,21 @@ export async function GET(req: Request) {
       season,
       bucket: { ...tb, absMoveBucket: mBucket, mlBucket },
       n: 0,
-      p_dog_cover: null,
-      baseline_p_dog_cover: null,
-      note: "No snapshots found in this time bucket (or missing moneylines).",
+      median_move: null,
+      p25_move: null,
+      p75_move: null,
+      baseline_n: 0,
+      baseline_median_move: null,
+      baseline_p25_move: null,
+      baseline_p75_move: null,
+      note:
+        "No usable snapshots found in this time bucket with moneylines. Ensure nba_line_snapshots has live_home_moneyline/live_away_moneyline and ingest is populating them.",
     });
   }
 
   // De-dupe: one snapshot per game per time bucket (earliest created_at)
-  const byGame = new Map<string, typeof inBucket[number]>();
-  for (const r of inBucket) {
+  const byGame = new Map<string, typeof candidates[number]>();
+  for (const r of candidates) {
     const gid = r.game_id as string;
     const prev = byGame.get(gid);
     if (!prev) {
@@ -322,99 +290,33 @@ export async function GET(req: Request) {
 
   const uniques = Array.from(byGame.values());
 
-  // Baseline set: same time bucket only (ignore move + ml buckets), but require moneylines and close spread (so label is computable)
-  const baseline = uniques.filter((r) => r.dogSide && r.dogMl != null);
+  // Baseline: same time bucket only (but requires ML since we filtered above)
+  const baseline = uniques;
 
-  // Conditioned set: same time bucket + absMove bucket + dog ML bucket
+  // Conditioned: baseline + absMove bucket + ML bucket
   const conditioned = baseline.filter((r) => r.absMoveBucket === mBucket && r.dogMlBucket === mlBucket);
 
-  const baselineIds = baseline.map((r) => r.game_id as string);
-  const conditionedIds = conditioned.map((r) => r.game_id as string);
+  const baseMoves = baseline.map((r) => r.observedMove).filter((x) => Number.isFinite(x));
+  const condMoves = conditioned.map((r) => r.observedMove).filter((x) => Number.isFinite(x));
 
-  if (baselineIds.length === 0) {
-    return NextResponse.json({
-      ok: true,
-      sport,
-      league,
-      season,
-      bucket: { ...tb, absMoveBucket: mBucket, mlBucket },
-      n: 0,
-      p_dog_cover: null,
-      baseline_p_dog_cover: null,
-      note: "Snapshots found, but missing moneylines (live_home_moneyline/live_away_moneyline).",
-    });
-  }
-
-  // Fetch results for baseline ids (so baseline is computable in the same response)
-  let results: ResultRow[] = [];
-  try {
-    results = (await chunkedIn(
-      sb,
-      "nba_game_results",
-      "game_id,final_home_score,final_away_score",
-      baselineIds
-    )) as ResultRow[];
-  } catch (e: any) {
-    return jsonError(
-      500,
-      "Missing results table for Phase 1.",
-      {
-        message:
-          "Expected public.nba_game_results with columns: game_id, final_home_score, final_away_score.",
-        error: e?.message || String(e),
-        hint:
-          "Create/populate nba_game_results (or update this route to match your existing results table), then retry.",
-      }
-    );
-  }
-
-  const resMap = new Map<string, { h: number; a: number }>();
-  for (const r of results) {
-    const gid = r.game_id ? String(r.game_id) : "";
-    const h = num((r as any).final_home_score);
-    const a = num((r as any).final_away_score);
-    if (!gid || h == null || a == null) continue;
-    resMap.set(gid, { h, a });
-  }
-
-  function computeRate(rows: typeof baseline) {
-    let n = 0;
-    let wins = 0;
-
-    for (const r of rows) {
-      const gid = r.game_id as string;
-      const close = r.closing_home_spread as number;
-      const dogSide = r.dogSide as "home" | "away";
-      const fin = resMap.get(gid);
-      if (!fin) continue;
-
-      n++;
-      if (dogCoversCloseSpread({ dogSide, closeHomeSpread: close, finalHome: fin.h, finalAway: fin.a })) wins++;
-    }
-
-    return { n, wins, p: n > 0 ? wins / n : null };
-  }
-
-  const base = computeRate(baseline);
-  const cond = computeRate(conditioned);
+  const baseSorted = [...baseMoves].sort((a, b) => a - b);
+  const condSorted = [...condMoves].sort((a, b) => a - b);
 
   return NextResponse.json({
     ok: true,
     sport,
     league,
     season,
-    bucket: {
-      ...tb,
-      absMoveBucket: mBucket,
-      mlBucket,
-    },
-    n: cond.n,
-    wins: cond.wins,
-    p_dog_cover: cond.p,
-    baseline_n: base.n,
-    baseline_wins: base.wins,
-    baseline_p_dog_cover: base.p,
+    bucket: { ...tb, absMoveBucket: mBucket, mlBucket },
+    n: condSorted.length,
+    median_move: median(condSorted),
+    p25_move: percentile(condSorted, 0.25),
+    p75_move: percentile(condSorted, 0.75),
+    baseline_n: baseSorted.length,
+    baseline_median_move: median(baseSorted),
+    baseline_p25_move: percentile(baseSorted, 0.25),
+    baseline_p75_move: percentile(baseSorted, 0.75),
     note:
-      "Phase 1 label = underdog covers the closing spread. Conditioned set is time bucket + absMove bucket + ML bucket. Baseline is time bucket only.",
+      "Phase 1A (snapshots only): conditioned distribution of observed market move (live-close). Baseline is time bucket only. No game results required.",
   });
 }
