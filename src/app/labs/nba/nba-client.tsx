@@ -1,7 +1,7 @@
 // src/app/labs/nba/nba-client.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Tooltip } from "@/components/Tooltip";
 import { computeDeviation } from "@/lib/labs/nba/heatmap";
 import { buildDistributionIndex } from "@/lib/nba/deviation-engine";
@@ -136,7 +136,7 @@ function MoveGapTip() {
       <div className="text-foreground/70">
         Best for scanning late 1Q and mid 2Q/3Q—so you can quickly decide what deserves a closer look.
       </div>
-      <div className="text-foreground/70">Not a bet signal. No recommendations—just a deviation watchlist.</div>
+      <div className="text-foreground/70">Watchlist only. Not a bet signal.</div>
     </div>
   );
 }
@@ -150,7 +150,7 @@ function OrenEdgeTip() {
         Right (green) suggests the home side looks undervalued vs close. Left (amber) suggests it looks overvalued vs
         close.
       </div>
-      <div className="text-foreground/70">Not a bet signal—use as context alongside live market movement.</div>
+      <div className="text-foreground/70">Watchlist only. Not a bet signal.</div>
     </div>
   );
 }
@@ -162,11 +162,24 @@ function ConfluenceTip() {
       <div className="text-foreground/70">
         Live-only. Measures when your pregame edge and the live market deviation point the same direction.
       </div>
+      <div className="text-foreground/70">Watchlist only. Not a bet signal.</div>
+    </div>
+  );
+}
+
+function ConfirmedTip() {
+  return (
+    <div className="max-w-sm space-y-2">
+      <div className="font-semibold">Confirmed</div>
       <div className="text-foreground/70">
-        Higher scores mean: (1) your disagreement vs close is meaningful, and (2) the live move is unusually large, and
-        (3) both agree on direction.
+        A stricter filter: only lights up in late 1Q or mid 2Q/3Q, using the <span className="font-medium">model</span>{" "}
+        move gap (not raw).
       </div>
-      <div className="text-foreground/70">Watchlist only — not a bet signal.</div>
+      <div className="text-foreground/70">
+        Requires the deviation to <span className="font-medium">persist</span> across two refreshes and still leave some
+        “room” versus your pregame edge.
+      </div>
+      <div className="text-foreground/70">Still not a bet signal—just a higher-confidence watchlist alert.</div>
     </div>
   );
 }
@@ -262,6 +275,20 @@ function ConfluenceBadge({ score }: { score: number | null }) {
     <div className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs", cls)}>
       <span className="tabular-nums font-semibold">{score == null ? "—" : score}</span>
       <span className="text-[10px] tracking-wide">{label}</span>
+    </div>
+  );
+}
+
+function ConfirmedBadge({ on }: { on: boolean }) {
+  return (
+    <div
+      className={cn(
+        "inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs",
+        on ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]" : "border-white/10 bg-black/20 text-foreground/70"
+      )}
+    >
+      <span className={cn("inline-block h-1.5 w-1.5 rounded-full", on ? "bg-[color:var(--accent)]" : "bg-white/25")} />
+      <span className="text-[10px] tracking-wide">{on ? "CONFIRMED" : "—"}</span>
     </div>
   );
 }
@@ -411,19 +438,26 @@ function ScoreLine({
 function derivePhaseAndLive(g: any): { phase: "pregame" | "live" | "final" | "unknown"; isLive: boolean } {
   const raw = String(g?.phase ?? "").toLowerCase().trim();
   const period = safeInt(g?.period);
-  const sec = safeInt(g?.secondsRemaining);
 
   const isFinal = raw === "final" || raw === "ended" || raw === "complete";
   const isPregame = raw === "pregame" || raw === "pre" || raw === "not_started" || raw === "scheduled";
 
-  // Treat any in-progress-ish values as live
   const phaseLiveWords = new Set(["live", "inprogress", "in_progress", "in-game", "ingame", "playing"]);
   const looksLive = phaseLiveWords.has(raw) || ((period ?? 0) > 0 && !isFinal);
 
   const phase: "pregame" | "live" | "final" | "unknown" = isFinal ? "final" : isPregame ? "pregame" : looksLive ? "live" : raw ? "unknown" : "unknown";
-  const isLive = phase === "live" && (period ?? 0) > 0; // require a period > 0 to avoid false "live"
-  // If some feeds mark live but omit secondsRemaining temporarily, still allow live if period>0.
+  const isLive = phase === "live" && (period ?? 0) > 0;
+
   return { phase, isLive };
+}
+
+// Late 1Q (last 2:00), Mid 2Q (9:00–4:00), Mid 3Q (9:00–4:00)
+function inSignalWindow(period: number | null, secondsRemaining: number | null): boolean {
+  if (period == null || secondsRemaining == null) return false;
+  if (period === 1) return secondsRemaining <= 120;
+  if (period === 2) return secondsRemaining <= 540 && secondsRemaining >= 240;
+  if (period === 3) return secondsRemaining <= 540 && secondsRemaining >= 240;
+  return false;
 }
 
 type Row = {
@@ -443,14 +477,19 @@ type Row = {
   phase: "pregame" | "live" | "final" | "unknown";
   isLive: boolean;
 
+  period: number | null;
+  secondsRemaining: number | null;
+
   moveGapPts: number | null;
   moveGapText: string;
   moveGapMode: "model" | "raw" | "none";
+  absZ: number | null;
 
   orenEdgePts: number | null;
   orenEdgeText: string;
 
   confluence: number | null;
+  confirmed: boolean;
 };
 
 export default function NbaClient() {
@@ -467,6 +506,9 @@ export default function NbaClient() {
   const [orenStatus, setOrenStatus] = useState<"loading" | "ok" | "missing">("loading");
 
   const [nowTick, setNowTick] = useState(() => Date.now());
+
+  // cache last readings per game to confirm persistence across refreshes
+  const readingsRef = useRef<Map<string, Array<{ t: number; moveGapPts: number; absZ: number }>>>(new Map());
 
   useEffect(() => {
     const t = setInterval(() => setNowTick(Date.now()), 60 * 1000);
@@ -541,7 +583,6 @@ export default function NbaClient() {
 
     try {
       const res = await fetch("/api/labs/nba/live-games", { cache: "no-store" });
-
       const contentType = res.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
         setGames([]);
@@ -552,7 +593,6 @@ export default function NbaClient() {
       }
 
       const json = await res.json().catch(() => null);
-
       if (json?.ok && Array.isArray(json.items)) {
         setGames(json.items);
         setMeta(json.meta);
@@ -581,6 +621,8 @@ export default function NbaClient() {
   const isStale = Boolean(meta?.stale);
 
   const rows = useMemo<Row[]>(() => {
+    const now = Date.now();
+
     const computed = games.map((g: any) => {
       const { phase, isLive } = derivePhaseAndLive(g);
 
@@ -610,25 +652,29 @@ export default function NbaClient() {
 
       const closeNum = typeof closeRounded === "number" ? closeRounded : null;
 
-      // ✅ Move gap: try model first; if model can't compute (missing bucket / NaN), fall back to raw move (live-close)
+      // model outputs
+      let modelGap: number | null = null;
+      let absZ: number | null = null;
+
+      // raw move (live-close) for fallback + edge remaining check
+      const liveNum = safeNum(g?.liveSpreadHome);
+      const closeNum2 = safeNum(g?.closingSpreadHome);
+      const rawMove = liveNum != null && closeNum2 != null ? liveNum - closeNum2 : null;
+
       let moveGapPts: number | null = null;
       let moveGapMode: Row["moveGapMode"] = "none";
 
       if (isLive) {
         const result = computeDeviation(g, { spreadIndex });
-        const modelGap = result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : null;
+        modelGap = result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : null;
+        absZ = result && Number.isFinite(result.absZ) ? result.absZ : null;
 
         if (modelGap != null) {
           moveGapPts = modelGap;
           moveGapMode = "model";
-        } else {
-          // fallback: raw move (still useful for confluence directionality)
-          const liveNum = safeNum(g?.liveSpreadHome);
-          const closeNum2 = safeNum(g?.closingSpreadHome);
-          if (liveNum != null && closeNum2 != null) {
-            moveGapPts = liveNum - closeNum2;
-            moveGapMode = "raw";
-          }
+        } else if (rawMove != null) {
+          moveGapPts = rawMove;
+          moveGapMode = "raw";
         }
       }
 
@@ -641,6 +687,41 @@ export default function NbaClient() {
       });
 
       const confluence = computeConfluenceScore({ orenEdgePts, moveGapPts, isLive });
+
+      // CONFIRMED: strict filter (model-only + window + persistence + still room)
+      let confirmed = false;
+      if (
+        isLive &&
+        moveGapMode === "model" &&
+        moveGapPts != null &&
+        absZ != null &&
+        absZ >= 1.0 &&
+        inSignalWindow(period, secondsRemaining) &&
+        orenEdgePts != null &&
+        Number.isFinite(orenEdgePts) &&
+        rawMove != null
+      ) {
+        const so = sign(orenEdgePts);
+        const sm = sign(moveGapPts);
+        const sr = sign(rawMove);
+        const aligned = so !== 0 && so === sm && so === sr;
+
+        // "still room": market moved your way, but not so far that it fully erased your pregame edge
+        // (simple: raw move magnitude < 1.2x your edge magnitude)
+        const stillRoom = Math.abs(rawMove) < Math.abs(orenEdgePts) * 1.2;
+
+        // persistence: previous reading exists, at least 60s older, same sign, still z>=1.0
+        const history = readingsRef.current.get(String(g.gameId ?? `${awayTeam}-${homeTeam}`)) ?? [];
+        const prev = history.length > 0 ? history[history.length - 1] : null;
+
+        const persists =
+          !!prev &&
+          now - prev.t >= 60_000 &&
+          sign(prev.moveGapPts) === sign(moveGapPts) &&
+          prev.absZ >= 1.0;
+
+        confirmed = aligned && stillRoom && persists;
+      }
 
       return {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
@@ -659,14 +740,19 @@ export default function NbaClient() {
         phase,
         isLive,
 
+        period,
+        secondsRemaining,
+
         moveGapPts,
         moveGapText: moveGapPts == null ? "—" : formatSigned(moveGapPts, 1),
         moveGapMode,
+        absZ,
 
         orenEdgePts,
         orenEdgeText: orenEdgePts == null ? "—" : formatSigned(orenEdgePts, 1),
 
         confluence,
+        confirmed,
       };
     });
 
@@ -683,7 +769,10 @@ export default function NbaClient() {
       const rb = phaseRank(b);
       if (ra !== rb) return ra - rb;
 
-      // within live: higher confluence first
+      // confirmed at top
+      if (a.confirmed !== b.confirmed) return a.confirmed ? -1 : 1;
+
+      // then higher confluence
       const ac = a.confluence ?? -1;
       const bc = b.confluence ?? -1;
       if (bc !== ac) return bc - ac;
@@ -693,6 +782,23 @@ export default function NbaClient() {
 
     return computed;
   }, [games, after2pm, spreadIndex, orenMap, orenParams]);
+
+  // update persistence cache AFTER render (so confirmed lights up on the next refresh)
+  useEffect(() => {
+    const now = Date.now();
+    for (const r of rows) {
+      if (!r.isLive) continue;
+      if (r.moveGapMode !== "model") continue;
+      if (r.moveGapPts == null || r.absZ == null) continue;
+
+      const key = r.key;
+      const arr = readingsRef.current.get(key) ?? [];
+      arr.push({ t: now, moveGapPts: r.moveGapPts, absZ: r.absZ });
+      // keep last 3
+      while (arr.length > 3) arr.shift();
+      readingsRef.current.set(key, arr);
+    }
+  }, [rows]);
 
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
@@ -734,12 +840,11 @@ export default function NbaClient() {
             <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">NBA Deviation Watchlist</h1>
 
             <p className="mt-4 max-w-3xl text-lg text-foreground/75">
-              Confluence lights up when Oren edge and move gap agree on direction and both are meaningful.
+              Confluence = alignment. <span className="text-foreground/90">Confirmed</span> = alignment + right window +
+              model move gap + persistence.
             </p>
 
-            <div className="mt-2 text-xs text-foreground/55">
-              {headerDate} • Confluence requires live play + Oren edge + move gap (model or fallback raw move).
-            </div>
+            <div className="mt-2 text-xs text-foreground/55">{headerDate} • Watchlist only. Not a bet signal.</div>
           </div>
         </div>
 
@@ -756,6 +861,14 @@ export default function NbaClient() {
           ) : (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-4 text-sm text-foreground/70">
+                <div className="flex items-center gap-2">
+                  <span className="text-foreground/60">Confirmed</span>
+                  <Tooltip label="Confirmed">
+                    <div className="cursor-help">
+                      <ConfirmedTip />
+                    </div>
+                  </Tooltip>
+                </div>
                 <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Confluence</span>
                   <Tooltip label="Confluence">
@@ -793,13 +906,13 @@ export default function NbaClient() {
               <div className="grid gap-4">
                 {rows.map((r) => {
                   const cTone = confluenceTone(r.confluence);
-                  const confluenceRing =
-                    cTone === "high"
-                      ? "ring-1 ring-[color:var(--accent)]/30"
+                  const ring =
+                    r.confirmed
+                      ? "ring-1 ring-[color:var(--accent)]/35"
+                      : cTone === "high"
+                      ? "ring-1 ring-[color:var(--accent)]/25"
                       : cTone === "mid"
-                      ? "ring-1 ring-amber-400/25"
-                      : cTone === "low"
-                      ? "ring-1 ring-white/10"
+                      ? "ring-1 ring-amber-400/20"
                       : "";
 
                   return (
@@ -808,9 +921,9 @@ export default function NbaClient() {
                       className={cn(
                         "rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5",
                         r.isLive && "bg-[color:var(--accent)]/5",
-                        confluenceRing
+                        ring
                       )}
-                      style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.12)" } : undefined}
+                      style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.10)" } : undefined}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -827,6 +940,15 @@ export default function NbaClient() {
                         </div>
 
                         <div className="flex flex-col items-end gap-2">
+                          <div className="flex items-center gap-2">
+                            <Tooltip label="Confirmed">
+                              <div className="cursor-help">
+                                <ConfirmedTip />
+                              </div>
+                            </Tooltip>
+                            <ConfirmedBadge on={r.confirmed} />
+                          </div>
+
                           <div className="flex items-center gap-2">
                             <ConfluenceBadge score={r.confluence} />
                             <Tooltip label="Confluence">
@@ -857,11 +979,8 @@ export default function NbaClient() {
                           </div>
                           <div className="mt-1 flex items-baseline justify-between gap-3">
                             <div className="tabular-nums text-xl font-semibold text-foreground">{r.moveGapText}</div>
-                            {r.isLive && r.moveGapMode === "raw" ? (
-                              <span className="text-[10px] text-foreground/50">raw</span>
-                            ) : null}
-                            {r.isLive && r.moveGapMode === "model" ? (
-                              <span className="text-[10px] text-foreground/50">model</span>
+                            {r.isLive && r.moveGapMode !== "none" ? (
+                              <span className="text-[10px] text-foreground/50">{r.moveGapMode}</span>
                             ) : null}
                           </div>
                         </div>
