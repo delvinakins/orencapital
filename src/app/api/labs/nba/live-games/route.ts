@@ -1,3 +1,4 @@
+// src/app/api/labs/nba/live-games/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { fetchApiSportsScores } from "@/lib/labs/nba/providers/scores-apisports";
@@ -23,6 +24,10 @@ type LiveGameItem = {
   liveSpreadHome: number | null;
   closingSpreadHome: number | null;
 
+  // ✅ NEW: live moneyline (American odds)
+  liveMoneylineHome: number | null;
+  liveMoneylineAway: number | null;
+
   phase: Phase;
 };
 
@@ -38,6 +43,7 @@ type LiveOk = {
     allowedDateKeysPT?: string[];
     closingSeeded?: number;
     closingAttached?: number;
+    moneylineAttached?: number;
   };
 };
 
@@ -119,7 +125,8 @@ function classifyPhase(
   const s = normalizeStatus(statusRaw);
 
   if (s.includes("final") || s.includes("finished") || s.includes("ended")) return "final";
-  if (s.includes("live") || s.includes("inprogress") || s.includes("in_progress") || s.includes("playing")) return "live";
+  if (s.includes("live") || s.includes("inprogress") || s.includes("in_progress") || s.includes("playing"))
+    return "live";
   if (s.includes("scheduled") || s.includes("not started") || s.includes("not_started") || s.includes("pregame"))
     return "pregame";
 
@@ -183,8 +190,57 @@ async function getClosingMap(keys: string[]) {
 
   for (const row of data as any[]) {
     const k = typeof row?.game_key === "string" ? row.game_key : null;
-    const v = toNum(row?.closing_home_spread); // ✅ parses numeric strings
-    if (k && v != null) map.set(k, roundHalf(v)!); // ✅ round to 0.5
+    const v = toNum(row?.closing_home_spread);
+    if (k && v != null) map.set(k, roundHalf(v)!);
+  }
+
+  return map;
+}
+
+// ✅ NEW: pull live moneylines from odds provider + attach by game key
+async function getMoneylineMap(
+  odds: any[],
+  allowed: Set<string>
+): Promise<Map<string, { home: number | null; away: number | null }>> {
+  const map = new Map<string, { home: number | null; away: number | null }>();
+
+  for (const o of odds || []) {
+    const dk = String(o?.laDateKey ?? "").trim();
+    if (dk && !allowed.has(dk)) continue;
+
+    const awayTeam = canonicalTeamName(String(o?.awayTeam ?? "").trim());
+    const homeTeam = canonicalTeamName(String(o?.homeTeam ?? "").trim());
+    if (!awayTeam || !homeTeam) continue;
+
+    const gameKey = makeMatchKey(awayTeam, homeTeam, dk);
+
+    // Try common shapes from provider objects:
+    const home =
+      toNum((o as any)?.liveMoneylineHome) ??
+      toNum((o as any)?.moneylineHome) ??
+      toNum((o as any)?.homeMoneyline) ??
+      toNum((o as any)?.mlHome) ??
+      toNum((o as any)?.moneyline?.home) ??
+      toNum((o as any)?.moneyline?.homePrice) ??
+      toNum((o as any)?.markets?.h2h?.home) ??
+      toNum((o as any)?.h2h?.home) ??
+      null;
+
+    const away =
+      toNum((o as any)?.liveMoneylineAway) ??
+      toNum((o as any)?.moneylineAway) ??
+      toNum((o as any)?.awayMoneyline) ??
+      toNum((o as any)?.mlAway) ??
+      toNum((o as any)?.moneyline?.away) ??
+      toNum((o as any)?.moneyline?.awayPrice) ??
+      toNum((o as any)?.markets?.h2h?.away) ??
+      toNum((o as any)?.h2h?.away) ??
+      null;
+
+    // If neither exists, skip
+    if (home == null && away == null) continue;
+
+    map.set(gameKey, { home: home != null ? Math.trunc(home) : null, away: away != null ? Math.trunc(away) : null });
   }
 
   return map;
@@ -270,6 +326,9 @@ async function pollProviders(now: Date): Promise<LiveOk> {
     allowed
   );
 
+  // ✅ NEW: moneyline attachment map (if provider includes it)
+  const moneylineMap = await getMoneylineMap(odds as any[], allowed);
+
   // Seed closing from odds (first seen consensus)
   const closingCandidates = odds
     .filter((o) => (o.laDateKey ? allowed.has(o.laDateKey) : true))
@@ -310,8 +369,7 @@ async function pollProviders(now: Date): Promise<LiveOk> {
     const match = `${awayTeam}@${homeTeam}`;
     const gameKey = makeMatchKey(awayTeam, homeTeam, laKey);
 
-    const liveSpreadHome =
-      (laKey ? oddsByKey.get(`${laKey}|${match}`) : null) ?? oddsByMatch.get(match) ?? null;
+    const liveSpreadHome = (laKey ? oddsByKey.get(`${laKey}|${match}`) : null) ?? oddsByMatch.get(match) ?? null;
 
     const awayScore = hasNumber(raw?.awayScore) ? raw.awayScore : null;
     const homeScore = hasNumber(raw?.homeScore) ? raw.homeScore : null;
@@ -323,6 +381,8 @@ async function pollProviders(now: Date): Promise<LiveOk> {
 
     const phase = classifyPhase({ period, secondsRemaining, awayScore, homeScore }, raw?.status);
 
+    const ml = moneylineMap.get(gameKey) ?? null;
+
     items.push({
       gameId: gameKey,
       awayTeam,
@@ -333,6 +393,8 @@ async function pollProviders(now: Date): Promise<LiveOk> {
       secondsRemaining,
       liveSpreadHome: liveSpreadHome,
       closingSpreadHome: null,
+      liveMoneylineHome: ml?.home ?? null,
+      liveMoneylineAway: ml?.away ?? null,
       phase,
     });
   }
@@ -343,18 +405,26 @@ async function pollProviders(now: Date): Promise<LiveOk> {
       const dk = o.laDateKey ?? "";
       if (dk && !allowed.has(dk)) continue;
 
-      const gameKey = makeMatchKey(o.awayTeam, o.homeTeam, dk);
+      const awayTeam = canonicalTeamName(String(o?.awayTeam ?? "").trim());
+      const homeTeam = canonicalTeamName(String(o?.homeTeam ?? "").trim());
+      if (!awayTeam || !homeTeam) continue;
+
+      const gameKey = makeMatchKey(awayTeam, homeTeam, dk);
+
+      const ml = moneylineMap.get(gameKey) ?? null;
 
       items.push({
         gameId: gameKey,
-        awayTeam: o.awayTeam,
-        homeTeam: o.homeTeam,
+        awayTeam: awayTeam,
+        homeTeam: homeTeam,
         awayScore: null,
         homeScore: null,
         period: 0,
         secondsRemaining: null,
         liveSpreadHome: roundHalf(toNum(o.liveHomeSpread)),
         closingSpreadHome: null,
+        liveMoneylineHome: ml?.home ?? null,
+        liveMoneylineAway: ml?.away ?? null,
         phase: "pregame",
       });
     }
@@ -368,6 +438,11 @@ async function pollProviders(now: Date): Promise<LiveOk> {
     closingSpreadHome: closingMap.get(it.gameId) ?? null,
   }));
 
+  let moneylineAttached = 0;
+  for (const it of attached) {
+    if (it.liveMoneylineHome != null || it.liveMoneylineAway != null) moneylineAttached++;
+  }
+
   return {
     ok: true,
     items: attached,
@@ -380,6 +455,7 @@ async function pollProviders(now: Date): Promise<LiveOk> {
       allowedDateKeysPT: keys,
       closingSeeded,
       closingAttached: closingMap.size,
+      moneylineAttached,
     },
   };
 }
