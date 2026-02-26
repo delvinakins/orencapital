@@ -34,10 +34,6 @@ function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function clamp(n: number, lo: number, hi: number) {
-  return Math.max(lo, Math.min(hi, n));
-}
-
 function roundToHalf(x: any): number | null {
   if (x == null) return null;
   const v = typeof x === "number" ? x : Number(String(x).trim());
@@ -126,13 +122,13 @@ function MoveGapTip() {
     <div className="max-w-sm space-y-2">
       <div className="font-semibold">Move gap</div>
       <div className="text-foreground/70">
-        Helps you spot games where the live spread has shifted more than usual for this point in the game.
+        Helps you spot games where the market has shifted more than usual for this point in the game.
       </div>
       <div className="text-foreground/70">
-        It’s designed for scanning—especially late 1Q and mid 2Q/3Q—so you can decide what deserves a closer look.
+        It’s built for scanning—especially late 1Q and mid 2Q/3Q—so you can decide what deserves a closer look.
       </div>
       <div className="text-foreground/70">
-        This is not a bet signal. It does not recommend a wager or predict outcomes—only highlights market deviations for review.
+        Not a bet signal. No recommendations—just a deviation watchlist.
       </div>
     </div>
   );
@@ -142,14 +138,21 @@ function OrenEdgeTip() {
   return (
     <div className="max-w-sm space-y-2">
       <div className="font-semibold">Oren edge</div>
+      <div className="text-foreground/70">Compares Oren’s private power ranking model to the consensus closing line.</div>
       <div className="text-foreground/70">
-        Compares a private Oren power ranking model to the consensus closing line.
+        Positive means Oren thinks home “should be” more favored than the close. Negative means less favored.
       </div>
+      <div className="text-foreground/70">Not a bet signal—use as a prior alongside live market behavior.</div>
+    </div>
+  );
+}
+
+function CurrentLineTip() {
+  return (
+    <div className="max-w-sm space-y-2">
+      <div className="font-semibold">Current line</div>
       <div className="text-foreground/70">
-        Positive means Oren thinks the home team “should be” more favored than the close. Negative means less favored.
-      </div>
-      <div className="text-foreground/70">
-        This is not a bet signal—just a pregame prior you can combine with live market behavior.
+        The latest market spread right now. Before tip, it’s a pregame line. During games, it’s the live line.
       </div>
     </div>
   );
@@ -175,18 +178,16 @@ type Row = {
   matchup: string;
   clock: string;
 
-  live: string;
+  current: string;
   close: string;
 
   scoreText: string;
   tone: "accent" | "warn" | "neutral";
-
   absZ: number;
 
   phase: "pregame" | "live" | "final" | "unknown";
   isLive: boolean;
 
-  // Oren score
   orenEdgePts: number | null;
   orenEdgeText: string;
 };
@@ -222,7 +223,7 @@ function formatClockFromGame(g: any): { clock: string; phase: Row["phase"]; isLi
 }
 
 /**
- * Flashscore-style logos via ESPN CDN.
+ * Logos via ESPN CDN.
  */
 const NBA_ABBR: Record<string, string> = {
   "atlanta hawks": "ATL",
@@ -299,6 +300,29 @@ function computeOrenEdgePts(args: {
   return impliedSpreadHome - (closingSpreadHome as number);
 }
 
+function Pill({
+  children,
+  tone = "neutral",
+}: {
+  children: React.ReactNode;
+  tone?: "neutral" | "live" | "pregame" | "final";
+}) {
+  const cls =
+    tone === "live"
+      ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
+      : tone === "final"
+      ? "border-white/10 bg-white/5 text-foreground/75"
+      : tone === "pregame"
+      ? "border-white/10 bg-black/20 text-foreground/70"
+      : "border-white/10 bg-black/20 text-foreground/70";
+
+  return (
+    <span className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-0.5 text-xs", cls)}>
+      {children}
+    </span>
+  );
+}
+
 function ScoreLine({
   awayTeam,
   homeTeam,
@@ -332,16 +356,14 @@ function ScoreLine({
         {logo ? <img src={logo} alt={`${name} logo`} className={logoClass} loading="lazy" /> : null}
         <div className="min-w-0 truncate text-sm">
           <span className="font-medium tracking-wide">{abbr}</span>
-          <span className="ml-2 hidden sm:inline text-xs text-foreground/50">
-            {name}
-          </span>
+          <span className="ml-2 hidden sm:inline text-xs text-foreground/50">{name}</span>
         </div>
       </div>
     );
   };
 
   return (
-    <div className="mt-2 inline-flex w-full max-w-[560px] flex-col rounded-lg border border-white/10 bg-black/10 px-3 py-2">
+    <div className="mt-2 inline-flex w-full max-w-[560px] flex-col rounded-xl border border-white/10 bg-black/10 px-3 py-2">
       <div className={rowClass(awayWin)}>
         <TeamLeft name={awayTeam} />
         <div className={scoreClass(awayWin)}>{awayScore}</div>
@@ -357,30 +379,37 @@ function ScoreLine({
   );
 }
 
-function MobileCard({
-  r,
-}: {
-  r: Row;
-}) {
+function MobileCard({ r }: { r: Row }) {
   const scoreClass = textToneClass(r.tone);
   const ore = r.orenEdgePts;
   const oreTone =
-    ore == null ? "text-foreground/55" : ore >= 1.5 ? "text-[color:var(--accent)]" : ore <= -1.5 ? "text-amber-200" : "text-foreground/80";
+    ore == null
+      ? "text-foreground/55"
+      : ore >= 1.5
+      ? "text-[color:var(--accent)]"
+      : ore <= -1.5
+      ? "text-amber-200"
+      : "text-foreground/80";
+
+  const phaseTone = r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame";
+  const phaseLabel = r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE";
 
   return (
-    <div className={cn("rounded-2xl border border-[color:var(--border)] bg-black/10 p-4", r.isLive && "bg-[color:var(--accent)]/5")}
+    <div
+      className={cn(
+        "rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-4",
+        r.isLive && "bg-[color:var(--accent)]/5"
+      )}
       style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.18)" } : undefined}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <div className="truncate text-base font-semibold text-foreground">{r.matchup}</div>
-            {r.isLive ? (
-              <span className="inline-flex items-center gap-2 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-2.5 py-0.5 text-xs text-[color:var(--accent)]">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
-                LIVE
-              </span>
-            ) : null}
+            <Pill tone={phaseTone}>
+              {r.isLive ? <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" /> : null}
+              {phaseLabel}
+            </Pill>
           </div>
           <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
         </div>
@@ -392,26 +421,28 @@ function MobileCard({
 
       <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
         <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-          <div className="text-xs text-foreground/55">Live (Home)</div>
-          <div className="mt-1 tabular-nums font-semibold text-foreground">{r.live}</div>
+          <div className="text-xs text-foreground/55">Current (Home)</div>
+          <div className="mt-1 tabular-nums font-semibold text-foreground">{r.current}</div>
+          <div className="mt-0.5 text-[11px] text-foreground/45">{r.isLive ? "live line" : "pregame line"}</div>
         </div>
         <div className="rounded-xl border border-white/10 bg-black/10 p-3">
           <div className="text-xs text-foreground/55">Close (Home)</div>
           <div className="mt-1 tabular-nums font-semibold text-foreground">{r.close}</div>
+          <div className="mt-0.5 text-[11px] text-foreground/45">consensus close</div>
         </div>
         <div className="rounded-xl border border-white/10 bg-black/10 p-3">
           <div className="text-xs text-foreground/55">Move gap</div>
           <div className={cn("mt-1 tabular-nums font-semibold", scoreClass)}>{r.scoreText}</div>
+          <div className="mt-0.5 text-[11px] text-foreground/45">watchlist signal</div>
         </div>
         <div className="rounded-xl border border-white/10 bg-black/10 p-3">
           <div className="text-xs text-foreground/55">Oren edge</div>
           <div className={cn("mt-1 tabular-nums font-semibold", oreTone)}>{r.orenEdgeText}</div>
+          <div className="mt-0.5 text-[11px] text-foreground/45">vs close</div>
         </div>
       </div>
 
-      <div className="mt-3 text-xs text-foreground/55">
-        Lab preview. Review required. Not a bet signal.
-      </div>
+      <div className="mt-3 text-xs text-foreground/55">Lab preview. Review required. Not a bet signal.</div>
     </div>
   );
 }
@@ -422,11 +453,9 @@ export default function NbaClient() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [meta, setMeta] = useState<LiveMeta>(undefined);
 
-  // Always have a working baseline distributions index
   const [spreadIndex, setSpreadIndex] = useState<any>(() => makeStubIndex());
   const [indexSource, setIndexSource] = useState<"stub" | "remote">("stub");
 
-  // Oren rankings (current table)
   const [orenMap, setOrenMap] = useState<Record<string, number> | null>(null);
   const [orenParams, setOrenParams] = useState<{ A: number; k: number; S: number } | null>(null);
   const [orenStatus, setOrenStatus] = useState<"loading" | "ok" | "missing">("loading");
@@ -439,15 +468,14 @@ export default function NbaClient() {
     return () => clearInterval(t);
   }, []);
 
-  // 2pm gate is DISPLAY ONLY (spreads), not computation.
+  // 2pm gate is DISPLAY ONLY for spreads
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
-  // Load distributions (prefer season, fallback seed)
+  // Load distributions: season -> seed -> stub
   useEffect(() => {
     (async () => {
       try {
-        // Try current season first
         const seasonRes = await fetch("/api/labs/nba/distributions?season=2025-2026", { cache: "no-store" });
         const ct1 = seasonRes.headers.get("content-type") || "";
         if (ct1.includes("application/json")) {
@@ -459,7 +487,6 @@ export default function NbaClient() {
           }
         }
 
-        // Fallback to seed
         const seedRes = await fetch("/api/labs/nba/distributions?season=seed", { cache: "no-store" });
         const ct2 = seedRes.headers.get("content-type") || "";
         if (ct2.includes("application/json")) {
@@ -476,7 +503,7 @@ export default function NbaClient() {
     })();
   }, []);
 
-  // Load Oren current rankings + params
+  // Load Oren rankings
   useEffect(() => {
     (async () => {
       try {
@@ -489,12 +516,14 @@ export default function NbaClient() {
         const json = await res.json().catch(() => null);
         if (json?.ok && json?.map && typeof json.map === "object") {
           setOrenMap(json.map);
+
           if (json?.params && typeof json.params === "object") {
             const A = Number(json.params.A ?? 10);
             const k = Number(json.params.k ?? 0.12);
             const S = Number(json.params.S ?? 1.0);
             if (Number.isFinite(A) && Number.isFinite(k) && Number.isFinite(S)) setOrenParams({ A, k, S });
           }
+
           setOrenStatus("ok");
         } else {
           setOrenStatus("missing");
@@ -553,7 +582,6 @@ export default function NbaClient() {
     const computed = games.map((g: any) => {
       const { clock, phase, isLive } = formatClockFromGame(g);
 
-      // Deviation (always computed)
       const result = computeDeviation(g, { spreadIndex });
 
       const abs = result && Number.isFinite(result.absDislocationPts) ? result.absDislocationPts : 0;
@@ -570,10 +598,12 @@ export default function NbaClient() {
 
       const s = getLiveScore(g);
 
-      const liveRounded = roundToHalf(g?.liveSpreadHome);
+      // Feed values (always)
+      const currentRounded = roundToHalf(g?.liveSpreadHome);
       const closeRounded = roundToHalf(g?.closingSpreadHome);
 
-      const liveLabel = after2pm ? formatSpread(liveRounded, 1) : "—";
+      // Display gate only
+      const currentLabel = after2pm ? formatSpread(currentRounded, 1) : "—";
       const closeLabel = after2pm ? formatSpread(closeRounded, 1) : "—";
 
       const closeNum = typeof closeRounded === "number" ? closeRounded : null;
@@ -603,7 +633,7 @@ export default function NbaClient() {
         matchup: `${awayTeam} @ ${homeTeam}`,
         clock,
 
-        live: liveLabel,
+        current: currentLabel,
         close: closeLabel,
 
         scoreText: formatSigned(moveGapPts, 1),
@@ -631,9 +661,7 @@ export default function NbaClient() {
       const rb = phaseRank(b);
       if (ra !== rb) return ra - rb;
 
-      // Big dislocations first
       if (b.abs !== a.abs) return b.abs - a.abs;
-
       return a.matchup.localeCompare(b.matchup);
     });
 
@@ -658,49 +686,38 @@ export default function NbaClient() {
                 Labs • NBA
               </div>
 
-              <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
-                {isStale ? "Snapshot" : "Live"}
-              </div>
+              <Pill tone="neutral">{isStale ? "Snapshot" : "Live feed"}</Pill>
 
-              {updatedAtLabel ? (
-                <div className="text-xs text-foreground/55">Last updated {updatedAtLabel} PT</div>
-              ) : null}
+              {updatedAtLabel ? <div className="text-xs text-foreground/55">Updated {updatedAtLabel} PT</div> : null}
 
               {liveCount > 0 ? (
-                <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-3 py-1 text-xs text-[color:var(--accent)]">
+                <Pill tone="live">
                   <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
                   {liveCount} live
-                </div>
-              ) : null}
+                </Pill>
+              ) : (
+                <Pill tone="pregame">0 live</Pill>
+              )}
 
-              {!after2pm ? (
-                <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
-                  Spreads unlock at 2pm PT
-                </div>
-              ) : null}
+              {!after2pm ? <Pill tone="pregame">Spreads unlock at 2pm PT</Pill> : null}
 
-              <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
-                Index: {indexSource === "remote" ? "Market" : "Stub"}
-              </div>
-
-              <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
-                {orenBadge}
-              </div>
+              <Pill tone="neutral">Index: {indexSource === "remote" ? "Market" : "Stub"}</Pill>
+              <Pill tone="neutral">{orenBadge}</Pill>
             </div>
 
-            <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">Live Deviation Heat Map</h1>
+            <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">NBA Deviation Watchlist</h1>
 
             <p className="mt-4 max-w-3xl text-lg text-foreground/75">
-              Highlights games where the live market move differs from what’s typical for similar game states.
+              Scan games where the market is moving unusually for similar game states. Current line is shown pregame and live.
             </p>
           </div>
 
-          <div className="inline-flex w-full sm:w-auto rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-1">
+          <div className="inline-flex w-full sm:w-auto rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-1">
             <button
               type="button"
               onClick={() => setView("slate")}
               className={cn(
-                "flex-1 sm:flex-none px-4 py-2 text-sm rounded-lg transition",
+                "flex-1 sm:flex-none px-4 py-2 text-sm rounded-xl transition",
                 view === "slate" ? "bg-white text-slate-950" : "text-foreground/80 hover:bg-white/5"
               )}
             >
@@ -710,7 +727,7 @@ export default function NbaClient() {
               type="button"
               onClick={() => setView("heatmap")}
               className={cn(
-                "flex-1 sm:flex-none px-4 py-2 text-sm rounded-lg transition",
+                "flex-1 sm:flex-none px-4 py-2 text-sm rounded-xl transition",
                 view === "heatmap" ? "bg-white text-slate-950" : "text-foreground/80 hover:bg-white/5"
               )}
             >
@@ -740,31 +757,42 @@ export default function NbaClient() {
 
               {/* Desktop: table */}
               <div className="hidden sm:block overflow-x-auto">
-                <table className="min-w-[1120px] w-full text-[15px]">
+                <table className="min-w-[1180px] w-full text-[15px]">
                   <thead>
                     <tr className="text-left text-foreground/60">
                       <th className="px-4 py-3 font-medium">
                         Matchup <span className="text-foreground/40">({headerDate})</span>
                       </th>
                       <th className="px-4 py-3 font-medium">Clock</th>
-                      <th className="px-4 py-3 font-medium">Live (Home)</th>
+
+                      <th className="px-4 py-3 font-medium">
+                        <Tooltip label="Current line">
+                          <CurrentLineTip />
+                        </Tooltip>
+                        <span className="ml-2">Current (Home)</span>
+                      </th>
+
                       <th className="px-4 py-3 font-medium">Close (Home)</th>
+
                       <th className="px-4 py-3 font-medium">
                         <Tooltip label="Move gap">
                           <MoveGapTip />
                         </Tooltip>
+                        <span className="ml-2">Move gap</span>
                       </th>
+
                       <th className="px-4 py-3 font-medium">
                         <Tooltip label="Oren edge">
                           <OrenEdgeTip />
                         </Tooltip>
+                        <span className="ml-2">Oren edge</span>
                       </th>
                     </tr>
                   </thead>
 
                   <tbody>
                     {rows.map((r) => {
-                      const scoreClass = textToneClass(r.tone);
+                      const moveClass = textToneClass(r.tone);
 
                       const ore = r.orenEdgePts;
                       const oreClass =
@@ -776,61 +804,60 @@ export default function NbaClient() {
                           ? "text-amber-200"
                           : "text-foreground/80";
 
+                      const phaseTone = r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame";
+                      const phaseLabel = r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE";
+
                       return (
                         <tr
                           key={r.key}
                           className={cn("border-t border-[color:var(--border)]", r.isLive && "bg-[color:var(--accent)]/5")}
                           style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.18)" } : undefined}
                         >
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-4">
                             <div className="flex items-center gap-2">
                               <div className="font-medium text-foreground">{r.matchup}</div>
-                              {r.isLive ? (
-                                <span className="inline-flex items-center gap-2 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-2.5 py-0.5 text-xs text-[color:var(--accent)]">
+                              <Pill tone={phaseTone}>
+                                {r.isLive ? (
                                   <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
-                                  LIVE
-                                </span>
-                              ) : null}
+                                ) : null}
+                                {phaseLabel}
+                              </Pill>
                             </div>
 
-                            <ScoreLine
-                              awayTeam={r.awayTeam}
-                              homeTeam={r.homeTeam}
-                              awayScore={r.awayScore}
-                              homeScore={r.homeScore}
-                            />
+                            <div className="mt-2">
+                              <ScoreLine
+                                awayTeam={r.awayTeam}
+                                homeTeam={r.homeTeam}
+                                awayScore={r.awayScore}
+                                homeScore={r.homeScore}
+                              />
+                            </div>
                           </td>
 
-                          <td className="px-4 py-3">
-                            {r.isLive ? (
-                              <div className="inline-flex items-center rounded-lg border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-2.5 py-1 text-sm text-foreground">
-                                <span className="text-foreground/80">{r.clock}</span>
-                              </div>
-                            ) : (
-                              <div className="text-foreground/80">{r.clock}</div>
-                            )}
+                          <td className="px-4 py-4">
+                            <div className="text-foreground/80">{r.clock}</div>
                           </td>
 
-                          <td className="px-4 py-3 text-foreground/80">{r.live}</td>
-                          <td className="px-4 py-3 text-foreground/80">{r.close}</td>
-                          <td className={cn("px-4 py-3 font-medium tabular-nums", scoreClass)}>{r.scoreText}</td>
-                          <td className={cn("px-4 py-3 font-medium tabular-nums", oreClass)}>{r.orenEdgeText}</td>
+                          <td className="px-4 py-4">
+                            <div className="tabular-nums font-semibold text-foreground">{r.current}</div>
+                            <div className="mt-0.5 text-xs text-foreground/45">{r.isLive ? "live line" : "pregame line"}</div>
+                          </td>
+
+                          <td className="px-4 py-4">
+                            <div className="tabular-nums font-semibold text-foreground/90">{r.close}</div>
+                            <div className="mt-0.5 text-xs text-foreground/45">consensus close</div>
+                          </td>
+
+                          <td className={cn("px-4 py-4 font-semibold tabular-nums", moveClass)}>{r.scoreText}</td>
+
+                          <td className={cn("px-4 py-4 font-semibold tabular-nums", oreClass)}>{r.orenEdgeText}</td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
 
-                <div className="mt-4 text-sm text-foreground/55">
-                  Lab preview. Review required. Not a bet signal.
-                </div>
-
-                {!after2pm ? (
-                  <div className="mt-2 text-sm text-foreground/55">
-                    Spreads unlock 1 hour before games start (spreads hidden before then).
-                  </div>
-                ) : null}
-
+                <div className="mt-4 text-sm text-foreground/55">Lab preview. Review required. Not a bet signal.</div>
                 <div className="mt-2 text-xs text-foreground/55">Spreads are rounded to the nearest 0.5 for readability.</div>
               </div>
             </div>
