@@ -7,7 +7,28 @@ import { computeDeviation } from "@/lib/labs/nba/heatmap";
 import { buildDistributionIndex } from "@/lib/nba/deviation-engine";
 
 type GameClockState = any;
+
 type LiveMeta = { stale?: boolean; updatedAt?: string; window?: "active" | "offhours" } | undefined;
+
+function makeStubIndex() {
+  const samples = Array.from({ length: 1200 }).map((_, i) => {
+    const spread = [-8, -6, -4, -2, 0, 2, 4, 6][i % 8];
+    return {
+      gameId: `stub-${i}`,
+      state: {
+        period: (i % 4) + 1,
+        secondsRemainingInPeriod: (i * 37) % 720,
+        scoreDiff: ((i * 13) % 20) - 10,
+      },
+      market: {
+        closingHomeSpread: spread,
+        liveHomeSpread: spread + (((i * 17) % 10) - 5) * 0.2,
+      },
+    };
+  });
+
+  return buildDistributionIndex(samples);
+}
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -105,33 +126,30 @@ function MoveGapTip() {
     <div className="max-w-sm space-y-2">
       <div className="font-semibold">Move gap</div>
       <div className="text-foreground/70">
-        Compares the current live-vs-close move to what typically happens in similar game states.
+        Helps you spot games where the live spread has shifted more than usual for this point in the game.
       </div>
       <div className="text-foreground/70">
-        Larger gaps may require review. It’s a watchlist signal — not a bet button.
+        It’s designed for scanning—especially late 1Q and mid 2Q/3Q—so you can decide what deserves a closer look.
+      </div>
+      <div className="text-foreground/70">
+        This is not a bet signal. It does not recommend a wager or predict outcomes—only highlights market deviations for review.
       </div>
     </div>
   );
 }
 
-function MoveGapExplainer() {
+function OrenEdgeTip() {
   return (
-    <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-2">
-          <div className="text-sm font-medium text-foreground">Move gap, explained</div>
-          <p className="max-w-3xl text-sm leading-relaxed text-foreground/70">
-            Move gap helps you spot games where the live spread has shifted{" "}
-            <span className="font-medium">more than usual</span> for this point in the game. It’s designed for scanning a
-            slate—especially late 1Q and mid 2Q/3Q—so you can quickly see where the market is behaving unusually and decide
-            what deserves a closer look.
-          </p>
-        </div>
-
-        <div className="sm:max-w-sm rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-relaxed text-foreground/65">
-          This is <span className="font-medium text-foreground/80">not</span> a bet signal. It does not recommend a wager or
-          predict outcomes—only highlights market deviations for review.
-        </div>
+    <div className="max-w-sm space-y-2">
+      <div className="font-semibold">Oren edge</div>
+      <div className="text-foreground/70">
+        Compares a private Oren power ranking model to the consensus closing line.
+      </div>
+      <div className="text-foreground/70">
+        Positive means Oren thinks the home team “should be” more favored than the close. Negative means less favored.
+      </div>
+      <div className="text-foreground/70">
+        This is not a bet signal—just a pregame prior you can combine with live market behavior.
       </div>
     </div>
   );
@@ -167,25 +185,16 @@ type Row = {
 
   phase: "pregame" | "live" | "final" | "unknown";
   isLive: boolean;
+
+  // Oren score
+  orenEdgePts: number | null;
+  orenEdgeText: string;
 };
 
 function toneFromAbsZ(absZ: number): Row["tone"] {
   if (absZ >= 1.5) return "accent";
   if (absZ >= 1.0) return "warn";
   return "neutral";
-}
-
-function bgFromTone(tone: Row["tone"], intensity01: number) {
-  const a = clamp(intensity01, 0, 1);
-  if (tone === "accent") return `rgba(43, 203, 119, ${0.10 + 0.22 * a})`;
-  if (tone === "warn") return `rgba(245, 158, 11, ${0.08 + 0.18 * a})`;
-  return `rgba(255, 255, 255, ${0.03 + 0.06 * a})`;
-}
-
-function borderFromTone(tone: Row["tone"]) {
-  if (tone === "accent") return "rgba(43, 203, 119, 0.22)";
-  if (tone === "warn") return "rgba(245, 158, 11, 0.22)";
-  return "rgba(255, 255, 255, 0.10)";
 }
 
 function textToneClass(tone: Row["tone"]) {
@@ -259,6 +268,37 @@ function teamLogoUrl(name: string): string | null {
   return `https://a.espncdn.com/i/teamlogos/nba/500/${abbr}.png`;
 }
 
+function normalizeTeam(s: any): string {
+  return String(s ?? "").trim().toLowerCase();
+}
+
+function orenRating(rank: number, A: number, k: number): number {
+  if (!Number.isFinite(rank) || rank < 1) return 0;
+  return A * Math.exp(-k * (rank - 1));
+}
+
+function computeOrenEdgePts(args: {
+  homeTeam: string;
+  awayTeam: string;
+  closingSpreadHome: number | null;
+  rankMap: Record<string, number> | null;
+  params: { A: number; k: number; S: number } | null;
+}): number | null {
+  const { homeTeam, awayTeam, closingSpreadHome, rankMap, params } = args;
+  if (!rankMap || !params) return null;
+  if (!Number.isFinite(closingSpreadHome as any)) return null;
+
+  const homeRank = rankMap[normalizeTeam(homeTeam)];
+  const awayRank = rankMap[normalizeTeam(awayTeam)];
+  if (!Number.isFinite(homeRank) || !Number.isFinite(awayRank)) return null;
+
+  const homeRating = orenRating(homeRank, params.A, params.k);
+  const awayRating = orenRating(awayRank, params.A, params.k);
+
+  const impliedSpreadHome = params.S * (homeRating - awayRating);
+  return impliedSpreadHome - (closingSpreadHome as number);
+}
+
 function ScoreLine({
   awayTeam,
   homeTeam,
@@ -292,7 +332,9 @@ function ScoreLine({
         {logo ? <img src={logo} alt={`${name} logo`} className={logoClass} loading="lazy" /> : null}
         <div className="min-w-0 truncate text-sm">
           <span className="font-medium tracking-wide">{abbr}</span>
-          <span className="ml-2 hidden sm:inline text-xs text-foreground/50">{name}</span>
+          <span className="ml-2 hidden sm:inline text-xs text-foreground/50">
+            {name}
+          </span>
         </div>
       </div>
     );
@@ -315,198 +357,63 @@ function ScoreLine({
   );
 }
 
-function SlateMobileCard({ r }: { r: Row }) {
+function MobileCard({
+  r,
+}: {
+  r: Row;
+}) {
   const scoreClass = textToneClass(r.tone);
+  const ore = r.orenEdgePts;
+  const oreTone =
+    ore == null ? "text-foreground/55" : ore >= 1.5 ? "text-[color:var(--accent)]" : ore <= -1.5 ? "text-amber-200" : "text-foreground/80";
 
   return (
-    <div
-      className={cn(
-        "rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-4",
-        r.isLive && "bg-[color:var(--accent)]/5"
-      )}
+    <div className={cn("rounded-2xl border border-[color:var(--border)] bg-black/10 p-4", r.isLive && "bg-[color:var(--accent)]/5")}
       style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.18)" } : undefined}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <div className="truncate text-sm font-medium text-foreground">{r.matchup}</div>
+            <div className="truncate text-base font-semibold text-foreground">{r.matchup}</div>
             {r.isLive ? (
-              <span className="inline-flex items-center gap-2 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-2 py-0.5 text-[11px] text-[color:var(--accent)]">
+              <span className="inline-flex items-center gap-2 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-2.5 py-0.5 text-xs text-[color:var(--accent)]">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
                 LIVE
               </span>
             ) : null}
           </div>
-
-          <div className="mt-1 text-xs text-foreground/60">{r.clock}</div>
+          <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
         </div>
 
-        <div className={cn("text-right tabular-nums font-semibold", scoreClass)}>
-          <div className="text-xs text-foreground/55">Move gap</div>
-          <div className="text-base">{r.scoreText}</div>
-        </div>
+        <div className={cn("tabular-nums text-sm font-semibold", scoreClass)}>{r.scoreText}</div>
       </div>
 
       <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
 
       <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-        <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-          <div className="text-[11px] text-foreground/55">Live (Home)</div>
-          <div className="mt-0.5 tabular-nums text-foreground">{r.live}</div>
+        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+          <div className="text-xs text-foreground/55">Live (Home)</div>
+          <div className="mt-1 tabular-nums font-semibold text-foreground">{r.live}</div>
         </div>
-        <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-          <div className="text-[11px] text-foreground/55">Close (Home)</div>
-          <div className="mt-0.5 tabular-nums text-foreground">{r.close}</div>
+        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+          <div className="text-xs text-foreground/55">Close (Home)</div>
+          <div className="mt-1 tabular-nums font-semibold text-foreground">{r.close}</div>
         </div>
+        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+          <div className="text-xs text-foreground/55">Move gap</div>
+          <div className={cn("mt-1 tabular-nums font-semibold", scoreClass)}>{r.scoreText}</div>
+        </div>
+        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+          <div className="text-xs text-foreground/55">Oren edge</div>
+          <div className={cn("mt-1 tabular-nums font-semibold", oreTone)}>{r.orenEdgeText}</div>
+        </div>
+      </div>
+
+      <div className="mt-3 text-xs text-foreground/55">
+        Lab preview. Review required. Not a bet signal.
       </div>
     </div>
   );
-}
-
-/** -------- Heat map (treemap) layout (no deps) -------- */
-type Rect = { x: number; y: number; w: number; h: number };
-type TreeItem = { id: string; value: number; row: Row };
-type Placed = { item: TreeItem; rect: Rect };
-
-function sum(items: TreeItem[]) {
-  return items.reduce((a, b) => a + b.value, 0);
-}
-
-function worstAspect(row: TreeItem[], side: number) {
-  if (row.length === 0) return Infinity;
-  const s = sum(row);
-  if (s <= 0) return Infinity;
-
-  let minV = Infinity;
-  let maxV = 0;
-  for (const it of row) {
-    minV = Math.min(minV, it.value);
-    maxV = Math.max(maxV, it.value);
-  }
-  if (!Number.isFinite(minV) || minV <= 0) return Infinity;
-
-  const s2 = s * s;
-  const side2 = side * side;
-  return Math.max((side2 * maxV) / s2, s2 / (side2 * minV));
-}
-
-function layoutRow(row: TreeItem[], rect: Rect): { placed: Placed[]; remaining: Rect } {
-  const placed: Placed[] = [];
-  const s = sum(row);
-
-  if (row.length === 0 || s <= 0 || rect.w <= 0 || rect.h <= 0) return { placed, remaining: rect };
-
-  const horizontal = rect.w >= rect.h;
-
-  if (horizontal) {
-    const h = s / rect.w;
-    let x = rect.x;
-    for (const it of row) {
-      const w = it.value / h;
-      placed.push({ item: it, rect: { x, y: rect.y, w, h } });
-      x += w;
-    }
-    return { placed, remaining: { x: rect.x, y: rect.y + h, w: rect.w, h: rect.h - h } };
-  } else {
-    const w = s / rect.h;
-    let y = rect.y;
-    for (const it of row) {
-      const h = it.value / w;
-      placed.push({ item: it, rect: { x: rect.x, y, w, h } });
-      y += h;
-    }
-    return { placed, remaining: { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h } };
-  }
-}
-
-function squarify(items: TreeItem[], rect: Rect): Placed[] {
-  const placed: Placed[] = [];
-  const remaining = [...items].filter((it) => Number.isFinite(it.value) && it.value > 0).sort((a, b) => b.value - a.value);
-
-  let r: Rect = { ...rect };
-  let row: TreeItem[] = [];
-
-  while (remaining.length > 0) {
-    const next = remaining[0];
-    const side = Math.min(r.w, r.h);
-
-    if (row.length === 0) {
-      row.push(next);
-      remaining.shift();
-      continue;
-    }
-
-    const currentWorst = worstAspect(row, side);
-    const nextWorst = worstAspect([...row, next], side);
-
-    if (nextWorst <= currentWorst) {
-      row.push(next);
-      remaining.shift();
-    } else {
-      const res = layoutRow(row, r);
-      placed.push(...res.placed);
-      r = res.remaining;
-      row = [];
-      if (r.w <= 0 || r.h <= 0) break;
-    }
-  }
-
-  if (row.length > 0 && r.w > 0 && r.h > 0) {
-    const res = layoutRow(row, r);
-    placed.push(...res.placed);
-  }
-
-  return placed;
-}
-
-function makeStubIndex() {
-  const samples = Array.from({ length: 1200 }).map((_, i) => {
-    const spread = [-8, -6, -4, -2, 0, 2, 4, 6][i % 8];
-    return {
-      gameId: `stub-${i}`,
-      state: {
-        period: (i % 4) + 1,
-        secondsRemainingInPeriod: (i * 37) % 720,
-        scoreDiff: ((i * 13) % 20) - 10,
-      },
-      market: {
-        closingHomeSpread: spread,
-        liveHomeSpread: spread + (((i * 17) % 10) - 5) * 0.2,
-      },
-    };
-  });
-
-  return buildDistributionIndex(samples);
-}
-
-// Merge distribution ROWS (seed + market), market overrides seed by bucket key.
-// This avoids trying to merge opaque index structures.
-function mergeDistributionRows(seedRows: any[] | null, marketRows: any[] | null) {
-  const out = new Map<string, any>();
-
-  const keyOf = (r: any) => {
-    const t =
-      r?.time_bucket_id ??
-      r?.timeBucketId ??
-      r?.time_bucket ??
-      `${r?.time_bucket_start ?? r?.timeBucketStart ?? ""}_${r?.time_bucket_end ?? r?.timeBucketEnd ?? ""}`;
-
-    const s =
-      r?.spread_bucket_id ??
-      r?.spreadBucketId ??
-      r?.spread_bucket ??
-      `${r?.spread_bucket_start ?? r?.spreadBucketStart ?? ""}_${r?.spread_bucket_end ?? r?.spreadBucketEnd ?? ""}`;
-
-    // include league/sport if present to be safe
-    const league = r?.league ?? "";
-    const sport = r?.sport ?? "";
-    return `${sport}|${league}|${t}|${s}`;
-  };
-
-  for (const r of seedRows ?? []) out.set(keyOf(r), r);
-  for (const r of marketRows ?? []) out.set(keyOf(r), r); // override
-
-  return Array.from(out.values());
 }
 
 export default function NbaClient() {
@@ -515,8 +422,14 @@ export default function NbaClient() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [meta, setMeta] = useState<LiveMeta>(undefined);
 
+  // Always have a working baseline distributions index
   const [spreadIndex, setSpreadIndex] = useState<any>(() => makeStubIndex());
-  const [indexLabel, setIndexLabel] = useState<"Market+Seed" | "Seed" | "Stub">("Stub");
+  const [indexSource, setIndexSource] = useState<"stub" | "remote">("stub");
+
+  // Oren rankings (current table)
+  const [orenMap, setOrenMap] = useState<Record<string, number> | null>(null);
+  const [orenParams, setOrenParams] = useState<{ A: number; k: number; S: number } | null>(null);
+  const [orenStatus, setOrenStatus] = useState<"loading" | "ok" | "missing">("loading");
 
   const [view, setView] = useState<ViewMode>("slate");
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -526,41 +439,70 @@ export default function NbaClient() {
     return () => clearInterval(t);
   }, []);
 
+  // 2pm gate is DISPLAY ONLY (spreads), not computation.
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
-  // ✅ Build index by MERGING ROWS FIRST, then building once.
+  // Load distributions (prefer season, fallback seed)
   useEffect(() => {
-    let cancelled = false;
-
-    async function fetchSeason(season: string) {
-      const res = await fetch(`/api/labs/nba/distributions?season=${encodeURIComponent(season)}`, { cache: "no-store" });
-      const ct = res.headers.get("content-type") || "";
-      if (!ct.includes("application/json")) return null;
-      const json = await res.json().catch(() => null);
-      if (json?.ok && Array.isArray(json.items) && json.items.length > 0) return json.items as any[];
-      return null;
-    }
-
     (async () => {
       try {
-        const [seedRows, marketRows] = await Promise.all([fetchSeason("seed"), fetchSeason("2025-2026")]);
-        const mergedRows = mergeDistributionRows(seedRows, marketRows);
+        // Try current season first
+        const seasonRes = await fetch("/api/labs/nba/distributions?season=2025-2026", { cache: "no-store" });
+        const ct1 = seasonRes.headers.get("content-type") || "";
+        if (ct1.includes("application/json")) {
+          const j1 = await seasonRes.json().catch(() => null);
+          if (j1?.ok && Array.isArray(j1.items) && j1.items.length > 0) {
+            setSpreadIndex(buildDistributionIndex(j1.items));
+            setIndexSource("remote");
+            return;
+          }
+        }
 
-        if (!cancelled && mergedRows.length > 0) {
-          const idx = buildDistributionIndex(mergedRows);
-          setSpreadIndex(idx);
-          setIndexLabel(marketRows && marketRows.length > 0 ? "Market+Seed" : seedRows && seedRows.length > 0 ? "Seed" : "Stub");
-          return;
+        // Fallback to seed
+        const seedRes = await fetch("/api/labs/nba/distributions?season=seed", { cache: "no-store" });
+        const ct2 = seedRes.headers.get("content-type") || "";
+        if (ct2.includes("application/json")) {
+          const j2 = await seedRes.json().catch(() => null);
+          if (j2?.ok && Array.isArray(j2.items) && j2.items.length > 0) {
+            setSpreadIndex(buildDistributionIndex(j2.items));
+            setIndexSource("remote");
+            return;
+          }
         }
       } catch {
         // keep stub
       }
     })();
+  }, []);
 
-    return () => {
-      cancelled = true;
-    };
+  // Load Oren current rankings + params
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/labs/nba/oren-score?season=2025-2026", { cache: "no-store" });
+        const ct = res.headers.get("content-type") || "";
+        if (!ct.includes("application/json")) {
+          setOrenStatus("missing");
+          return;
+        }
+        const json = await res.json().catch(() => null);
+        if (json?.ok && json?.map && typeof json.map === "object") {
+          setOrenMap(json.map);
+          if (json?.params && typeof json.params === "object") {
+            const A = Number(json.params.A ?? 10);
+            const k = Number(json.params.k ?? 0.12);
+            const S = Number(json.params.S ?? 1.0);
+            if (Number.isFinite(A) && Number.isFinite(k) && Number.isFinite(S)) setOrenParams({ A, k, S });
+          }
+          setOrenStatus("ok");
+        } else {
+          setOrenStatus("missing");
+        }
+      } catch {
+        setOrenStatus("missing");
+      }
+    })();
   }, []);
 
   async function load() {
@@ -611,6 +553,7 @@ export default function NbaClient() {
     const computed = games.map((g: any) => {
       const { clock, phase, isLive } = formatClockFromGame(g);
 
+      // Deviation (always computed)
       const result = computeDeviation(g, { spreadIndex });
 
       const abs = result && Number.isFinite(result.absDislocationPts) ? result.absDislocationPts : 0;
@@ -632,6 +575,16 @@ export default function NbaClient() {
 
       const liveLabel = after2pm ? formatSpread(liveRounded, 1) : "—";
       const closeLabel = after2pm ? formatSpread(closeRounded, 1) : "—";
+
+      const closeNum = typeof closeRounded === "number" ? closeRounded : null;
+
+      const ore = computeOrenEdgePts({
+        homeTeam,
+        awayTeam,
+        closingSpreadHome: closeNum,
+        rankMap: orenMap,
+        params: orenParams,
+      });
 
       return {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
@@ -659,6 +612,9 @@ export default function NbaClient() {
 
         phase,
         isLive,
+
+        orenEdgePts: ore,
+        orenEdgeText: ore == null ? "—" : formatSigned(ore, 1),
       };
     });
 
@@ -675,143 +631,22 @@ export default function NbaClient() {
       const rb = phaseRank(b);
       if (ra !== rb) return ra - rb;
 
+      // Big dislocations first
       if (b.abs !== a.abs) return b.abs - a.abs;
+
       return a.matchup.localeCompare(b.matchup);
     });
 
     return computed;
-  }, [games, spreadIndex, after2pm]);
+  }, [games, spreadIndex, after2pm, orenMap, orenParams]);
 
-  const heatRows = useMemo(() => rows.filter((r) => r.abs >= 0.6 || r.isLive), [rows]);
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
-  const treemap = useMemo(() => {
-    const W = 1000;
-    const H = 720;
-    const area = W * H;
-
-    const items: TreeItem[] = heatRows.map((r) => {
-      const cappedAbs = clamp(r.abs, 0, 4.0);
-      const liveBump = r.isLive ? 0.45 : 0;
-      const weight = 1 + (cappedAbs + liveBump) * 3.2;
-      return { id: r.key, value: weight, row: r };
-    });
-
-    const total = items.reduce((a, b) => a + b.value, 0);
-    if (!Number.isFinite(total) || total <= 0) return [];
-
-    const scaled: TreeItem[] = items.map((it) => ({ ...it, value: (it.value / total) * area }));
-    const placed = squarify(scaled, { x: 0, y: 0, w: W, h: H });
-
-    const gutterPx = 12;
-
-    return placed.map(({ item, rect }) => {
-      const leftPct = (rect.x / W) * 100;
-      const topPct = (rect.y / H) * 100;
-      const widthPct = (rect.w / W) * 100;
-      const heightPct = (rect.h / H) * 100;
-
-      return {
-        item,
-        left: `calc(${leftPct}% + ${gutterPx / 2}px)`,
-        top: `calc(${topPct}% + ${gutterPx / 2}px)`,
-        width: `calc(${widthPct}% - ${gutterPx}px)`,
-        height: `calc(${heightPct}% - ${gutterPx}px)`,
-      };
-    });
-  }, [heatRows]);
-
-  function HeatTile({ r, style }: { r: Row; style: React.CSSProperties }) {
-    const away = teamAbbr(r.awayTeam);
-    const home = teamAbbr(r.homeTeam);
-    const awayLogo = teamLogoUrl(r.awayTeam);
-    const homeLogo = teamLogoUrl(r.homeTeam);
-
-    const intensity = clamp((r.absZ || 0) / 2.0, 0, 1);
-    const bg = bgFromTone(r.tone, intensity);
-    const border = borderFromTone(r.tone);
-
-    const showMeta = r.isLive || r.phase === "pregame";
-
-    return (
-      <div
-        className={cn(
-          "absolute rounded-2xl border overflow-hidden",
-          "backdrop-blur-[2px]",
-          r.isLive && "ring-1 ring-[color:var(--accent)]/25"
-        )}
-        style={{
-          ...style,
-          background: bg,
-          borderColor: border,
-        }}
-        title={`${r.matchup} • ${r.clock} • Move gap ${r.scoreText}`}
-      >
-        <div className="flex h-full flex-col p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                {awayLogo ? (
-                  <img
-                    src={awayLogo}
-                    alt={`${r.awayTeam} logo`}
-                    className="h-4 w-4 rounded-sm bg-white/5 ring-1 ring-white/10 object-contain"
-                    loading="lazy"
-                  />
-                ) : null}
-                <div className="text-sm font-semibold text-foreground truncate">
-                  {away} <span className="text-foreground/60">@</span> {home}
-                </div>
-                {homeLogo ? (
-                  <img
-                    src={homeLogo}
-                    alt={`${r.homeTeam} logo`}
-                    className="h-4 w-4 rounded-sm bg-white/5 ring-1 ring-white/10 object-contain"
-                    loading="lazy"
-                  />
-                ) : null}
-              </div>
-
-              <div className="mt-1 text-xs text-foreground/60">{r.clock}</div>
-            </div>
-
-            <div className={cn("text-right tabular-nums font-semibold", textToneClass(r.tone))}>
-              <div className="text-[11px] text-foreground/55">Move gap</div>
-              <div className="text-base">{r.scoreText}</div>
-            </div>
-          </div>
-
-          <div className="mt-auto pt-3">
-            <div className="flex items-center justify-between gap-2 text-xs text-foreground/70">
-              <div className="truncate">
-                {r.isLive ? (
-                  <span className="inline-flex items-center gap-2 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-2 py-0.5 text-[11px] text-[color:var(--accent)]">
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
-                    LIVE
-                  </span>
-                ) : (
-                  <span className="text-foreground/60">{r.phase}</span>
-                )}
-              </div>
-
-              {showMeta ? (
-                <div className="flex items-center gap-3">
-                  <div className="tabular-nums">
-                    <span className="text-foreground/50">L</span>{" "}
-                    <span className="text-foreground">{r.live}</span>
-                  </div>
-                  <div className="tabular-nums">
-                    <span className="text-foreground/50">C</span>{" "}
-                    <span className="text-foreground">{r.close}</span>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const orenBadge = useMemo(() => {
+    if (orenStatus === "loading") return "Oren: Loading";
+    if (orenStatus === "missing") return "Oren: Missing";
+    return "Oren: Ready";
+  }, [orenStatus]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -827,7 +662,9 @@ export default function NbaClient() {
                 {isStale ? "Snapshot" : "Live"}
               </div>
 
-              {updatedAtLabel ? <div className="text-xs text-foreground/55">Last updated {updatedAtLabel} PT</div> : null}
+              {updatedAtLabel ? (
+                <div className="text-xs text-foreground/55">Last updated {updatedAtLabel} PT</div>
+              ) : null}
 
               {liveCount > 0 ? (
                 <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 px-3 py-1 text-xs text-[color:var(--accent)]">
@@ -843,7 +680,11 @@ export default function NbaClient() {
               ) : null}
 
               <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
-                Index: {indexLabel}
+                Index: {indexSource === "remote" ? "Market" : "Stub"}
+              </div>
+
+              <div className="inline-flex items-center rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs text-foreground/70">
+                {orenBadge}
               </div>
             </div>
 
@@ -878,8 +719,6 @@ export default function NbaClient() {
           </div>
         </div>
 
-        <MoveGapExplainer />
-
         <section className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-6">
           {loading ? (
             <div className="text-foreground/70">Loading…</div>
@@ -891,36 +730,33 @@ export default function NbaClient() {
               </div>
             </div>
           ) : view === "slate" ? (
-            <>
-              <div className="md:hidden space-y-3">
+            <div className="space-y-5">
+              {/* Mobile: card list */}
+              <div className="grid gap-4 sm:hidden">
                 {rows.map((r) => (
-                  <SlateMobileCard key={r.key} r={r} />
+                  <MobileCard key={r.key} r={r} />
                 ))}
-
-                <div className="pt-2 text-xs text-foreground/55">Lab preview. All signals require review.</div>
-
-                {!after2pm ? (
-                  <div className="text-xs text-foreground/55">
-                    Spreads unlock 1 hour before games start (spreads stay hidden before then).
-                  </div>
-                ) : null}
-
-                <div className="text-xs text-foreground/55">Spreads are rounded to the nearest 0.5 for readability.</div>
               </div>
 
-              <div className="hidden md:block overflow-x-auto">
-                <table className="min-w-[960px] w-full text-[15px]">
+              {/* Desktop: table */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="min-w-[1120px] w-full text-[15px]">
                   <thead>
                     <tr className="text-left text-foreground/60">
                       <th className="px-4 py-3 font-medium">
                         Matchup <span className="text-foreground/40">({headerDate})</span>
                       </th>
                       <th className="px-4 py-3 font-medium">Clock</th>
-                      <th className="px-4 py-3 font-medium">Live Spread (Home)</th>
-                      <th className="px-4 py-3 font-medium">Closing Spread (Home)</th>
+                      <th className="px-4 py-3 font-medium">Live (Home)</th>
+                      <th className="px-4 py-3 font-medium">Close (Home)</th>
                       <th className="px-4 py-3 font-medium">
                         <Tooltip label="Move gap">
                           <MoveGapTip />
+                        </Tooltip>
+                      </th>
+                      <th className="px-4 py-3 font-medium">
+                        <Tooltip label="Oren edge">
+                          <OrenEdgeTip />
                         </Tooltip>
                       </th>
                     </tr>
@@ -929,6 +765,16 @@ export default function NbaClient() {
                   <tbody>
                     {rows.map((r) => {
                       const scoreClass = textToneClass(r.tone);
+
+                      const ore = r.orenEdgePts;
+                      const oreClass =
+                        ore == null
+                          ? "text-foreground/55"
+                          : ore >= 1.5
+                          ? "text-[color:var(--accent)]"
+                          : ore <= -1.5
+                          ? "text-amber-200"
+                          : "text-foreground/80";
 
                       return (
                         <tr
@@ -968,59 +814,28 @@ export default function NbaClient() {
                           <td className="px-4 py-3 text-foreground/80">{r.live}</td>
                           <td className="px-4 py-3 text-foreground/80">{r.close}</td>
                           <td className={cn("px-4 py-3 font-medium tabular-nums", scoreClass)}>{r.scoreText}</td>
+                          <td className={cn("px-4 py-3 font-medium tabular-nums", oreClass)}>{r.orenEdgeText}</td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
 
-                <div className="mt-4 text-sm text-foreground/55">Lab preview. All signals require review.</div>
+                <div className="mt-4 text-sm text-foreground/55">
+                  Lab preview. Review required. Not a bet signal.
+                </div>
 
                 {!after2pm ? (
                   <div className="mt-2 text-sm text-foreground/55">
-                    Spreads unlock 1 hour before games start (spreads stay hidden before then).
+                    Spreads unlock 1 hour before games start (spreads hidden before then).
                   </div>
                 ) : null}
 
                 <div className="mt-2 text-xs text-foreground/55">Spreads are rounded to the nearest 0.5 for readability.</div>
               </div>
-            </>
+            </div>
           ) : (
-            <>
-              {treemap.length === 0 ? (
-                <div className="text-foreground/70">
-                  No heat map tiles yet. This usually means there are no live games (or no games meeting the display threshold).
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="text-sm text-foreground/60">
-                    Tiles grow with larger deviations. Color intensity reflects how unusual the move is for that game state.
-                  </div>
-
-                  <div className="relative w-full overflow-hidden rounded-2xl border border-white/10 bg-black/10">
-                    <div className="relative w-full" style={{ paddingTop: `${(720 / 1000) * 100}%` }}>
-                      {treemap.map((t) => (
-                        <HeatTile
-                          key={t.item.id}
-                          r={t.item.row}
-                          style={{
-                            left: t.left,
-                            top: t.top,
-                            width: t.width,
-                            height: t.height,
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="text-xs text-foreground/55">
-                    Tip: late 1Q + mid 2Q/3Q are the most actionable scan windows. This is still a watchlist view — not a bet
-                    button.
-                  </div>
-                </div>
-              )}
-            </>
+            <div className="text-foreground/70">Heat map view unchanged here (next: re-enable tiles with Oren overlay).</div>
           )}
         </section>
       </div>
