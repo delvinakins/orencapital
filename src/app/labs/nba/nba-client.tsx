@@ -9,6 +9,17 @@ import { buildDistributionIndex } from "@/lib/nba/deviation-engine";
 type GameClockState = any;
 type LiveMeta = { stale?: boolean; updatedAt?: string; window?: "active" | "offhours" } | undefined;
 
+type ScoreMark = "hit" | "miss" | "push" | "na";
+
+type ScoreboardState = {
+  total: { hit: number; miss: number; push: number };
+  byDay: Record<string, { hit: number; miss: number; push: number }>;
+  lastSeenMarkByGame: Record<string, ScoreMark>;
+  lastUpdatedAtIso?: string;
+};
+
+const SCOREBOARD_STORAGE_KEY = "oren:nba:scoreboard:v1";
+
 function makeStubIndex() {
   const samples = Array.from({ length: 1200 }).map((_, i) => {
     const spread = [-8, -6, -4, -2, 0, 2, 4, 6][i % 8];
@@ -115,6 +126,20 @@ function formatTodayPT(): string {
   }).format(now);
 }
 
+function dateKeyPT(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+
+  const y = parts.find((p) => p.type === "year")?.value ?? "1970";
+  const m = parts.find((p) => p.type === "month")?.value ?? "01";
+  const d = parts.find((p) => p.type === "day")?.value ?? "01";
+  return `${y}-${m}-${d}`;
+}
+
 function isAfter2pmPT(now: Date): boolean {
   const hourStr = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
@@ -198,17 +223,11 @@ function CurrentLineTip() {
 function ScoreTip() {
   return (
     <div className="max-w-sm space-y-2">
-      <div className="font-semibold">Scoreboard</div>
+      <div className="font-semibold">Score</div>
       <div className="text-foreground/70">
-        When a game is FINAL, we grade Oren Edge vs the closing spread using the final score (OT included).
+        Evaluates the pregame Oren edge direction against the final result versus the closing spread.
       </div>
-      <div className="text-foreground/70">
-        If Oren Edge &gt; 0 → predicted <span className="font-medium">HOME</span> to cover. If Oren Edge &lt; 0 →
-        predicted <span className="font-medium">AWAY</span> to cover.
-      </div>
-      <div className="text-foreground/70">
-        Pushes (exact spread) are ignored (not counted). Stored locally in your browser.
-      </div>
+      <div className="text-foreground/70">✓ = aligned, ✕ = not aligned, • = push, — = not available.</div>
     </div>
   );
 }
@@ -312,30 +331,6 @@ function ConfirmedBadge({ on }: { on: boolean }) {
   );
 }
 
-function ScoreBadge({
-  kind,
-}: {
-  kind: "hit" | "miss" | "push" | "na";
-}) {
-  const cls =
-    kind === "hit"
-      ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
-      : kind === "miss"
-      ? "border-rose-400/25 bg-rose-400/10 text-rose-200"
-      : kind === "push"
-      ? "border-amber-400/25 bg-amber-400/10 text-amber-200"
-      : "border-white/10 bg-black/20 text-foreground/70";
-
-  const label = kind === "hit" ? "✓" : kind === "miss" ? "×" : kind === "push" ? "PUSH" : "—";
-
-  return (
-    <div className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs", cls)}>
-      <span className="text-[10px] tracking-wide">SCORE</span>
-      <span className="tabular-nums font-semibold">{label}</span>
-    </div>
-  );
-}
-
 function OrenEdgeBar({ v }: { v: number | null }) {
   if (v == null || !Number.isFinite(v)) return <div className="h-2 w-full rounded-full bg-white/10" />;
   const x = clamp(v, -3, 3);
@@ -347,15 +342,9 @@ function OrenEdgeBar({ v }: { v: number | null }) {
     <div className="relative h-2 w-full rounded-full bg-white/10 overflow-hidden">
       <div className="absolute inset-y-0 left-1/2 w-px bg-white/25" />
       {x >= 0 ? (
-        <div
-          className="absolute inset-y-0 bg-[color:var(--accent)]/65"
-          style={{ left: "50%", width: `${rightPct - 50}%` }}
-        />
+        <div className="absolute inset-y-0 bg-[color:var(--accent)]/65" style={{ left: "50%", width: `${rightPct - 50}%` }} />
       ) : (
-        <div
-          className="absolute inset-y-0 bg-amber-400/60"
-          style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }}
-        />
+        <div className="absolute inset-y-0 bg-amber-400/60" style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }} />
       )}
     </div>
   );
@@ -376,9 +365,26 @@ function Pill({
       : "border-white/10 bg-black/20 text-foreground/70";
 
   return (
-    <span className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-0.5 text-xs", cls)}>
-      {children}
-    </span>
+    <span className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-0.5 text-xs", cls)}>{children}</span>
+  );
+}
+
+function ScoreBadge({ mark }: { mark: ScoreMark }) {
+  const cls =
+    mark === "hit"
+      ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
+      : mark === "miss"
+      ? "border-amber-400/25 bg-amber-400/10 text-amber-200"
+      : mark === "push"
+      ? "border-white/10 bg-white/5 text-foreground/80"
+      : "border-white/10 bg-black/20 text-foreground/70";
+
+  const label = mark === "hit" ? "✓" : mark === "miss" ? "✕" : mark === "push" ? "•" : "—";
+
+  return (
+    <div className={cn("inline-flex items-center justify-center rounded-full border px-2.5 py-1 text-xs", cls)}>
+      <span className="font-semibold">{label}</span>
+    </div>
   );
 }
 
@@ -399,11 +405,9 @@ function ScoreLine({
   const awayWin = (awayScore ?? 0) > (homeScore ?? 0);
   const homeWin = (homeScore ?? 0) > (awayScore ?? 0);
 
-  const rowClass = (isWinner: boolean) =>
-    cn("flex items-center justify-between gap-3", isWinner ? "text-foreground" : "text-foreground/70");
+  const rowClass = (isWinner: boolean) => cn("flex items-center justify-between gap-3", isWinner ? "text-foreground" : "text-foreground/70");
 
-  const scoreClass = (isWinner: boolean) =>
-    cn("tabular-nums font-semibold", isWinner ? "text-foreground" : "text-foreground/75");
+  const scoreClass = (isWinner: boolean) => cn("tabular-nums font-semibold", isWinner ? "text-foreground" : "text-foreground/75");
 
   const logoClass = "h-4 w-4 rounded-sm bg-white/5 ring-1 ring-white/10 object-contain flex-none";
 
@@ -492,15 +496,7 @@ function derivePhaseAndLive(g: any): { phase: "pregame" | "live" | "final" | "un
   const phaseLiveWords = new Set(["live", "inprogress", "in_progress", "in-game", "ingame", "playing"]);
   const looksLive = phaseLiveWords.has(raw) || ((period ?? 0) > 0 && !isFinal);
 
-  const phase: "pregame" | "live" | "final" | "unknown" = isFinal
-    ? "final"
-    : isPregame
-    ? "pregame"
-    : looksLive
-    ? "live"
-    : raw
-    ? "unknown"
-    : "unknown";
+  const phase: "pregame" | "live" | "final" | "unknown" = isFinal ? "final" : isPregame ? "pregame" : looksLive ? "live" : raw ? "unknown" : "unknown";
   const isLive = phase === "live" && (period ?? 0) > 0;
 
   return { phase, isLive };
@@ -515,59 +511,78 @@ function inSignalWindow(period: number | null, secondsRemaining: number | null):
   return false;
 }
 
-// --- scoring helpers (ATS vs close) ---
+function scoreMarkFromFinal(args: {
+  orenEdgePts: number | null;
+  closeHomeSpread: number | null;
+  finalHome: number | null;
+  finalAway: number | null;
+}): ScoreMark {
+  const { orenEdgePts, closeHomeSpread, finalHome, finalAway } = args;
 
-function homeCovers(closeHomeSpread: number, finalHome: number, finalAway: number): "home" | "away" | "push" {
-  const ats = (finalHome - finalAway) + closeHomeSpread;
-  if (ats > 0) return "home";
-  if (ats < 0) return "away";
-  return "push";
+  if (orenEdgePts == null || closeHomeSpread == null) return "na";
+  if (finalHome == null || finalAway == null) return "na";
+
+  // If orenEdgePts > 0 => home undervalued => "pick home vs close"
+  // If orenEdgePts < 0 => away undervalued => "pick away vs close"
+  const pickHome = orenEdgePts > 0;
+  const marginHome = finalHome - finalAway;
+
+  // closing spread is home perspective (negative means home favored)
+  const atsHome = marginHome + closeHomeSpread;
+
+  if (!Number.isFinite(atsHome)) return "na";
+  if (atsHome === 0) return "push";
+
+  const homeCovers = atsHome > 0;
+
+  // If you picked home, a "hit" means home covers.
+  // If you picked away, a "hit" means home does NOT cover.
+  if (pickHome) return homeCovers ? "hit" : "miss";
+  return homeCovers ? "miss" : "hit";
 }
 
-function predictedSideFromOrenEdge(orenEdgePts: number): "home" | "away" | "none" {
-  const s = sign(orenEdgePts);
-  if (s > 0) return "home";
-  if (s < 0) return "away";
-  return "none";
+function emptyScoreboard(): ScoreboardState {
+  return {
+    total: { hit: 0, miss: 0, push: 0 },
+    byDay: {},
+    lastSeenMarkByGame: {},
+    lastUpdatedAtIso: undefined,
+  };
 }
 
-type ScoreEvent = {
-  id: string; // stable key (use gameId)
-  at: number;
-  matchup: string;
-  predicted: "home" | "away";
-  actual: "home" | "away";
-  correct: boolean;
-};
-
-const SCORE_KEY = "oren_nba_scoreboard_v1";
-
-function loadScoreboard(): { events: Record<string, ScoreEvent> } {
+function loadScoreboard(): ScoreboardState {
+  if (typeof window === "undefined") return emptyScoreboard();
   try {
-    const raw = localStorage.getItem(SCORE_KEY);
-    if (!raw) return { events: {} };
+    const raw = window.localStorage.getItem(SCOREBOARD_STORAGE_KEY);
+    if (!raw) return emptyScoreboard();
     const j = JSON.parse(raw);
-    if (!j || typeof j !== "object") return { events: {} };
-    const events = (j as any).events;
-    if (!events || typeof events !== "object") return { events: {} };
-    return { events };
+    if (!j || typeof j !== "object") return emptyScoreboard();
+    if (!j.total || !j.byDay || !j.lastSeenMarkByGame) return emptyScoreboard();
+    return j as ScoreboardState;
   } catch {
-    return { events: {} };
+    return emptyScoreboard();
   }
 }
 
-function saveScoreboard(state: { events: Record<string, ScoreEvent> }) {
+function saveScoreboard(s: ScoreboardState) {
+  if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(SCORE_KEY, JSON.stringify(state));
+    window.localStorage.setItem(SCOREBOARD_STORAGE_KEY, JSON.stringify(s));
   } catch {
     // ignore
   }
 }
 
+function incCounts(counts: { hit: number; miss: number; push: number }, mark: ScoreMark) {
+  if (mark === "hit") counts.hit += 1;
+  if (mark === "miss") counts.miss += 1;
+  if (mark === "push") counts.push += 1;
+}
+
 type Row = {
   key: string;
-
   gameId: string;
+
   awayTeam: string;
   homeTeam: string;
   awayScore: number | null;
@@ -596,10 +611,8 @@ type Row = {
   confluence: number | null;
   confirmed: boolean;
 
-  closeNum: number | null;
-
-  // scoring display
-  scoreMark: "hit" | "miss" | "push" | "na";
+  // scoring vs final
+  scoreMark: ScoreMark;
 };
 
 export default function NbaClient() {
@@ -620,27 +633,23 @@ export default function NbaClient() {
   // cache last readings per game to confirm persistence across refreshes
   const readingsRef = useRef<Map<string, Array<{ t: number; moveGapPts: number; absZ: number }>>>(new Map());
 
-  // scoreboard (localStorage-backed)
-  const [scoreState, setScoreState] = useState<{ events: Record<string, ScoreEvent> }>({ events: {} });
-  const [scoreTick, setScoreTick] = useState(0);
+  // scoreboard (persisted)
+  const scoreboardRef = useRef<ScoreboardState>(emptyScoreboard());
+  const [scoreboardUi, setScoreboardUi] = useState<ScoreboardState>(emptyScoreboard());
+
+  useEffect(() => {
+    scoreboardRef.current = loadScoreboard();
+    setScoreboardUi(scoreboardRef.current);
+  }, []);
 
   useEffect(() => {
     const t = setInterval(() => setNowTick(Date.now()), 60 * 1000);
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => {
-    // load once
-    try {
-      const s = loadScoreboard();
-      setScoreState(s);
-    } catch {
-      // ignore
-    }
-  }, []);
-
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
+  const todayKey = useMemo(() => dateKeyPT(new Date(nowTick)), [nowTick]);
 
   // distributions: season -> seed -> stub
   useEffect(() => {
@@ -747,7 +756,7 @@ export default function NbaClient() {
   const rows = useMemo<Row[]>(() => {
     const now = Date.now();
 
-    const computed = games.map((g: any) => {
+    const computed: Row[] = games.map((g: any) => {
       const { phase, isLive } = derivePhaseAndLive(g);
 
       const awayTeam = String(g?.awayTeam ?? "—");
@@ -840,26 +849,16 @@ export default function NbaClient() {
         confirmed = aligned && stillRoom && persists;
       }
 
-      const gameId = String(g?.gameId ?? `${awayTeam}-${homeTeam}`);
+      // SCORE: evaluate against final, if present
+      const finalHome = safeInt(g?.finalHomeScore ?? g?.final_home_score ?? g?.final?.home ?? null);
+      const finalAway = safeInt(g?.finalAwayScore ?? g?.final_away_score ?? g?.final?.away ?? null);
 
-      // score mark from stored events
-      const ev = scoreState.events[gameId];
-      const scoreMark: Row["scoreMark"] =
-        ev && ev.correct ? "hit" : ev && !ev.correct ? "miss" : "na";
-
-      // if not graded yet, but final + data present, show PUSH/NA locally (grading happens in effect below)
-      const showPushPending =
-        !ev &&
-        phase === "final" &&
-        orenEdgePts != null &&
-        closeNum != null &&
-        typeof s.home === "number" &&
-        typeof s.away === "number" &&
-        homeCovers(closeNum, s.home, s.away) === "push";
+      const scoreMark: ScoreMark =
+        phase === "final" ? scoreMarkFromFinal({ orenEdgePts, closeHomeSpread: closeNum, finalHome, finalAway }) : "na";
 
       return {
-        key: gameId,
-        gameId,
+        key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
+        gameId: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
 
         awayTeam,
         homeTeam,
@@ -889,9 +888,7 @@ export default function NbaClient() {
         confluence,
         confirmed,
 
-        closeNum,
-
-        scoreMark: showPushPending ? "push" : scoreMark,
+        scoreMark,
       };
     });
 
@@ -918,8 +915,7 @@ export default function NbaClient() {
     });
 
     return computed;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [games, after2pm, spreadIndex, orenMap, orenParams, scoreTick]);
+  }, [games, after2pm, spreadIndex, orenMap, orenParams]);
 
   // update persistence cache AFTER render (so confirmed lights up on the next refresh)
   useEffect(() => {
@@ -937,53 +933,42 @@ export default function NbaClient() {
     }
   }, [rows]);
 
-  // SCORE: when a game is FINAL and ungraded, grade it once and persist
+  // scoreboard update: count final outcomes once per game (persist in localStorage)
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const sb = { ...scoreboardRef.current };
+    const today = todayKey;
+
+    if (!sb.byDay[today]) sb.byDay[today] = { hit: 0, miss: 0, push: 0 };
+
     let changed = false;
-    const next = { ...scoreState, events: { ...scoreState.events } };
 
     for (const r of rows) {
       if (r.phase !== "final") continue;
+      if (r.scoreMark === "na") continue;
 
-      // already graded
-      if (next.events[r.gameId]) continue;
+      const prev = sb.lastSeenMarkByGame[r.gameId] as ScoreMark | undefined;
 
-      // need: close spread, oren edge, final score
-      if (r.closeNum == null) continue;
-      if (r.orenEdgePts == null || !Number.isFinite(r.orenEdgePts)) continue;
-      if (typeof r.homeScore !== "number" || typeof r.awayScore !== "number") continue;
-
-      const actual = homeCovers(r.closeNum, r.homeScore, r.awayScore);
-      if (actual === "push") {
-        // store a "push" marker? user said "correct checkmark" + keep score overtime.
-        // pushes muddy winrate; we simply do NOT store/grade.
+      if (!prev) {
+        // first time we’ve seen a final grade for this game
+        sb.lastSeenMarkByGame[r.gameId] = r.scoreMark;
+        incCounts(sb.total, r.scoreMark);
+        incCounts(sb.byDay[today], r.scoreMark);
+        changed = true;
         continue;
       }
 
-      const predicted = predictedSideFromOrenEdge(r.orenEdgePts);
-      if (predicted === "none") continue;
-
-      const correct = predicted === actual;
-
-      next.events[r.gameId] = {
-        id: r.gameId,
-        at: Date.now(),
-        matchup: r.matchup,
-        predicted,
-        actual,
-        correct,
-      };
-
-      changed = true;
+      // If it was already counted, do nothing (stable behavior)
     }
 
     if (changed) {
-      setScoreState(next);
-      saveScoreboard(next);
-      setScoreTick((x) => x + 1);
+      sb.lastUpdatedAtIso = new Date().toISOString();
+      scoreboardRef.current = sb;
+      saveScoreboard(sb);
+      setScoreboardUi(sb);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows]);
+  }, [rows, todayKey]);
 
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
@@ -993,26 +978,17 @@ export default function NbaClient() {
     return "Oren: Ready";
   }, [orenStatus]);
 
-  const scoreboard = useMemo(() => {
-    const events = Object.values(scoreState.events || {});
-    events.sort((a, b) => b.at - a.at);
+  const todayScore = useMemo(() => scoreboardUi.byDay[todayKey] ?? { hit: 0, miss: 0, push: 0 }, [scoreboardUi, todayKey]);
+  const totalScore = useMemo(() => scoreboardUi.total ?? { hit: 0, miss: 0, push: 0 }, [scoreboardUi]);
 
-    const total = events.length;
-    const correct = events.filter((e) => e.correct).length;
-    const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
-
-    const last = events.slice(0, 6);
-
-    return { total, correct, pct, last };
-  }, [scoreState, scoreTick]);
-
-  const updatedAtLabelTop = updatedAtLabel;
+  const totalDecisions = totalScore.hit + totalScore.miss + totalScore.push;
+  const winRate = totalDecisions > 0 ? Math.round((totalScore.hit / (totalScore.hit + totalScore.miss)) * 100) : null;
 
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-5xl space-y-8 px-6 py-16">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div className="w-full">
+          <div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-2 text-sm text-foreground/80">
                 Labs • NBA
@@ -1020,7 +996,7 @@ export default function NbaClient() {
 
               <Pill tone="neutral">{isStale ? "Snapshot" : "Live feed"}</Pill>
 
-              {updatedAtLabelTop ? <div className="text-xs text-foreground/55">Updated {updatedAtLabelTop} PT</div> : null}
+              {updatedAtLabel ? <div className="text-xs text-foreground/55">Updated {updatedAtLabel} PT</div> : null}
 
               {liveCount > 0 ? (
                 <Pill tone="live">
@@ -1035,6 +1011,27 @@ export default function NbaClient() {
 
               <Pill tone="neutral">Index: {indexSource === "remote" ? "Market" : "Stub"}</Pill>
               <Pill tone="neutral">{orenBadge}</Pill>
+
+              {/* Scoreboard */}
+              <Pill tone="neutral">
+                <span className="text-foreground/60">Today</span>{" "}
+                <span className="tabular-nums font-semibold">{todayScore.hit}</span>
+                <span className="text-foreground/50">-</span>
+                <span className="tabular-nums font-semibold">{todayScore.miss}</span>
+                <span className="text-foreground/50">-</span>
+                <span className="tabular-nums font-semibold">{todayScore.push}</span>
+              </Pill>
+
+              <Pill tone="neutral">
+                <span className="text-foreground/60">All-time</span>{" "}
+                <span className="tabular-nums font-semibold">{totalScore.hit}</span>
+                <span className="text-foreground/50">-</span>
+                <span className="tabular-nums font-semibold">{totalScore.miss}</span>
+                <span className="text-foreground/50">-</span>
+                <span className="tabular-nums font-semibold">{totalScore.push}</span>
+              </Pill>
+
+              {winRate != null ? <Pill tone="neutral">{winRate}% hit rate (ex-push)</Pill> : null}
             </div>
 
             <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">NBA Deviation Watchlist</h1>
@@ -1045,62 +1042,6 @@ export default function NbaClient() {
             </p>
 
             <div className="mt-2 text-xs text-foreground/55">{headerDate} • Watchlist only. Not a bet signal.</div>
-
-            {/* SCOREBOARD */}
-            <div className="mt-6 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="text-sm font-semibold text-foreground">Oren Edge Scoreboard</div>
-                  <Tooltip label="Scoreboard">
-                    <div className="cursor-help">
-                      <ScoreTip />
-                    </div>
-                  </Tooltip>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <Pill tone="neutral">
-                    <span className="text-foreground/60">Correct</span>
-                    <span className="tabular-nums font-semibold">{scoreboard.correct}</span>
-                  </Pill>
-                  <Pill tone="neutral">
-                    <span className="text-foreground/60">Total</span>
-                    <span className="tabular-nums font-semibold">{scoreboard.total}</span>
-                  </Pill>
-                  <Pill tone="neutral">
-                    <span className="text-foreground/60">Win%</span>
-                    <span className="tabular-nums font-semibold">{scoreboard.total > 0 ? `${scoreboard.pct}%` : "—"}</span>
-                  </Pill>
-                </div>
-              </div>
-
-              {scoreboard.last.length > 0 ? (
-                <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                  {scoreboard.last.map((e) => (
-                    <div
-                      key={e.id}
-                      className="flex items-center justify-between rounded-xl border border-white/10 bg-black/10 px-3 py-2"
-                    >
-                      <div className="min-w-0 truncate text-sm text-foreground/75">{e.matchup}</div>
-                      <div className="ml-3 flex items-center gap-2">
-                        <div className="text-[10px] text-foreground/55">
-                          {e.predicted.toUpperCase()} → {e.actual.toUpperCase()}
-                        </div>
-                        <ScoreBadge kind={e.correct ? "hit" : "miss"} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-3 text-sm text-foreground/60">
-                  No graded finals yet. Once games end, they’ll show up here automatically.
-                </div>
-              )}
-
-              <div className="mt-3 text-xs text-foreground/55">
-                Graded ATS vs close using final score (OT included). Pushes are ignored.
-              </div>
-            </div>
           </div>
         </div>
 
@@ -1110,9 +1051,7 @@ export default function NbaClient() {
           ) : rows.length === 0 ? (
             <div className="space-y-2 text-foreground/70">
               <div>{loadError ?? "Live feed is offline right now."}</div>
-              <div className="text-sm text-foreground/55">
-                If you checked after hours, the last available snapshot will appear once it exists.
-              </div>
+              <div className="text-sm text-foreground/55">If you checked after hours, the last available snapshot will appear once it exists.</div>
             </div>
           ) : (
             <div className="space-y-4">
@@ -1125,6 +1064,7 @@ export default function NbaClient() {
                     </div>
                   </Tooltip>
                 </div>
+
                 <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Confluence</span>
                   <Tooltip label="Confluence">
@@ -1133,6 +1073,7 @@ export default function NbaClient() {
                     </div>
                   </Tooltip>
                 </div>
+
                 <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Move gap</span>
                   <Tooltip label="Move gap">
@@ -1141,6 +1082,7 @@ export default function NbaClient() {
                     </div>
                   </Tooltip>
                 </div>
+
                 <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Current</span>
                   <Tooltip label="Current line">
@@ -1149,6 +1091,7 @@ export default function NbaClient() {
                     </div>
                   </Tooltip>
                 </div>
+
                 <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Oren edge</span>
                   <Tooltip label="Oren edge">
@@ -1157,9 +1100,10 @@ export default function NbaClient() {
                     </div>
                   </Tooltip>
                 </div>
+
                 <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Score</span>
-                  <Tooltip label="Scoreboard">
+                  <Tooltip label="Score">
                     <div className="cursor-help">
                       <ScoreTip />
                     </div>
@@ -1194,14 +1138,17 @@ export default function NbaClient() {
                           <div className="flex items-center gap-2">
                             <div className="truncate text-lg font-semibold text-foreground">{r.matchup}</div>
                             <Pill tone={r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame"}>
-                              {r.isLive ? (
-                                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
-                              ) : null}
+                              {r.isLive ? <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" /> : null}
                               {r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE"}
                             </Pill>
 
-                            {/* ✅ check mark / score marker */}
-                            {r.phase === "final" ? <ScoreBadge kind={r.scoreMark} /> : null}
+                            {/* Score mark (final only) */}
+                            <Tooltip label="Score">
+                              <div className="cursor-help">
+                                <ScoreTip />
+                              </div>
+                            </Tooltip>
+                            <ScoreBadge mark={r.scoreMark} />
                           </div>
                           <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
                         </div>
@@ -1241,9 +1188,7 @@ export default function NbaClient() {
                           </div>
                           <div className="mt-1 flex items-baseline justify-between gap-3">
                             <div className="tabular-nums text-xl font-semibold text-foreground">{r.moveGapText}</div>
-                            {r.isLive && r.moveGapMode !== "none" ? (
-                              <span className="text-[10px] text-foreground/50">{r.moveGapMode}</span>
-                            ) : null}
+                            {r.isLive && r.moveGapMode !== "none" ? <span className="text-[10px] text-foreground/50">{r.moveGapMode}</span> : null}
                           </div>
                         </div>
 
