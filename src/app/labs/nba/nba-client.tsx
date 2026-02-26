@@ -159,6 +159,14 @@ function CurrentLineTip() {
   );
 }
 
+function InfoDot() {
+  return (
+    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/10 bg-black/20 text-xs text-foreground/70">
+      i
+    </span>
+  );
+}
+
 type ViewMode = "slate" | "heatmap";
 
 type Row = {
@@ -487,7 +495,6 @@ function tileIntensity(absZ: number) {
 
 function tileBg(tone: Row["tone"], intensity01: number) {
   const a = clamp(intensity01, 0, 1);
-  // Robinhood-ish: subtle, glassy, low-saturation
   if (tone === "accent") return `rgba(43, 203, 119, ${0.08 + 0.20 * a})`;
   if (tone === "warn") return `rgba(245, 158, 11, ${0.06 + 0.18 * a})`;
   return `rgba(255, 255, 255, ${0.02 + 0.06 * a})`;
@@ -498,6 +505,50 @@ function tileBorder(tone: Row["tone"], intensity01: number) {
   if (tone === "accent") return `rgba(43,203,119, ${0.12 + 0.22 * a})`;
   if (tone === "warn") return `rgba(245,158,11, ${0.10 + 0.22 * a})`;
   return `rgba(255,255,255, ${0.08 + 0.12 * a})`;
+}
+
+function MetricLabel({
+  label,
+  tooltip,
+}: {
+  label: string;
+  tooltip: React.ReactNode;
+}) {
+  return (
+    <div className="inline-flex items-center gap-2">
+      <span className="text-[11px] text-foreground/55">{label}</span>
+      <Tooltip label={label}>
+        <span className="cursor-help">
+          <InfoDot />
+        </span>
+      </Tooltip>
+      {/** Tooltip content is passed as children */}
+      <span className="hidden">{tooltip}</span>
+    </div>
+  );
+}
+
+/**
+ * IMPORTANT:
+ * Your Tooltip component likely expects:
+ * <Tooltip label="..."> <Content/> </Tooltip> around the trigger.
+ * In slate/tiles we use:
+ * <Tooltip label="..."><Content/></Tooltip>
+ * and a dedicated trigger next to the label.
+ */
+function LabelWithTip({
+  label,
+  tip,
+}: {
+  label: string;
+  tip: React.ReactNode;
+}) {
+  return (
+    <div className="inline-flex items-center gap-2">
+      <span className="text-[11px] text-foreground/55">{label}</span>
+      <Tooltip label={label}>{tip}</Tooltip>
+    </div>
+  );
 }
 
 function Tile({
@@ -561,24 +612,42 @@ function Tile({
             </div>
           </div>
 
-          <div className={cn("tabular-nums font-semibold", moveClass, compact ? "text-sm" : "text-base")}>{r.scoreText}</div>
+          <div className={cn("tabular-nums font-semibold", moveClass, compact ? "text-sm" : "text-base")}>
+            {r.scoreText}
+          </div>
         </div>
 
         <div className={cn("mt-3 grid grid-cols-3 gap-2", compact && "mt-2")}>
           <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
-            <div className="text-[11px] text-foreground/55">Current</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] text-foreground/55">Current</div>
+              <Tooltip label="Current line">
+                <div className="cursor-help">
+                  <CurrentLineTip />
+                </div>
+              </Tooltip>
+            </div>
             <div className={cn("mt-0.5 tabular-nums font-semibold text-foreground", compact ? "text-sm" : "text-base")}>
               {r.current}
             </div>
           </div>
+
           <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
             <div className="text-[11px] text-foreground/55">Close</div>
             <div className={cn("mt-0.5 tabular-nums font-semibold text-foreground", compact ? "text-sm" : "text-base")}>
               {r.close}
             </div>
           </div>
+
           <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
-            <div className="text-[11px] text-foreground/55">Oren</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] text-foreground/55">Oren</div>
+              <Tooltip label="Oren edge">
+                <div className="cursor-help">
+                  <OrenEdgeTip />
+                </div>
+              </Tooltip>
+            </div>
             <div className={cn("mt-0.5 tabular-nums font-semibold", oreClass, compact ? "text-sm" : "text-base")}>
               {r.orenEdgeText}
             </div>
@@ -640,7 +709,14 @@ function DetailDrawer({
 
         <div className="mt-4 grid grid-cols-2 gap-3">
           <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-            <div className="text-xs text-foreground/55">Current (Home)</div>
+            <div className="flex items-center gap-2 text-xs text-foreground/55">
+              <span>Current (Home)</span>
+              <Tooltip label="Current line">
+                <div className="cursor-help">
+                  <CurrentLineTip />
+                </div>
+              </Tooltip>
+            </div>
             <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.current}</div>
             <div className="mt-1 text-[11px] text-foreground/45">{r.isLive ? "live line" : "pregame line"}</div>
           </div>
@@ -652,13 +728,27 @@ function DetailDrawer({
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-            <div className="text-xs text-foreground/55">Move gap</div>
+            <div className="flex items-center gap-2 text-xs text-foreground/55">
+              <span>Move gap</span>
+              <Tooltip label="Move gap">
+                <div className="cursor-help">
+                  <MoveGapTip />
+                </div>
+              </Tooltip>
+            </div>
             <div className={cn("mt-1 tabular-nums text-xl font-semibold", moveClass)}>{r.scoreText}</div>
             <div className="mt-1 text-[11px] text-foreground/45">unusual move vs typical game states</div>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-            <div className="text-xs text-foreground/55">Oren edge</div>
+            <div className="flex items-center gap-2 text-xs text-foreground/55">
+              <span>Oren edge</span>
+              <Tooltip label="Oren edge">
+                <div className="cursor-help">
+                  <OrenEdgeTip />
+                </div>
+              </Tooltip>
+            </div>
             <div className={cn("mt-1 tabular-nums text-xl font-semibold", oreClass)}>{r.orenEdgeText}</div>
             <div className="mt-1 text-[11px] text-foreground/45">private prior vs close</div>
           </div>
@@ -707,14 +797,28 @@ function DesktopCard({ r }: { r: Row }) {
           <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
         </div>
 
-        <div className={cn("tabular-nums text-lg font-semibold", moveClass)}>{r.scoreText}</div>
+        <div className={cn("inline-flex items-center gap-2 tabular-nums text-lg font-semibold", moveClass)}>
+          <span>{r.scoreText}</span>
+          <Tooltip label="Move gap">
+            <div className="cursor-help">
+              <MoveGapTip />
+            </div>
+          </Tooltip>
+        </div>
       </div>
 
       <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
 
       <div className="mt-4 grid grid-cols-3 gap-3">
         <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-          <div className="text-xs text-foreground/55">Current (Home)</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs text-foreground/55">Current (Home)</div>
+            <Tooltip label="Current line">
+              <div className="cursor-help">
+                <CurrentLineTip />
+              </div>
+            </Tooltip>
+          </div>
           <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.current}</div>
           <div className="mt-1 text-[11px] text-foreground/45">{r.isLive ? "live line" : "pregame line"}</div>
         </div>
@@ -726,7 +830,14 @@ function DesktopCard({ r }: { r: Row }) {
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-          <div className="text-xs text-foreground/55">Oren edge</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs text-foreground/55">Oren edge</div>
+            <Tooltip label="Oren edge">
+              <div className="cursor-help">
+                <OrenEdgeTip />
+              </div>
+            </Tooltip>
+          </div>
           <div className={cn("mt-1 tabular-nums text-xl font-semibold", oreClass)}>{r.orenEdgeText}</div>
           <div className="mt-1 text-[11px] text-foreground/45">private prior vs close</div>
         </div>
@@ -795,7 +906,7 @@ export default function NbaClient() {
     })();
   }, []);
 
-  // Load Oren rankings (params still come from endpoint)
+  // Load Oren rankings
   useEffect(() => {
     (async () => {
       try {
@@ -949,10 +1060,7 @@ export default function NbaClient() {
       const rb = phaseRank(b);
       if (ra !== rb) return ra - rb;
 
-      // prioritize high absZ (strongest anomalies)
       if (Math.abs(b.absZ) !== Math.abs(a.absZ)) return Math.abs(b.absZ) - Math.abs(a.absZ);
-
-      // then biggest abs dislocation
       if (b.abs !== a.abs) return b.abs - a.abs;
 
       return a.matchup.localeCompare(b.matchup);
@@ -971,10 +1079,8 @@ export default function NbaClient() {
 
   const selectedRow = useMemo(() => rows.find((r) => r.key === selectedKey) ?? null, [rows, selectedKey]);
 
-  // Heat map rows: always include live, plus meaningful absZ
   const heatRows = useMemo(() => rows.filter((r) => r.isLive || Math.abs(r.absZ) >= 0.75), [rows]);
 
-  // Desktop treemap placement
   const treemap = useMemo(() => {
     const W = 1100;
     const H = 640;
@@ -983,7 +1089,6 @@ export default function NbaClient() {
     const items = heatRows.map<TreeItem>((r) => {
       const z = clamp(Math.abs(r.absZ), 0, 3.0);
       const liveBump = r.isLive ? 0.7 : 0;
-      // Weight emphasizes outliers; keep everyone visible
       const weight = 1 + (z + liveBump) * 5.0;
       return { id: r.key, value: weight, row: r };
     });
@@ -1086,11 +1191,38 @@ export default function NbaClient() {
             </div>
           ) : view === "slate" ? (
             <div className="space-y-5">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="text-sm text-foreground/70">Slate is optimized for scanning (no sideways scrolling).</div>
+                <div className="flex items-center gap-2 text-sm text-foreground/70">
+                  <span className="text-foreground/60">Move gap</span>
+                  <Tooltip label="Move gap">
+                    <div className="cursor-help">
+                      <MoveGapTip />
+                    </div>
+                  </Tooltip>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-foreground/70">
+                  <span className="text-foreground/60">Current</span>
+                  <Tooltip label="Current line">
+                    <div className="cursor-help">
+                      <CurrentLineTip />
+                    </div>
+                  </Tooltip>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-foreground/70">
+                  <span className="text-foreground/60">Oren edge</span>
+                  <Tooltip label="Oren edge">
+                    <div className="cursor-help">
+                      <OrenEdgeTip />
+                    </div>
+                  </Tooltip>
+                </div>
+              </div>
+
               {/* Mobile: card list */}
               <div className="grid gap-4 sm:hidden">
                 {rows.map((r) => (
                   <div key={r.key}>
-                    {/* reuse heatmap tile style for consistency? keep mobile card? */}
                     <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -1105,23 +1237,52 @@ export default function NbaClient() {
                           </div>
                           <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
                         </div>
-                        <div className={cn("tabular-nums text-sm font-semibold", textToneClass(r.tone))}>{r.scoreText}</div>
+                        <div className={cn("tabular-nums text-sm font-semibold", textToneClass(r.tone))}>
+                          {r.scoreText}
+                        </div>
                       </div>
 
                       <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
 
                       <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
                         <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-                          <div className="text-xs text-foreground/55">Current</div>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs text-foreground/55">Current</div>
+                            <Tooltip label="Current line">
+                              <div className="cursor-help">
+                                <CurrentLineTip />
+                              </div>
+                            </Tooltip>
+                          </div>
                           <div className="mt-1 tabular-nums font-semibold text-foreground">{r.current}</div>
                         </div>
+
                         <div className="rounded-xl border border-white/10 bg-black/10 p-3">
                           <div className="text-xs text-foreground/55">Close</div>
                           <div className="mt-1 tabular-nums font-semibold text-foreground">{r.close}</div>
                         </div>
+
                         <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-                          <div className="text-xs text-foreground/55">Oren</div>
-                          <div className={cn("mt-1 tabular-nums font-semibold", r.orenEdgePts == null ? "text-foreground/55" : r.orenEdgePts >= 1.5 ? "text-[color:var(--accent)]" : r.orenEdgePts <= -1.5 ? "text-amber-200" : "text-foreground/80")}>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs text-foreground/55">Oren</div>
+                            <Tooltip label="Oren edge">
+                              <div className="cursor-help">
+                                <OrenEdgeTip />
+                              </div>
+                            </Tooltip>
+                          </div>
+                          <div
+                            className={cn(
+                              "mt-1 tabular-nums font-semibold",
+                              r.orenEdgePts == null
+                                ? "text-foreground/55"
+                                : r.orenEdgePts >= 1.5
+                                ? "text-[color:var(--accent)]"
+                                : r.orenEdgePts <= -1.5
+                                ? "text-amber-200"
+                                : "text-foreground/80"
+                            )}
+                          >
                             {r.orenEdgeText}
                           </div>
                         </div>
@@ -1145,22 +1306,28 @@ export default function NbaClient() {
               <div className="flex flex-wrap items-center gap-3">
                 <div className="text-sm text-foreground/70">Tiles are sized by watchlist priority (stronger anomalies = larger tiles).</div>
                 <div className="flex items-center gap-2 text-sm text-foreground/70">
-                  <Tooltip label="Move gap">
-                    <MoveGapTip />
-                  </Tooltip>
                   <span className="text-foreground/60">Move gap</span>
+                  <Tooltip label="Move gap">
+                    <div className="cursor-help">
+                      <MoveGapTip />
+                    </div>
+                  </Tooltip>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-foreground/70">
-                  <Tooltip label="Current line">
-                    <CurrentLineTip />
-                  </Tooltip>
                   <span className="text-foreground/60">Current</span>
+                  <Tooltip label="Current line">
+                    <div className="cursor-help">
+                      <CurrentLineTip />
+                    </div>
+                  </Tooltip>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-foreground/70">
-                  <Tooltip label="Oren edge">
-                    <OrenEdgeTip />
-                  </Tooltip>
                   <span className="text-foreground/60">Oren edge</span>
+                  <Tooltip label="Oren edge">
+                    <div className="cursor-help">
+                      <OrenEdgeTip />
+                    </div>
+                  </Tooltip>
                 </div>
               </div>
 
@@ -1179,7 +1346,6 @@ export default function NbaClient() {
                   <div className="relative hidden sm:block h-[720px] rounded-2xl border border-white/10 bg-black/10 overflow-hidden">
                     {treemap.map((p) => {
                       const r = p.item.row;
-                      // hide micro tiles by switching to compact content automatically
                       const compact = (p.widthPct < 12 || p.heightPct < 12) || (p.widthPct < 18 && p.heightPct < 18);
 
                       return (
