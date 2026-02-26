@@ -125,10 +125,10 @@ function MoveGapTip() {
     <div className="max-w-sm space-y-2">
       <div className="font-semibold">Move gap</div>
       <div className="text-foreground/70">
-        Only shown during live play. It flags games where the market has moved more than usual for this moment in the game.
+        Live-only. Flags games where the market has moved more than usual for this moment in the game.
       </div>
       <div className="text-foreground/70">
-        Useful for scanning late 1Q and mid 2Q/3Q—so you can quickly decide what deserves a closer look.
+        Best for scanning late 1Q and mid 2Q/3Q—so you can quickly decide what deserves a closer look.
       </div>
       <div className="text-foreground/70">Not a bet signal. No recommendations—just a deviation watchlist.</div>
     </div>
@@ -141,9 +141,26 @@ function OrenEdgeTip() {
       <div className="font-semibold">Oren edge</div>
       <div className="text-foreground/70">A private pregame lean versus the consensus closing line.</div>
       <div className="text-foreground/70">
-        Right (green) suggests the home side looks undervalued vs close. Left (amber) suggests it looks overvalued vs close.
+        Right (green) suggests the home side looks undervalued vs close. Left (amber) suggests it looks overvalued vs
+        close.
       </div>
-      <div className="text-foreground/70">Not a bet signal—use as context alongside market movement.</div>
+      <div className="text-foreground/70">Not a bet signal—use as context alongside live market movement.</div>
+    </div>
+  );
+}
+
+function ConfluenceTip() {
+  return (
+    <div className="max-w-sm space-y-2">
+      <div className="font-semibold">Confluence</div>
+      <div className="text-foreground/70">
+        Live-only. Measures when your pregame edge and the live market deviation point the same direction.
+      </div>
+      <div className="text-foreground/70">
+        Higher scores mean: (1) your disagreement vs close is meaningful, and (2) the live move is unusually large, and
+        (3) both agree on direction.
+      </div>
+      <div className="text-foreground/70">Watchlist only — not a bet signal.</div>
     </div>
   );
 }
@@ -157,70 +174,6 @@ function CurrentLineTip() {
       </div>
     </div>
   );
-}
-
-type ViewMode = "slate" | "heatmap";
-
-type Row = {
-  key: string;
-
-  abs: number;
-  moveGapPts: number | null;
-
-  observedMove: number | null;
-  expectedMove: number | null;
-
-  awayTeam: string;
-  homeTeam: string;
-
-  awayScore: number | null;
-  homeScore: number | null;
-
-  matchup: string;
-  clock: string;
-
-  current: string;
-  close: string;
-
-  scoreText: string;
-  tone: "accent" | "warn" | "neutral";
-  absZ: number;
-
-  phase: "pregame" | "live" | "final" | "unknown";
-  isLive: boolean;
-
-  orenEdgePts: number | null;
-  orenEdgeText: string;
-};
-
-function toneFromAbsZ(absZ: number): Row["tone"] {
-  if (absZ >= 1.5) return "accent";
-  if (absZ >= 1.0) return "warn";
-  return "neutral";
-}
-
-function textToneClass(tone: Row["tone"]) {
-  if (tone === "accent") return "text-[color:var(--accent)]";
-  if (tone === "warn") return "text-amber-200";
-  return "text-foreground/80";
-}
-
-function formatClockFromGame(g: any): { clock: string; phase: Row["phase"]; isLive: boolean } {
-  const phase = String(g?.phase ?? "unknown") as Row["phase"];
-  const isLive = phase === "live";
-
-  if (phase === "final") return { clock: "Final", phase, isLive: false };
-  if (phase === "pregame") return { clock: "Pregame", phase, isLive: false };
-
-  const period = safeInt(g?.period);
-  const secondsRemaining = safeInt(g?.secondsRemaining);
-
-  if (period == null || period === 0) return { clock: "Pregame", phase, isLive: false };
-  if (secondsRemaining == null) return { clock: `P${period} • —`, phase, isLive };
-
-  const mm = Math.floor(secondsRemaining / 60);
-  const ss = String(secondsRemaining % 60).padStart(2, "0");
-  return { clock: `P${period} • ${mm}:${ss}`, phase, isLive };
 }
 
 function normalizeTeam(s: any): string {
@@ -254,13 +207,65 @@ function computeOrenEdgePts(args: {
   return impliedSpreadHome - (closingSpreadHome as number);
 }
 
+function sign(x: number) {
+  return x > 0 ? 1 : x < 0 ? -1 : 0;
+}
+
+function computeConfluenceScore(args: { orenEdgePts: number | null; moveGapPts: number | null; isLive: boolean }) {
+  const { orenEdgePts, moveGapPts, isLive } = args;
+  if (!isLive) return null;
+  if (orenEdgePts == null || !Number.isFinite(orenEdgePts)) return null;
+  if (moveGapPts == null || !Number.isFinite(moveGapPts)) return null;
+
+  const so = sign(orenEdgePts);
+  const sm = sign(moveGapPts);
+  if (so === 0 || sm === 0) return 0;
+  if (so !== sm) return 0;
+
+  const orenStrength = clamp(Math.abs(orenEdgePts) / 3, 0, 1);
+  const moveStrength = clamp(Math.abs(moveGapPts) / 3, 0, 1);
+
+  const base = orenStrength * moveStrength;
+  return Math.round(base * 100);
+}
+
+function confluenceTone(score: number | null): "neutral" | "low" | "mid" | "high" {
+  if (score == null) return "neutral";
+  if (score >= 55) return "high";
+  if (score >= 25) return "mid";
+  if (score >= 10) return "low";
+  return "neutral";
+}
+
+function ConfluenceBadge({ score }: { score: number | null }) {
+  const tone = confluenceTone(score);
+
+  const cls =
+    tone === "high"
+      ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
+      : tone === "mid"
+      ? "border-amber-400/25 bg-amber-400/10 text-amber-200"
+      : tone === "low"
+      ? "border-white/10 bg-white/5 text-foreground/80"
+      : "border-white/10 bg-black/20 text-foreground/70";
+
+  const label =
+    score == null ? "—" : score >= 55 ? "HIGH" : score >= 25 ? "WATCH" : score >= 10 ? "LOW" : "—";
+
+  return (
+    <div className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs", cls)}>
+      <span className="tabular-nums font-semibold">{score == null ? "—" : score}</span>
+      <span className="text-[10px] tracking-wide">{label}</span>
+    </div>
+  );
+}
+
 function OrenEdgeBar({ v }: { v: number | null }) {
-  // visualize -3..+3
   if (v == null || !Number.isFinite(v)) {
     return <div className="h-2 w-full rounded-full bg-white/10" />;
   }
   const x = clamp(v, -3, 3);
-  const pct = ((x + 3) / 6) * 100; // 0..100
+  const pct = ((x + 3) / 6) * 100;
   const leftPct = Math.min(pct, 50);
   const rightPct = Math.max(pct, 50);
 
@@ -268,15 +273,9 @@ function OrenEdgeBar({ v }: { v: number | null }) {
     <div className="relative h-2 w-full rounded-full bg-white/10 overflow-hidden">
       <div className="absolute inset-y-0 left-1/2 w-px bg-white/25" />
       {x >= 0 ? (
-        <div
-          className="absolute inset-y-0 bg-[color:var(--accent)]/65"
-          style={{ left: "50%", width: `${rightPct - 50}%` }}
-        />
+        <div className="absolute inset-y-0 bg-[color:var(--accent)]/65" style={{ left: "50%", width: `${rightPct - 50}%` }} />
       ) : (
-        <div
-          className="absolute inset-y-0 bg-amber-400/60"
-          style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }}
-        />
+        <div className="absolute inset-y-0 bg-amber-400/60" style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }} />
       )}
     </div>
   );
@@ -328,7 +327,6 @@ function ScoreLine({
 
   const logoClass = "h-4 w-4 rounded-sm bg-white/5 ring-1 ring-white/10 object-contain flex-none";
 
-  // ESPN CDN (tiny icons)
   const NBA_ABBR: Record<string, string> = {
     "atlanta hawks": "ATL",
     "boston celtics": "BOS",
@@ -404,177 +402,31 @@ function ScoreLine({
   );
 }
 
-function DetailDrawer({
-  open,
-  onClose,
-  r,
-}: {
-  open: boolean;
-  onClose: () => void;
-  r: Row | null;
-}) {
-  if (!open || !r) return null;
+type Row = {
+  key: string;
 
-  const moveClass = textToneClass(r.tone);
-  const ore = r.orenEdgePts;
-  const oreClass =
-    ore == null
-      ? "text-foreground/55"
-      : ore >= 1.5
-      ? "text-[color:var(--accent)]"
-      : ore <= -1.5
-      ? "text-amber-200"
-      : "text-foreground/80";
+  awayTeam: string;
+  homeTeam: string;
+  awayScore: number | null;
+  homeScore: number | null;
 
-  return (
-    <div className="fixed inset-0 z-50">
-      <button
-        aria-label="Close"
-        type="button"
-        onClick={onClose}
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-      />
-      <div className="absolute bottom-0 left-0 right-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-white/10 bg-[color:var(--card)] p-5 shadow-2xl">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate text-lg font-semibold text-foreground">{r.matchup}</div>
-            <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-foreground/80 hover:bg-white/5"
-          >
-            Close
-          </button>
-        </div>
+  matchup: string;
+  clock: string;
 
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-            <div className="flex items-center gap-2 text-xs text-foreground/55">
-              <span>Current (Home)</span>
-              <Tooltip label="Current line">
-                <div className="cursor-help">
-                  <CurrentLineTip />
-                </div>
-              </Tooltip>
-            </div>
-            <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.current}</div>
-          </div>
+  current: string;
+  close: string;
 
-          <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-            <div className="text-xs text-foreground/55">Close (Home)</div>
-            <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.close}</div>
-          </div>
+  phase: "pregame" | "live" | "final" | "unknown";
+  isLive: boolean;
 
-          <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-            <div className="flex items-center gap-2 text-xs text-foreground/55">
-              <span>Move gap</span>
-              <Tooltip label="Move gap">
-                <div className="cursor-help">
-                  <MoveGapTip />
-                </div>
-              </Tooltip>
-            </div>
-            <div className={cn("mt-1 tabular-nums text-xl font-semibold", moveClass)}>{r.scoreText}</div>
-            <div className="mt-1 text-[11px] text-foreground/45">{r.isLive ? "live-only" : "shown during live play"}</div>
-          </div>
+  moveGapPts: number | null;
+  moveGapText: string;
 
-          <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-            <div className="flex items-center gap-2 text-xs text-foreground/55">
-              <span>Oren edge</span>
-              <Tooltip label="Oren edge">
-                <div className="cursor-help">
-                  <OrenEdgeTip />
-                </div>
-              </Tooltip>
-            </div>
-            <div className="mt-2">
-              <OrenEdgeBar v={r.orenEdgePts} />
-            </div>
-            <div className={cn("mt-2 tabular-nums text-sm font-semibold", oreClass)}>{r.orenEdgeText}</div>
-          </div>
-        </div>
+  orenEdgePts: number | null;
+  orenEdgeText: string;
 
-        <div className="mt-4 text-sm text-foreground/60">Watchlist only. Not a bet signal.</div>
-      </div>
-    </div>
-  );
-}
-
-function HeatTile({ r, onClick }: { r: Row; onClick: () => void }) {
-  const intensity = clamp(Math.abs(r.absZ) / 2.2, 0, 1);
-  const bg =
-    r.tone === "accent"
-      ? `rgba(43, 203, 119, ${0.07 + 0.18 * intensity})`
-      : r.tone === "warn"
-      ? `rgba(245, 158, 11, ${0.06 + 0.18 * intensity})`
-      : `rgba(255, 255, 255, ${0.02 + 0.06 * intensity})`;
-
-  const bd =
-    r.tone === "accent"
-      ? `rgba(43,203,119, ${0.10 + 0.25 * intensity})`
-      : r.tone === "warn"
-      ? `rgba(245,158,11, ${0.10 + 0.25 * intensity})`
-      : `rgba(255,255,255, ${0.08 + 0.12 * intensity})`;
-
-  const moveClass = textToneClass(r.tone);
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group w-full rounded-2xl border text-left transition hover:brightness-[1.02] active:brightness-[0.98]"
-      style={{ background: bg, borderColor: bd }}
-    >
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-foreground">{r.matchup}</div>
-            <div className="mt-1 text-xs text-foreground/70">{r.clock}</div>
-          </div>
-
-          <div className={cn("tabular-nums text-sm font-semibold", moveClass)}>{r.scoreText}</div>
-        </div>
-
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-[11px] text-foreground/55">Current</div>
-              <Tooltip label="Current line">
-                <div className="cursor-help">
-                  <CurrentLineTip />
-                </div>
-              </Tooltip>
-            </div>
-            <div className="mt-0.5 tabular-nums text-sm font-semibold text-foreground">{r.current}</div>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
-            <div className="text-[11px] text-foreground/55">Close</div>
-            <div className="mt-0.5 tabular-nums text-sm font-semibold text-foreground">{r.close}</div>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-[11px] text-foreground/55">Oren</div>
-              <Tooltip label="Oren edge">
-                <div className="cursor-help">
-                  <OrenEdgeTip />
-                </div>
-              </Tooltip>
-            </div>
-            <div className="mt-1">
-              <OrenEdgeBar v={r.orenEdgePts} />
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-3 text-[11px] text-foreground/45">Watchlist only — not a bet signal.</div>
-      </div>
-    </button>
-  );
-}
+  confluence: number | null;
+};
 
 export default function NbaClient() {
   const [games, setGames] = useState<GameClockState[]>([]);
@@ -589,10 +441,7 @@ export default function NbaClient() {
   const [orenParams, setOrenParams] = useState<{ A: number; k: number; S: number } | null>(null);
   const [orenStatus, setOrenStatus] = useState<"loading" | "ok" | "missing">("loading");
 
-  const [view, setView] = useState<ViewMode>("slate");
   const [nowTick, setNowTick] = useState(() => Date.now());
-
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => setNowTick(Date.now()), 60 * 1000);
@@ -603,7 +452,7 @@ export default function NbaClient() {
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
-  // Load distributions: season -> seed -> stub
+  // distributions: season -> seed -> stub
   useEffect(() => {
     (async () => {
       try {
@@ -634,7 +483,7 @@ export default function NbaClient() {
     })();
   }, []);
 
-  // Load Oren rankings
+  // oren rankings
   useEffect(() => {
     (async () => {
       try {
@@ -709,11 +558,26 @@ export default function NbaClient() {
 
   const rows = useMemo<Row[]>(() => {
     const computed = games.map((g: any) => {
-      const { clock, phase, isLive } = formatClockFromGame(g);
+      const phase = String(g?.phase ?? "unknown") as Row["phase"];
+      const isLive = phase === "live";
 
       const awayTeam = String(g?.awayTeam ?? "—");
       const homeTeam = String(g?.homeTeam ?? "—");
       const s = getLiveScore(g);
+
+      const period = safeInt(g?.period);
+      const secondsRemaining = safeInt(g?.secondsRemaining);
+
+      const clock =
+        phase === "final"
+          ? "Final"
+          : phase === "pregame"
+          ? "Pregame"
+          : period == null || period === 0
+          ? "Pregame"
+          : secondsRemaining == null
+          ? `P${period} • —`
+          : `P${period} • ${Math.floor(secondsRemaining / 60)}:${String(secondsRemaining % 60).padStart(2, "0")}`;
 
       const currentRounded = roundToHalf(g?.liveSpreadHome);
       const closeRounded = roundToHalf(g?.closingSpreadHome);
@@ -723,25 +587,14 @@ export default function NbaClient() {
 
       const closeNum = typeof closeRounded === "number" ? closeRounded : null;
 
-      // ✅ Move gap should be LIVE ONLY (prevents "not calculating" confusion)
+      // move gap: live only
       let moveGapPts: number | null = null;
-      let observedMove: number | null = null;
-      let expectedMove: number | null = null;
-      let absZ = 0;
-
       if (isLive) {
         const result = computeDeviation(g, { spreadIndex });
-        if (result) {
-          moveGapPts = Number.isFinite(result.dislocationPts) ? result.dislocationPts : null;
-          observedMove = Number.isFinite(result.observedMove) ? result.observedMove : null;
-          expectedMove = Number.isFinite(result.expectedMove) ? result.expectedMove : null;
-          absZ = Number.isFinite(result.absZ) ? result.absZ : 0;
-        }
+        moveGapPts = result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : null;
       }
 
-      const tone = toneFromAbsZ(Math.abs(absZ));
-
-      const ore = computeOrenEdgePts({
+      const orenEdgePts = computeOrenEdgePts({
         homeTeam,
         awayTeam,
         closingSpreadHome: closeNum,
@@ -749,14 +602,10 @@ export default function NbaClient() {
         params: orenParams,
       });
 
+      const confluence = computeConfluenceScore({ orenEdgePts, moveGapPts, isLive });
+
       return {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
-
-        abs: Math.abs(absZ),
-        moveGapPts,
-
-        observedMove,
-        expectedMove,
 
         awayTeam,
         homeTeam,
@@ -769,15 +618,16 @@ export default function NbaClient() {
         current: currentLabel,
         close: closeLabel,
 
-        scoreText: moveGapPts == null ? "—" : formatSigned(moveGapPts, 1),
-        tone,
-        absZ: Math.abs(absZ),
-
         phase,
         isLive,
 
-        orenEdgePts: ore,
-        orenEdgeText: ore == null ? "—" : formatSigned(ore, 1),
+        moveGapPts,
+        moveGapText: moveGapPts == null ? "—" : formatSigned(moveGapPts, 1),
+
+        orenEdgePts,
+        orenEdgeText: orenEdgePts == null ? "—" : formatSigned(orenEdgePts, 1),
+
+        confluence,
       };
     });
 
@@ -794,16 +644,16 @@ export default function NbaClient() {
       const rb = phaseRank(b);
       if (ra !== rb) return ra - rb;
 
-      // within bucket, prioritize notable live anomalies
-      const az = Math.abs(a.absZ);
-      const bz = Math.abs(b.absZ);
-      if (bz !== az) return bz - az;
+      // within live: higher confluence first
+      const ac = a.confluence ?? -1;
+      const bc = b.confluence ?? -1;
+      if (bc !== ac) return bc - ac;
 
       return a.matchup.localeCompare(b.matchup);
     });
 
     return computed;
-  }, [games, spreadIndex, after2pm, orenMap, orenParams]);
+  }, [games, after2pm, spreadIndex, orenMap, orenParams]);
 
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
@@ -812,31 +662,6 @@ export default function NbaClient() {
     if (orenStatus === "missing") return "Oren: Missing";
     return "Oren: Ready";
   }, [orenStatus]);
-
-  const selectedRow = useMemo(() => rows.find((r) => r.key === selectedKey) ?? null, [rows, selectedKey]);
-
-  // ✅ Heatmap now uses a non-overlapping grid (no absolute tiles)
-  const heatRows = useMemo(() => {
-    // show live first, then strongest absZ
-    const filtered = rows.filter((r) => r.isLive || r.absZ >= 0.75);
-    return filtered;
-  }, [rows]);
-
-  // simple “feature tiles” without overlap
-  const heatLayout = useMemo(() => {
-    const arr = [...heatRows];
-    // already sorted by phaseRank + absZ from rows, but ensure strongest first within view
-    arr.sort((a, b) => {
-      if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
-      return Math.abs(b.absZ) - Math.abs(a.absZ);
-    });
-
-    const top = arr.slice(0, 1);
-    const next = arr.slice(1, 3);
-    const rest = arr.slice(3);
-
-    return { top, next, rest };
-  }, [heatRows]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -870,31 +695,8 @@ export default function NbaClient() {
             <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">NBA Deviation Watchlist</h1>
 
             <p className="mt-4 max-w-3xl text-lg text-foreground/75">
-              Move gap is live-only. Heat map is a clean grid (no overlap). Oren edge is now visual (bar) instead of “just a number.”
+              Confluence is the main scan metric: when Oren edge and move gap agree on direction and both are meaningful.
             </p>
-          </div>
-
-          <div className="inline-flex w-full sm:w-auto rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-1">
-            <button
-              type="button"
-              onClick={() => setView("slate")}
-              className={cn(
-                "flex-1 sm:flex-none px-4 py-2 text-sm rounded-xl transition",
-                view === "slate" ? "bg-white text-slate-950" : "text-foreground/80 hover:bg-white/5"
-              )}
-            >
-              Slate
-            </button>
-            <button
-              type="button"
-              onClick={() => setView("heatmap")}
-              className={cn(
-                "flex-1 sm:flex-none px-4 py-2 text-sm rounded-xl transition",
-                view === "heatmap" ? "bg-white text-slate-950" : "text-foreground/80 hover:bg-white/5"
-              )}
-            >
-              Heat Map
-            </button>
           </div>
         </div>
 
@@ -908,9 +710,17 @@ export default function NbaClient() {
                 If you checked after hours, the last available snapshot will appear once it exists.
               </div>
             </div>
-          ) : view === "slate" ? (
+          ) : (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-4 text-sm text-foreground/70">
+                <div className="flex items-center gap-2">
+                  <span className="text-foreground/60">Confluence</span>
+                  <Tooltip label="Confluence">
+                    <div className="cursor-help">
+                      <ConfluenceTip />
+                    </div>
+                  </Tooltip>
+                </div>
                 <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Move gap</span>
                   <Tooltip label="Move gap">
@@ -938,149 +748,114 @@ export default function NbaClient() {
               </div>
 
               <div className="grid gap-4">
-                {rows.map((r) => (
-                  <div
-                    key={r.key}
-                    className={cn(
-                      "rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5",
-                      r.isLive && "bg-[color:var(--accent)]/5"
-                    )}
-                    style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.18)" } : undefined}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <div className="truncate text-lg font-semibold text-foreground">{r.matchup}</div>
-                          <Pill tone={r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame"}>
-                            {r.isLive ? (
-                              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
-                            ) : null}
-                            {r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE"}
-                          </Pill>
-                        </div>
-                        <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
-                      </div>
+                {rows.map((r) => {
+                  const cTone = confluenceTone(r.confluence);
+                  const confluenceRing =
+                    cTone === "high"
+                      ? "ring-1 ring-[color:var(--accent)]/30"
+                      : cTone === "mid"
+                      ? "ring-1 ring-amber-400/25"
+                      : cTone === "low"
+                      ? "ring-1 ring-white/10"
+                      : "";
 
-                      <div className="flex items-center gap-2">
-                        <div className={cn("tabular-nums text-lg font-semibold", textToneClass(r.tone))}>
-                          {r.scoreText}
-                        </div>
-                        <Tooltip label="Move gap">
-                          <div className="cursor-help">
-                            <MoveGapTip />
+                  return (
+                    <div
+                      key={r.key}
+                      className={cn(
+                        "rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5",
+                        r.isLive && "bg-[color:var(--accent)]/5",
+                        confluenceRing
+                      )}
+                      style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.12)" } : undefined}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <div className="truncate text-lg font-semibold text-foreground">{r.matchup}</div>
+                            <Pill tone={r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame"}>
+                              {r.isLive ? (
+                                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
+                              ) : null}
+                              {r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE"}
+                            </Pill>
                           </div>
-                        </Tooltip>
+                          <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
+                        </div>
+
+                        <div className="flex flex-col items-end gap-2">
+                          <div className="flex items-center gap-2">
+                            <ConfluenceBadge score={r.confluence} />
+                            <Tooltip label="Confluence">
+                              <div className="cursor-help">
+                                <ConfluenceTip />
+                              </div>
+                            </Tooltip>
+                          </div>
+                        </div>
                       </div>
-                    </div>
 
-                    <ScoreLine
-                      awayTeam={r.awayTeam}
-                      homeTeam={r.homeTeam}
-                      awayScore={r.awayScore}
-                      homeScore={r.homeScore}
-                    />
+                      <ScoreLine
+                        awayTeam={r.awayTeam}
+                        homeTeam={r.homeTeam}
+                        awayScore={r.awayScore}
+                        homeScore={r.homeScore}
+                      />
 
-                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                      <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-                        <div className="flex items-center justify-between gap-2">
+                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-4">
+                        <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs text-foreground/55">Move gap</div>
+                            <Tooltip label="Move gap">
+                              <div className="cursor-help">
+                                <MoveGapTip />
+                              </div>
+                            </Tooltip>
+                          </div>
+                          <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">
+                            {r.moveGapText}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
                           <div className="text-xs text-foreground/55">Current (Home)</div>
-                          <Tooltip label="Current line">
-                            <div className="cursor-help">
-                              <CurrentLineTip />
-                            </div>
-                          </Tooltip>
+                          <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.current}</div>
                         </div>
-                        <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.current}</div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                          <div className="text-xs text-foreground/55">Close (Home)</div>
+                          <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.close}</div>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="text-xs text-foreground/55">Oren edge</div>
+                            <Tooltip label="Oren edge">
+                              <div className="cursor-help">
+                                <OrenEdgeTip />
+                              </div>
+                            </Tooltip>
+                          </div>
+                          <div className="mt-2">
+                            <OrenEdgeBar v={r.orenEdgePts} />
+                          </div>
+                          <div className="mt-2 text-xs tabular-nums text-foreground/60">{r.orenEdgeText}</div>
+                        </div>
                       </div>
 
-                      <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-                        <div className="text-xs text-foreground/55">Close (Home)</div>
-                        <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.close}</div>
-                      </div>
-
-                      <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-xs text-foreground/55">Oren edge</div>
-                          <Tooltip label="Oren edge">
-                            <div className="cursor-help">
-                              <OrenEdgeTip />
-                            </div>
-                          </Tooltip>
-                        </div>
-                        <div className="mt-2">
-                          <OrenEdgeBar v={r.orenEdgePts} />
-                        </div>
-                        <div className="mt-2 text-xs tabular-nums text-foreground/60">{r.orenEdgeText}</div>
-                      </div>
+                      <div className="mt-3 text-xs text-foreground/55">Watchlist only. Not a bet signal.</div>
                     </div>
-
-                    <div className="mt-3 text-xs text-foreground/55">Lab preview. Review required. Not a bet signal.</div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-4 text-sm text-foreground/70">
-                <div className="flex items-center gap-2">
-                  <span className="text-foreground/60">Move gap</span>
-                  <Tooltip label="Move gap">
-                    <div className="cursor-help">
-                      <MoveGapTip />
-                    </div>
-                  </Tooltip>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-foreground/60">Current</span>
-                  <Tooltip label="Current line">
-                    <div className="cursor-help">
-                      <CurrentLineTip />
-                    </div>
-                  </Tooltip>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-foreground/60">Oren edge</span>
-                  <Tooltip label="Oren edge">
-                    <div className="cursor-help">
-                      <OrenEdgeTip />
-                    </div>
-                  </Tooltip>
-                </div>
-              </div>
-
-              {heatRows.length === 0 ? (
-                <div className="text-foreground/70">
-                  No notable deviations yet. Heat tiles appear once games are live or moves become unusual.
-                </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {heatLayout.top.map((r) => (
-                      <div key={r.key} className="lg:col-span-2">
-                        <HeatTile r={r} onClick={() => setSelectedKey(r.key)} />
-                      </div>
-                    ))}
-                    {heatLayout.next.map((r) => (
-                      <div key={r.key} className="sm:col-span-1 lg:col-span-1">
-                        <HeatTile r={r} onClick={() => setSelectedKey(r.key)} />
-                      </div>
-                    ))}
-                    {heatLayout.rest.map((r) => (
-                      <HeatTile key={r.key} r={r} onClick={() => setSelectedKey(r.key)} />
-                    ))}
-                  </div>
-
-                  <div className="text-xs text-foreground/55">
-                    Watchlist only. Not a bet signal. Tap a tile for details.
-                  </div>
-                </>
-              )}
             </div>
           )}
         </section>
-      </div>
 
-      <DetailDrawer open={Boolean(selectedKey)} onClose={() => setSelectedKey(null)} r={selectedRow} />
+        <div className="text-xs text-foreground/55">
+          Note: Confluence requires live play + Oren edge + move gap. Pregame games will show Confluence as —.
+        </div>
+      </div>
     </main>
   );
 }
