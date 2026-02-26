@@ -7,7 +7,6 @@ import { computeDeviation } from "@/lib/labs/nba/heatmap";
 import { buildDistributionIndex } from "@/lib/nba/deviation-engine";
 
 type GameClockState = any;
-
 type LiveMeta = { stale?: boolean; updatedAt?: string; window?: "active" | "offhours" } | undefined;
 
 function makeStubIndex() {
@@ -32,6 +31,10 @@ function makeStubIndex() {
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+}
+
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
 }
 
 function roundToHalf(x: any): number | null {
@@ -127,9 +130,7 @@ function MoveGapTip() {
       <div className="text-foreground/70">
         It’s built for scanning—especially late 1Q and mid 2Q/3Q—so you can decide what deserves a closer look.
       </div>
-      <div className="text-foreground/70">
-        Not a bet signal. No recommendations—just a deviation watchlist.
-      </div>
+      <div className="text-foreground/70">Not a bet signal. No recommendations—just a deviation watchlist.</div>
     </div>
   );
 }
@@ -138,11 +139,11 @@ function OrenEdgeTip() {
   return (
     <div className="max-w-sm space-y-2">
       <div className="font-semibold">Oren edge</div>
-      <div className="text-foreground/70">Compares Oren’s private power ranking model to the consensus closing line.</div>
+      <div className="text-foreground/70">A private “prior” versus the consensus closing line.</div>
       <div className="text-foreground/70">
-        Positive means Oren thinks home “should be” more favored than the close. Negative means less favored.
+        Positive means the home team looks undervalued vs close. Negative means the home team looks overvalued vs close.
       </div>
-      <div className="text-foreground/70">Not a bet signal—use as a prior alongside live market behavior.</div>
+      <div className="text-foreground/70">Not a bet signal—use as context alongside live market behavior.</div>
     </div>
   );
 }
@@ -379,10 +380,302 @@ function ScoreLine({
   );
 }
 
-function MobileCard({ r }: { r: Row }) {
-  const scoreClass = textToneClass(r.tone);
+/** -------- Treemap (squarify) layout (no deps) -------- */
+type Rect = { x: number; y: number; w: number; h: number };
+type TreeItem = { id: string; value: number; row: Row };
+type Placed = { item: TreeItem; rect: Rect };
+
+function sum(items: TreeItem[]) {
+  return items.reduce((a, b) => a + b.value, 0);
+}
+function worstAspect(row: TreeItem[], side: number) {
+  if (row.length === 0) return Infinity;
+  const s = sum(row);
+  if (s <= 0) return Infinity;
+
+  let minV = Infinity;
+  let maxV = 0;
+  for (const it of row) {
+    minV = Math.min(minV, it.value);
+    maxV = Math.max(maxV, it.value);
+  }
+  if (!Number.isFinite(minV) || minV <= 0) return Infinity;
+
+  const s2 = s * s;
+  const side2 = side * side;
+  return Math.max((side2 * maxV) / s2, s2 / (side2 * minV));
+}
+function layoutRow(row: TreeItem[], rect: Rect): { placed: Placed[]; remaining: Rect } {
+  const placed: Placed[] = [];
+  const s = sum(row);
+
+  if (row.length === 0 || s <= 0 || rect.w <= 0 || rect.h <= 0) {
+    return { placed, remaining: rect };
+  }
+
+  const horizontal = rect.w >= rect.h;
+
+  if (horizontal) {
+    const h = s / rect.w;
+    let x = rect.x;
+
+    for (const it of row) {
+      const w = it.value / h;
+      placed.push({ item: it, rect: { x, y: rect.y, w, h } });
+      x += w;
+    }
+
+    return { placed, remaining: { x: rect.x, y: rect.y + h, w: rect.w, h: rect.h - h } };
+  } else {
+    const w = s / rect.h;
+    let y = rect.y;
+
+    for (const it of row) {
+      const h = it.value / w;
+      placed.push({ item: it, rect: { x: rect.x, y, w, h } });
+      y += h;
+    }
+
+    return { placed, remaining: { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h } };
+  }
+}
+function squarify(items: TreeItem[], rect: Rect): Placed[] {
+  const placed: Placed[] = [];
+  const remaining = [...items]
+    .filter((it) => Number.isFinite(it.value) && it.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  let r: Rect = { ...rect };
+  let row: TreeItem[] = [];
+
+  while (remaining.length > 0) {
+    const next = remaining[0];
+    const side = Math.min(r.w, r.h);
+
+    if (row.length === 0) {
+      row.push(next);
+      remaining.shift();
+      continue;
+    }
+
+    const currentWorst = worstAspect(row, side);
+    const nextWorst = worstAspect([...row, next], side);
+
+    if (nextWorst <= currentWorst) {
+      row.push(next);
+      remaining.shift();
+    } else {
+      const res = layoutRow(row, r);
+      placed.push(...res.placed);
+      r = res.remaining;
+      row = [];
+      if (r.w <= 0 || r.h <= 0) break;
+    }
+  }
+
+  if (row.length > 0 && r.w > 0 && r.h > 0) {
+    const res = layoutRow(row, r);
+    placed.push(...res.placed);
+  }
+
+  return placed;
+}
+
+function tileIntensity(absZ: number) {
+  return clamp(absZ / 2.2, 0, 1);
+}
+
+function tileBg(tone: Row["tone"], intensity01: number) {
+  const a = clamp(intensity01, 0, 1);
+  // Robinhood-ish: subtle, glassy, low-saturation
+  if (tone === "accent") return `rgba(43, 203, 119, ${0.08 + 0.20 * a})`;
+  if (tone === "warn") return `rgba(245, 158, 11, ${0.06 + 0.18 * a})`;
+  return `rgba(255, 255, 255, ${0.02 + 0.06 * a})`;
+}
+
+function tileBorder(tone: Row["tone"], intensity01: number) {
+  const a = clamp(intensity01, 0, 1);
+  if (tone === "accent") return `rgba(43,203,119, ${0.12 + 0.22 * a})`;
+  if (tone === "warn") return `rgba(245,158,11, ${0.10 + 0.22 * a})`;
+  return `rgba(255,255,255, ${0.08 + 0.12 * a})`;
+}
+
+function Tile({
+  r,
+  onClick,
+  compact = false,
+}: {
+  r: Row;
+  onClick: () => void;
+  compact?: boolean;
+}) {
+  const intensity = tileIntensity(r.absZ);
+  const bg = tileBg(r.tone, intensity);
+  const bd = tileBorder(r.tone, intensity);
+
   const ore = r.orenEdgePts;
-  const oreTone =
+  const oreClass =
+    ore == null
+      ? "text-foreground/55"
+      : ore >= 1.5
+      ? "text-[color:var(--accent)]"
+      : ore <= -1.5
+      ? "text-amber-200"
+      : "text-foreground/80";
+
+  const moveClass = textToneClass(r.tone);
+
+  const phaseTone = r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame";
+  const phaseLabel = r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "group relative w-full overflow-hidden rounded-2xl border text-left transition",
+        "hover:brightness-[1.02] active:brightness-[0.98]"
+      )}
+      style={{
+        background: bg,
+        borderColor: bd,
+        boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
+      }}
+    >
+      <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="absolute -inset-10 rounded-full bg-white/5 blur-2xl" />
+      </div>
+
+      <div className={cn("relative p-3", !compact && "p-4")}>
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className={cn("truncate font-semibold text-foreground", compact ? "text-sm" : "text-base")}>
+              {r.matchup}
+            </div>
+            <div className={cn("mt-1 flex items-center gap-2", compact ? "text-xs" : "text-sm")}>
+              <Pill tone={phaseTone}>
+                {r.isLive ? <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" /> : null}
+                {phaseLabel}
+              </Pill>
+              <span className="text-foreground/70">{r.clock}</span>
+            </div>
+          </div>
+
+          <div className={cn("tabular-nums font-semibold", moveClass, compact ? "text-sm" : "text-base")}>{r.scoreText}</div>
+        </div>
+
+        <div className={cn("mt-3 grid grid-cols-3 gap-2", compact && "mt-2")}>
+          <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
+            <div className="text-[11px] text-foreground/55">Current</div>
+            <div className={cn("mt-0.5 tabular-nums font-semibold text-foreground", compact ? "text-sm" : "text-base")}>
+              {r.current}
+            </div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
+            <div className="text-[11px] text-foreground/55">Close</div>
+            <div className={cn("mt-0.5 tabular-nums font-semibold text-foreground", compact ? "text-sm" : "text-base")}>
+              {r.close}
+            </div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
+            <div className="text-[11px] text-foreground/55">Oren</div>
+            <div className={cn("mt-0.5 tabular-nums font-semibold", oreClass, compact ? "text-sm" : "text-base")}>
+              {r.orenEdgeText}
+            </div>
+          </div>
+        </div>
+
+        <div className={cn("mt-2 text-[11px] text-foreground/45", compact && "hidden")}>
+          Watchlist only — not a bet signal.
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function DetailDrawer({
+  open,
+  onClose,
+  r,
+}: {
+  open: boolean;
+  onClose: () => void;
+  r: Row | null;
+}) {
+  if (!open || !r) return null;
+
+  const moveClass = textToneClass(r.tone);
+  const ore = r.orenEdgePts;
+  const oreClass =
+    ore == null
+      ? "text-foreground/55"
+      : ore >= 1.5
+      ? "text-[color:var(--accent)]"
+      : ore <= -1.5
+      ? "text-amber-200"
+      : "text-foreground/80";
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <button
+        aria-label="Close"
+        type="button"
+        onClick={onClose}
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+      />
+      <div className="absolute bottom-0 left-0 right-0 mx-auto w-full max-w-2xl rounded-t-3xl border border-white/10 bg-[color:var(--card)] p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-lg font-semibold text-foreground">{r.matchup}</div>
+            <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-foreground/80 hover:bg-white/5"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+            <div className="text-xs text-foreground/55">Current (Home)</div>
+            <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.current}</div>
+            <div className="mt-1 text-[11px] text-foreground/45">{r.isLive ? "live line" : "pregame line"}</div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+            <div className="text-xs text-foreground/55">Close (Home)</div>
+            <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.close}</div>
+            <div className="mt-1 text-[11px] text-foreground/45">consensus close</div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+            <div className="text-xs text-foreground/55">Move gap</div>
+            <div className={cn("mt-1 tabular-nums text-xl font-semibold", moveClass)}>{r.scoreText}</div>
+            <div className="mt-1 text-[11px] text-foreground/45">unusual move vs typical game states</div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+            <div className="text-xs text-foreground/55">Oren edge</div>
+            <div className={cn("mt-1 tabular-nums text-xl font-semibold", oreClass)}>{r.orenEdgeText}</div>
+            <div className="mt-1 text-[11px] text-foreground/45">private prior vs close</div>
+          </div>
+        </div>
+
+        <div className="mt-4 text-sm text-foreground/60">
+          This is a watchlist. It does not recommend a wager or predict outcomes.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DesktopCard({ r }: { r: Row }) {
+  const moveClass = textToneClass(r.tone);
+  const ore = r.orenEdgePts;
+  const oreClass =
     ore == null
       ? "text-foreground/55"
       : ore >= 1.5
@@ -397,7 +690,7 @@ function MobileCard({ r }: { r: Row }) {
   return (
     <div
       className={cn(
-        "rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-4",
+        "rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5",
         r.isLive && "bg-[color:var(--accent)]/5"
       )}
       style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.18)" } : undefined}
@@ -405,7 +698,7 @@ function MobileCard({ r }: { r: Row }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <div className="truncate text-base font-semibold text-foreground">{r.matchup}</div>
+            <div className="truncate text-lg font-semibold text-foreground">{r.matchup}</div>
             <Pill tone={phaseTone}>
               {r.isLive ? <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" /> : null}
               {phaseLabel}
@@ -414,31 +707,28 @@ function MobileCard({ r }: { r: Row }) {
           <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
         </div>
 
-        <div className={cn("tabular-nums text-sm font-semibold", scoreClass)}>{r.scoreText}</div>
+        <div className={cn("tabular-nums text-lg font-semibold", moveClass)}>{r.scoreText}</div>
       </div>
 
       <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
 
-      <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
           <div className="text-xs text-foreground/55">Current (Home)</div>
-          <div className="mt-1 tabular-nums font-semibold text-foreground">{r.current}</div>
-          <div className="mt-0.5 text-[11px] text-foreground/45">{r.isLive ? "live line" : "pregame line"}</div>
+          <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.current}</div>
+          <div className="mt-1 text-[11px] text-foreground/45">{r.isLive ? "live line" : "pregame line"}</div>
         </div>
-        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+
+        <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
           <div className="text-xs text-foreground/55">Close (Home)</div>
-          <div className="mt-1 tabular-nums font-semibold text-foreground">{r.close}</div>
-          <div className="mt-0.5 text-[11px] text-foreground/45">consensus close</div>
+          <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.close}</div>
+          <div className="mt-1 text-[11px] text-foreground/45">consensus close</div>
         </div>
-        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-          <div className="text-xs text-foreground/55">Move gap</div>
-          <div className={cn("mt-1 tabular-nums font-semibold", scoreClass)}>{r.scoreText}</div>
-          <div className="mt-0.5 text-[11px] text-foreground/45">watchlist signal</div>
-        </div>
-        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+
+        <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
           <div className="text-xs text-foreground/55">Oren edge</div>
-          <div className={cn("mt-1 tabular-nums font-semibold", oreTone)}>{r.orenEdgeText}</div>
-          <div className="mt-0.5 text-[11px] text-foreground/45">vs close</div>
+          <div className={cn("mt-1 tabular-nums text-xl font-semibold", oreClass)}>{r.orenEdgeText}</div>
+          <div className="mt-1 text-[11px] text-foreground/45">private prior vs close</div>
         </div>
       </div>
 
@@ -463,12 +753,14 @@ export default function NbaClient() {
   const [view, setView] = useState<ViewMode>("slate");
   const [nowTick, setNowTick] = useState(() => Date.now());
 
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+
   useEffect(() => {
     const t = setInterval(() => setNowTick(Date.now()), 60 * 1000);
     return () => clearInterval(t);
   }, []);
 
-  // 2pm gate is DISPLAY ONLY for spreads
+  // display gate only
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
@@ -503,7 +795,7 @@ export default function NbaClient() {
     })();
   }, []);
 
-  // Load Oren rankings
+  // Load Oren rankings (params still come from endpoint)
   useEffect(() => {
     (async () => {
       try {
@@ -516,14 +808,12 @@ export default function NbaClient() {
         const json = await res.json().catch(() => null);
         if (json?.ok && json?.map && typeof json.map === "object") {
           setOrenMap(json.map);
-
           if (json?.params && typeof json.params === "object") {
             const A = Number(json.params.A ?? 10);
             const k = Number(json.params.k ?? 0.12);
             const S = Number(json.params.S ?? 1.0);
             if (Number.isFinite(A) && Number.isFinite(k) && Number.isFinite(S)) setOrenParams({ A, k, S });
           }
-
           setOrenStatus("ok");
         } else {
           setOrenStatus("missing");
@@ -598,11 +888,9 @@ export default function NbaClient() {
 
       const s = getLiveScore(g);
 
-      // Feed values (always)
       const currentRounded = roundToHalf(g?.liveSpreadHome);
       const closeRounded = roundToHalf(g?.closingSpreadHome);
 
-      // Display gate only
       const currentLabel = after2pm ? formatSpread(currentRounded, 1) : "—";
       const closeLabel = after2pm ? formatSpread(closeRounded, 1) : "—";
 
@@ -661,7 +949,12 @@ export default function NbaClient() {
       const rb = phaseRank(b);
       if (ra !== rb) return ra - rb;
 
+      // prioritize high absZ (strongest anomalies)
+      if (Math.abs(b.absZ) !== Math.abs(a.absZ)) return Math.abs(b.absZ) - Math.abs(a.absZ);
+
+      // then biggest abs dislocation
       if (b.abs !== a.abs) return b.abs - a.abs;
+
       return a.matchup.localeCompare(b.matchup);
     });
 
@@ -675,6 +968,51 @@ export default function NbaClient() {
     if (orenStatus === "missing") return "Oren: Missing";
     return "Oren: Ready";
   }, [orenStatus]);
+
+  const selectedRow = useMemo(() => rows.find((r) => r.key === selectedKey) ?? null, [rows, selectedKey]);
+
+  // Heat map rows: always include live, plus meaningful absZ
+  const heatRows = useMemo(() => rows.filter((r) => r.isLive || Math.abs(r.absZ) >= 0.75), [rows]);
+
+  // Desktop treemap placement
+  const treemap = useMemo(() => {
+    const W = 1100;
+    const H = 640;
+    const area = W * H;
+
+    const items = heatRows.map<TreeItem>((r) => {
+      const z = clamp(Math.abs(r.absZ), 0, 3.0);
+      const liveBump = r.isLive ? 0.7 : 0;
+      // Weight emphasizes outliers; keep everyone visible
+      const weight = 1 + (z + liveBump) * 5.0;
+      return { id: r.key, value: weight, row: r };
+    });
+
+    const total = items.reduce((a, b) => a + b.value, 0);
+    if (!Number.isFinite(total) || total <= 0) return [];
+
+    const scaled = items.map((it) => ({ ...it, value: (it.value / total) * area }));
+    const placed = squarify(scaled, { x: 0, y: 0, w: W, h: H });
+
+    const gutterPx = 12;
+
+    return placed.map(({ item, rect }) => {
+      const leftPct = (rect.x / W) * 100;
+      const topPct = (rect.y / H) * 100;
+      const widthPct = (rect.w / W) * 100;
+      const heightPct = (rect.h / H) * 100;
+
+      return {
+        item,
+        left: `calc(${leftPct}% + ${gutterPx / 2}px)`,
+        top: `calc(${topPct}% + ${gutterPx / 2}px)`,
+        width: `calc(${widthPct}% - ${gutterPx}px)`,
+        height: `calc(${heightPct}% - ${gutterPx}px)`,
+        widthPct,
+        heightPct,
+      };
+    });
+  }, [heatRows]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -751,121 +1089,129 @@ export default function NbaClient() {
               {/* Mobile: card list */}
               <div className="grid gap-4 sm:hidden">
                 {rows.map((r) => (
-                  <MobileCard key={r.key} r={r} />
+                  <div key={r.key}>
+                    {/* reuse heatmap tile style for consistency? keep mobile card? */}
+                    <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <div className="truncate text-base font-semibold text-foreground">{r.matchup}</div>
+                            <Pill tone={r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame"}>
+                              {r.isLive ? (
+                                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
+                              ) : null}
+                              {r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE"}
+                            </Pill>
+                          </div>
+                          <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
+                        </div>
+                        <div className={cn("tabular-nums text-sm font-semibold", textToneClass(r.tone))}>{r.scoreText}</div>
+                      </div>
+
+                      <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
+
+                      <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
+                        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+                          <div className="text-xs text-foreground/55">Current</div>
+                          <div className="mt-1 tabular-nums font-semibold text-foreground">{r.current}</div>
+                        </div>
+                        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+                          <div className="text-xs text-foreground/55">Close</div>
+                          <div className="mt-1 tabular-nums font-semibold text-foreground">{r.close}</div>
+                        </div>
+                        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
+                          <div className="text-xs text-foreground/55">Oren</div>
+                          <div className={cn("mt-1 tabular-nums font-semibold", r.orenEdgePts == null ? "text-foreground/55" : r.orenEdgePts >= 1.5 ? "text-[color:var(--accent)]" : r.orenEdgePts <= -1.5 ? "text-amber-200" : "text-foreground/80")}>
+                            {r.orenEdgeText}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 text-xs text-foreground/55">Lab preview. Review required. Not a bet signal.</div>
+                    </div>
+                  </div>
                 ))}
               </div>
 
-              {/* Desktop: table */}
-              <div className="hidden sm:block overflow-x-auto">
-                <table className="min-w-[1180px] w-full text-[15px]">
-                  <thead>
-                    <tr className="text-left text-foreground/60">
-                      <th className="px-4 py-3 font-medium">
-                        Matchup <span className="text-foreground/40">({headerDate})</span>
-                      </th>
-                      <th className="px-4 py-3 font-medium">Clock</th>
-
-                      <th className="px-4 py-3 font-medium">
-                        <Tooltip label="Current line">
-                          <CurrentLineTip />
-                        </Tooltip>
-                        <span className="ml-2">Current (Home)</span>
-                      </th>
-
-                      <th className="px-4 py-3 font-medium">Close (Home)</th>
-
-                      <th className="px-4 py-3 font-medium">
-                        <Tooltip label="Move gap">
-                          <MoveGapTip />
-                        </Tooltip>
-                        <span className="ml-2">Move gap</span>
-                      </th>
-
-                      <th className="px-4 py-3 font-medium">
-                        <Tooltip label="Oren edge">
-                          <OrenEdgeTip />
-                        </Tooltip>
-                        <span className="ml-2">Oren edge</span>
-                      </th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {rows.map((r) => {
-                      const moveClass = textToneClass(r.tone);
-
-                      const ore = r.orenEdgePts;
-                      const oreClass =
-                        ore == null
-                          ? "text-foreground/55"
-                          : ore >= 1.5
-                          ? "text-[color:var(--accent)]"
-                          : ore <= -1.5
-                          ? "text-amber-200"
-                          : "text-foreground/80";
-
-                      const phaseTone = r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame";
-                      const phaseLabel = r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE";
-
-                      return (
-                        <tr
-                          key={r.key}
-                          className={cn("border-t border-[color:var(--border)]", r.isLive && "bg-[color:var(--accent)]/5")}
-                          style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.18)" } : undefined}
-                        >
-                          <td className="px-4 py-4">
-                            <div className="flex items-center gap-2">
-                              <div className="font-medium text-foreground">{r.matchup}</div>
-                              <Pill tone={phaseTone}>
-                                {r.isLive ? (
-                                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
-                                ) : null}
-                                {phaseLabel}
-                              </Pill>
-                            </div>
-
-                            <div className="mt-2">
-                              <ScoreLine
-                                awayTeam={r.awayTeam}
-                                homeTeam={r.homeTeam}
-                                awayScore={r.awayScore}
-                                homeScore={r.homeScore}
-                              />
-                            </div>
-                          </td>
-
-                          <td className="px-4 py-4">
-                            <div className="text-foreground/80">{r.clock}</div>
-                          </td>
-
-                          <td className="px-4 py-4">
-                            <div className="tabular-nums font-semibold text-foreground">{r.current}</div>
-                            <div className="mt-0.5 text-xs text-foreground/45">{r.isLive ? "live line" : "pregame line"}</div>
-                          </td>
-
-                          <td className="px-4 py-4">
-                            <div className="tabular-nums font-semibold text-foreground/90">{r.close}</div>
-                            <div className="mt-0.5 text-xs text-foreground/45">consensus close</div>
-                          </td>
-
-                          <td className={cn("px-4 py-4 font-semibold tabular-nums", moveClass)}>{r.scoreText}</td>
-
-                          <td className={cn("px-4 py-4 font-semibold tabular-nums", oreClass)}>{r.orenEdgeText}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-
-                <div className="mt-4 text-sm text-foreground/55">Lab preview. Review required. Not a bet signal.</div>
-                <div className="mt-2 text-xs text-foreground/55">Spreads are rounded to the nearest 0.5 for readability.</div>
+              {/* Desktop: cards (no horizontal scroll) */}
+              <div className="hidden sm:grid gap-4">
+                {rows.map((r) => (
+                  <DesktopCard key={r.key} r={r} />
+                ))}
               </div>
             </div>
           ) : (
-            <div className="text-foreground/70">Heat map view unchanged here (next: re-enable tiles with Oren overlay).</div>
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="text-sm text-foreground/70">Tiles are sized by watchlist priority (stronger anomalies = larger tiles).</div>
+                <div className="flex items-center gap-2 text-sm text-foreground/70">
+                  <Tooltip label="Move gap">
+                    <MoveGapTip />
+                  </Tooltip>
+                  <span className="text-foreground/60">Move gap</span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-foreground/70">
+                  <Tooltip label="Current line">
+                    <CurrentLineTip />
+                  </Tooltip>
+                  <span className="text-foreground/60">Current</span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-foreground/70">
+                  <Tooltip label="Oren edge">
+                    <OrenEdgeTip />
+                  </Tooltip>
+                  <span className="text-foreground/60">Oren edge</span>
+                </div>
+              </div>
+
+              {heatRows.length === 0 ? (
+                <div className="text-foreground/70">No notable deviations yet. Tiles appear once games are live or moves become unusual.</div>
+              ) : (
+                <>
+                  {/* Mobile heat map: clean grid */}
+                  <div className="grid grid-cols-2 gap-3 sm:hidden">
+                    {heatRows.slice(0, 24).map((r) => (
+                      <Tile key={r.key} r={r} compact onClick={() => setSelectedKey(r.key)} />
+                    ))}
+                  </div>
+
+                  {/* Desktop heat map: treemap */}
+                  <div className="relative hidden sm:block h-[720px] rounded-2xl border border-white/10 bg-black/10 overflow-hidden">
+                    {treemap.map((p) => {
+                      const r = p.item.row;
+                      // hide micro tiles by switching to compact content automatically
+                      const compact = (p.widthPct < 12 || p.heightPct < 12) || (p.widthPct < 18 && p.heightPct < 18);
+
+                      return (
+                        <div
+                          key={p.item.id}
+                          className="absolute"
+                          style={{
+                            left: p.left,
+                            top: p.top,
+                            width: p.width,
+                            height: p.height,
+                          }}
+                        >
+                          <div className="h-full">
+                            <Tile r={r} compact={compact} onClick={() => setSelectedKey(r.key)} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="text-xs text-foreground/55">
+                    Watchlist only. Not a bet signal. Tap a tile to see details.
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </section>
       </div>
+
+      <DetailDrawer open={Boolean(selectedKey)} onClose={() => setSelectedKey(null)} r={selectedRow} />
     </main>
   );
 }
