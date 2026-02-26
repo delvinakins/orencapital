@@ -195,6 +195,18 @@ function CurrentLineTip() {
   );
 }
 
+function HistoricalTip() {
+  return (
+    <div className="max-w-sm space-y-2">
+      <div className="font-semibold">Historical</div>
+      <div className="text-foreground/70">
+        Conditional context only. “In similar spots (time window + move size + live ML), the underdog covered X%.”
+      </div>
+      <div className="text-foreground/70">Shown only when sample size is adequate. Not a prediction or bet button.</div>
+    </div>
+  );
+}
+
 function normalizeTeam(s: any): string {
   return String(s ?? "").trim().toLowerCase();
 }
@@ -268,8 +280,7 @@ function ConfluenceBadge({ score }: { score: number | null }) {
       ? "border-white/10 bg-white/5 text-foreground/80"
       : "border-white/10 bg-black/20 text-foreground/70";
 
-  const label =
-    score == null ? "—" : score >= 55 ? "HIGH" : score >= 25 ? "WATCH" : score >= 10 ? "LOW" : "—";
+  const label = score == null ? "—" : score >= 55 ? "HIGH" : score >= 25 ? "WATCH" : score >= 10 ? "LOW" : "—";
 
   return (
     <div className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs", cls)}>
@@ -284,11 +295,35 @@ function ConfirmedBadge({ on }: { on: boolean }) {
     <div
       className={cn(
         "inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs",
-        on ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]" : "border-white/10 bg-black/20 text-foreground/70"
+        on
+          ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
+          : "border-white/10 bg-black/20 text-foreground/70"
       )}
     >
       <span className={cn("inline-block h-1.5 w-1.5 rounded-full", on ? "bg-[color:var(--accent)]" : "bg-white/25")} />
       <span className="text-[10px] tracking-wide">{on ? "CONFIRMED" : "—"}</span>
+    </div>
+  );
+}
+
+function HistoricalBadge({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: "neutral" | "good" | "warn";
+}) {
+  const cls =
+    tone === "good"
+      ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
+      : tone === "warn"
+      ? "border-amber-400/25 bg-amber-400/10 text-amber-200"
+      : "border-white/10 bg-black/20 text-foreground/70";
+
+  return (
+    <div className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs", cls)}>
+      <span className="text-[10px] tracking-wide">HIST</span>
+      <span className="tabular-nums font-semibold">{label}</span>
     </div>
   );
 }
@@ -332,7 +367,11 @@ function Pill({
       ? "border-white/10 bg-white/5 text-foreground/75"
       : "border-white/10 bg-black/20 text-foreground/70";
 
-  return <span className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-0.5 text-xs", cls)}>{children}</span>;
+  return (
+    <span className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-0.5 text-xs", cls)}>
+      {children}
+    </span>
+  );
 }
 
 function ScoreLine({
@@ -445,7 +484,15 @@ function derivePhaseAndLive(g: any): { phase: "pregame" | "live" | "final" | "un
   const phaseLiveWords = new Set(["live", "inprogress", "in_progress", "in-game", "ingame", "playing"]);
   const looksLive = phaseLiveWords.has(raw) || ((period ?? 0) > 0 && !isFinal);
 
-  const phase: "pregame" | "live" | "final" | "unknown" = isFinal ? "final" : isPregame ? "pregame" : looksLive ? "live" : raw ? "unknown" : "unknown";
+  const phase: "pregame" | "live" | "final" | "unknown" = isFinal
+    ? "final"
+    : isPregame
+    ? "pregame"
+    : looksLive
+    ? "live"
+    : raw
+    ? "unknown"
+    : "unknown";
   const isLive = phase === "live" && (period ?? 0) > 0;
 
   return { phase, isLive };
@@ -459,6 +506,42 @@ function inSignalWindow(period: number | null, secondsRemaining: number | null):
   if (period === 3) return secondsRemaining <= 540 && secondsRemaining >= 240;
   return false;
 }
+
+function inferDogSideFromMoneyline(mlHome: number | null, mlAway: number | null): "home" | "away" | null {
+  if (mlHome == null && mlAway == null) return null;
+  if (mlHome != null && mlAway == null) return "home";
+  if (mlAway != null && mlHome == null) return "away";
+
+  const h = mlHome as number;
+  const a = mlAway as number;
+
+  if (h >= 0 && a < 0) return "home";
+  if (a >= 0 && h < 0) return "away";
+
+  return h >= a ? "home" : "away";
+}
+
+function dogMoneyline(mlHome: number | null, mlAway: number | null): number | null {
+  const side = inferDogSideFromMoneyline(mlHome, mlAway);
+  if (!side) return null;
+  return side === "home" ? mlHome : mlAway;
+}
+
+function formatMl(x: number | null): string {
+  if (x == null || !Number.isFinite(x)) return "—";
+  const v = Math.trunc(x);
+  if (v > 0) return `+${v}`;
+  if (v < 0) return `${v}`;
+  return "0";
+}
+
+type HistoricalResp = {
+  ok: boolean;
+  n: number;
+  p_dog_cover: number | null;
+  baseline_n?: number;
+  baseline_p_dog_cover?: number | null;
+};
 
 type Row = {
   key: string;
@@ -490,6 +573,16 @@ type Row = {
 
   confluence: number | null;
   confirmed: boolean;
+
+  // moneyline + derived for historical requests
+  liveHomeMl: number | null;
+  liveAwayMl: number | null;
+  dogMl: number | null;
+  dogSide: "home" | "away" | null;
+  absMove: number | null;
+
+  // display
+  mlText: string;
 };
 
 export default function NbaClient() {
@@ -509,6 +602,10 @@ export default function NbaClient() {
 
   // cache last readings per game to confirm persistence across refreshes
   const readingsRef = useRef<Map<string, Array<{ t: number; moveGapPts: number; absZ: number }>>>(new Map());
+
+  // historical cache
+  const histCacheRef = useRef<Map<string, { at: number; data: HistoricalResp }>>(new Map());
+  const [histTick, setHistTick] = useState(0);
 
   useEffect(() => {
     const t = setInterval(() => setNowTick(Date.now()), 60 * 1000);
@@ -707,21 +804,36 @@ export default function NbaClient() {
         const aligned = so !== 0 && so === sm && so === sr;
 
         // "still room": market moved your way, but not so far that it fully erased your pregame edge
-        // (simple: raw move magnitude < 1.2x your edge magnitude)
         const stillRoom = Math.abs(rawMove) < Math.abs(orenEdgePts) * 1.2;
 
         // persistence: previous reading exists, at least 60s older, same sign, still z>=1.0
         const history = readingsRef.current.get(String(g.gameId ?? `${awayTeam}-${homeTeam}`)) ?? [];
         const prev = history.length > 0 ? history[history.length - 1] : null;
 
-        const persists =
-          !!prev &&
-          now - prev.t >= 60_000 &&
-          sign(prev.moveGapPts) === sign(moveGapPts) &&
-          prev.absZ >= 1.0;
+        const persists = !!prev && now - prev.t >= 60_000 && sign(prev.moveGapPts) === sign(moveGapPts) && prev.absZ >= 1.0;
 
         confirmed = aligned && stillRoom && persists;
       }
+
+      // moneyline fields (future-ready; will be null until live-games includes them)
+      const liveHomeMl =
+        safeNum(g?.liveHomeMoneyline) ??
+        safeNum(g?.live_home_moneyline) ??
+        safeNum(g?.liveHomeMl) ??
+        safeNum(g?.market?.liveHomeMoneyline) ??
+        null;
+
+      const liveAwayMl =
+        safeNum(g?.liveAwayMoneyline) ??
+        safeNum(g?.live_away_moneyline) ??
+        safeNum(g?.liveAwayMl) ??
+        safeNum(g?.market?.liveAwayMoneyline) ??
+        null;
+
+      const dSide = inferDogSideFromMoneyline(liveHomeMl, liveAwayMl);
+      const dMl = dogMoneyline(liveHomeMl, liveAwayMl);
+
+      const absMove = rawMove == null ? null : Math.abs(rawMove);
 
       return {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
@@ -753,6 +865,14 @@ export default function NbaClient() {
 
         confluence,
         confirmed,
+
+        liveHomeMl,
+        liveAwayMl,
+        dogMl: dMl,
+        dogSide: dSide,
+        absMove,
+
+        mlText: dMl == null ? "—" : `Dog ML ${formatMl(dMl)}`,
       };
     });
 
@@ -769,10 +889,8 @@ export default function NbaClient() {
       const rb = phaseRank(b);
       if (ra !== rb) return ra - rb;
 
-      // confirmed at top
       if (a.confirmed !== b.confirmed) return a.confirmed ? -1 : 1;
 
-      // then higher confluence
       const ac = a.confluence ?? -1;
       const bc = b.confluence ?? -1;
       if (bc !== ac) return bc - ac;
@@ -794,7 +912,6 @@ export default function NbaClient() {
       const key = r.key;
       const arr = readingsRef.current.get(key) ?? [];
       arr.push({ t: now, moveGapPts: r.moveGapPts, absZ: r.absZ });
-      // keep last 3
       while (arr.length > 3) arr.shift();
       readingsRef.current.set(key, arr);
     }
@@ -807,6 +924,137 @@ export default function NbaClient() {
     if (orenStatus === "missing") return "Oren: Missing";
     return "Oren: Ready";
   }, [orenStatus]);
+
+  function histKeyForRow(r: Row) {
+    // Only compute keys when required fields exist.
+    if (!r.isLive) return null;
+    if (r.period == null || r.secondsRemaining == null) return null;
+    if (r.absMove == null || r.dogMl == null) return null;
+
+    // TS-safe narrowing for template usage:
+    const absMove = r.absMove;
+    const dogMl = r.dogMl;
+
+    return `${r.key}|p${r.period}|s${r.secondsRemaining}|m${absMove.toFixed(2)}|ml${Math.round(dogMl)}`;
+  }
+
+  function getCachedHistorical(k: string) {
+    const hit = histCacheRef.current.get(k);
+    if (!hit) return null;
+    // 10 min client cache: stable enough and avoids hammering
+    if (Date.now() - hit.at > 10 * 60_000) return null;
+    return hit.data;
+  }
+
+  // Pull Historical for only the best candidates (live + signal window + has ML + has close/live)
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const candidates = rows
+        .filter((r) => {
+          if (!r.isLive) return false;
+          if (!inSignalWindow(r.period, r.secondsRemaining)) return false;
+          if (r.absMove == null || r.dogMl == null) return false;
+          // only when we can actually compute absMove from live/close
+          return true;
+        })
+        .slice(0, 8);
+
+      const tasks: Array<Promise<void>> = [];
+
+      for (const r of candidates) {
+        const k = histKeyForRow(r);
+        if (!k) continue;
+        if (getCachedHistorical(k)) continue;
+
+        tasks.push(
+          (async () => {
+            try {
+              if (r.period == null || r.secondsRemaining == null || r.absMove == null || r.dogMl == null) return;
+
+              // TS-safe locals (fixes your exact error class)
+              const absMove = r.absMove;
+              const dogMl = r.dogMl;
+
+              const qs = new URLSearchParams();
+              qs.set("season", "2025-2026");
+              qs.set("period", String(r.period));
+              qs.set("secondsRemaining", String(r.secondsRemaining));
+              qs.set("absMove", String(absMove));
+              qs.set("liveMl", String(Math.round(dogMl)));
+
+              const res = await fetch(`/api/labs/nba/historical?${qs.toString()}`, { cache: "no-store" });
+              const ct = res.headers.get("content-type") || "";
+              if (!ct.includes("application/json")) return;
+
+              const json = (await res.json().catch(() => null)) as HistoricalResp | null;
+              if (!json || typeof json !== "object" || !("ok" in json)) return;
+
+              histCacheRef.current.set(k, { at: Date.now(), data: json });
+              if (!cancelled) setHistTick((x) => x + 1);
+            } catch {
+              // silent: no badge
+            }
+          })()
+        );
+      }
+
+      if (tasks.length > 0) await Promise.all(tasks);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rows]);
+
+  const HIST_MIN_N = 150;
+  const HIST_MIN_DELTA = 0.05; // vs baseline
+  const HIST_MIN_PCT = 0.55; // “meaningfully different” guard
+
+  function renderHistoricalForRow(r: Row) {
+    const k = histKeyForRow(r);
+    if (!k) return null;
+
+    const data = getCachedHistorical(k);
+    if (!data || !data.ok) return null;
+
+    const n = typeof data.n === "number" ? data.n : 0;
+    const p = typeof data.p_dog_cover === "number" ? data.p_dog_cover : null;
+
+    const baseP =
+      typeof data.baseline_p_dog_cover === "number" ? data.baseline_p_dog_cover : null;
+
+    if (n < HIST_MIN_N) return null;
+    if (p == null) return null;
+
+    // must be meaningfully different from baseline (if available)
+    if (baseP != null) {
+      if (Math.abs(p - baseP) < HIST_MIN_DELTA) return null;
+    } else {
+      // if baseline missing, require a stronger absolute level
+      if (p < HIST_MIN_PCT) return null;
+    }
+
+    const pct = Math.round(p * 100);
+    const label = `${pct}% (n=${n})`;
+
+    const tone: "neutral" | "good" | "warn" = p >= 0.6 ? "good" : p >= 0.55 ? "warn" : "neutral";
+
+    return (
+      <div className="flex items-center gap-2">
+        <HistoricalBadge label={label} tone={tone} />
+        <Tooltip label="Historical">
+          <div className="cursor-help">
+            <HistoricalTip />
+          </div>
+        </Tooltip>
+      </div>
+    );
+  }
+
+  // histTick is only to force re-render when cache fills; unused directly is fine.
+  void histTick;
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -901,6 +1149,14 @@ export default function NbaClient() {
                     </div>
                   </Tooltip>
                 </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-foreground/60">Historical</span>
+                  <Tooltip label="Historical">
+                    <div className="cursor-help">
+                      <HistoricalTip />
+                    </div>
+                  </Tooltip>
+                </div>
               </div>
 
               <div className="grid gap-4">
@@ -937,6 +1193,16 @@ export default function NbaClient() {
                             </Pill>
                           </div>
                           <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
+
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {r.isLive ? (
+                              <Pill tone="neutral">
+                                <span className="text-foreground/60">{r.mlText}</span>
+                              </Pill>
+                            ) : null}
+
+                            {renderHistoricalForRow(r)}
+                          </div>
                         </div>
 
                         <div className="flex flex-col items-end gap-2">
@@ -960,12 +1226,7 @@ export default function NbaClient() {
                         </div>
                       </div>
 
-                      <ScoreLine
-                        awayTeam={r.awayTeam}
-                        homeTeam={r.homeTeam}
-                        awayScore={r.awayScore}
-                        homeScore={r.homeScore}
-                      />
+                      <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
 
                       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-4">
                         <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
