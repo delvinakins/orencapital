@@ -60,6 +60,12 @@ function safeInt(x: any): number | null {
   return Math.trunc(v);
 }
 
+function safeNum(x: any): number | null {
+  const v = typeof x === "number" ? x : x == null ? null : Number(x);
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  return v;
+}
+
 function getLiveScore(g: any): { away: number | null; home: number | null } {
   const away =
     safeInt(g?.awayScore) ??
@@ -261,9 +267,7 @@ function ConfluenceBadge({ score }: { score: number | null }) {
 }
 
 function OrenEdgeBar({ v }: { v: number | null }) {
-  if (v == null || !Number.isFinite(v)) {
-    return <div className="h-2 w-full rounded-full bg-white/10" />;
-  }
+  if (v == null || !Number.isFinite(v)) return <div className="h-2 w-full rounded-full bg-white/10" />;
   const x = clamp(v, -3, 3);
   const pct = ((x + 3) / 6) * 100;
   const leftPct = Math.min(pct, 50);
@@ -273,9 +277,15 @@ function OrenEdgeBar({ v }: { v: number | null }) {
     <div className="relative h-2 w-full rounded-full bg-white/10 overflow-hidden">
       <div className="absolute inset-y-0 left-1/2 w-px bg-white/25" />
       {x >= 0 ? (
-        <div className="absolute inset-y-0 bg-[color:var(--accent)]/65" style={{ left: "50%", width: `${rightPct - 50}%` }} />
+        <div
+          className="absolute inset-y-0 bg-[color:var(--accent)]/65"
+          style={{ left: "50%", width: `${rightPct - 50}%` }}
+        />
       ) : (
-        <div className="absolute inset-y-0 bg-amber-400/60" style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }} />
+        <div
+          className="absolute inset-y-0 bg-amber-400/60"
+          style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }}
+        />
       )}
     </div>
   );
@@ -295,11 +305,7 @@ function Pill({
       ? "border-white/10 bg-white/5 text-foreground/75"
       : "border-white/10 bg-black/20 text-foreground/70";
 
-  return (
-    <span className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-0.5 text-xs", cls)}>
-      {children}
-    </span>
-  );
+  return <span className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-0.5 text-xs", cls)}>{children}</span>;
 }
 
 function ScoreLine({
@@ -402,6 +408,24 @@ function ScoreLine({
   );
 }
 
+function derivePhaseAndLive(g: any): { phase: "pregame" | "live" | "final" | "unknown"; isLive: boolean } {
+  const raw = String(g?.phase ?? "").toLowerCase().trim();
+  const period = safeInt(g?.period);
+  const sec = safeInt(g?.secondsRemaining);
+
+  const isFinal = raw === "final" || raw === "ended" || raw === "complete";
+  const isPregame = raw === "pregame" || raw === "pre" || raw === "not_started" || raw === "scheduled";
+
+  // Treat any in-progress-ish values as live
+  const phaseLiveWords = new Set(["live", "inprogress", "in_progress", "in-game", "ingame", "playing"]);
+  const looksLive = phaseLiveWords.has(raw) || ((period ?? 0) > 0 && !isFinal);
+
+  const phase: "pregame" | "live" | "final" | "unknown" = isFinal ? "final" : isPregame ? "pregame" : looksLive ? "live" : raw ? "unknown" : "unknown";
+  const isLive = phase === "live" && (period ?? 0) > 0; // require a period > 0 to avoid false "live"
+  // If some feeds mark live but omit secondsRemaining temporarily, still allow live if period>0.
+  return { phase, isLive };
+}
+
 type Row = {
   key: string;
 
@@ -421,6 +445,7 @@ type Row = {
 
   moveGapPts: number | null;
   moveGapText: string;
+  moveGapMode: "model" | "raw" | "none";
 
   orenEdgePts: number | null;
   orenEdgeText: string;
@@ -448,7 +473,6 @@ export default function NbaClient() {
     return () => clearInterval(t);
   }, []);
 
-  // display gate only
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
@@ -558,8 +582,7 @@ export default function NbaClient() {
 
   const rows = useMemo<Row[]>(() => {
     const computed = games.map((g: any) => {
-      const phase = String(g?.phase ?? "unknown") as Row["phase"];
-      const isLive = phase === "live";
+      const { phase, isLive } = derivePhaseAndLive(g);
 
       const awayTeam = String(g?.awayTeam ?? "—");
       const homeTeam = String(g?.homeTeam ?? "—");
@@ -587,11 +610,26 @@ export default function NbaClient() {
 
       const closeNum = typeof closeRounded === "number" ? closeRounded : null;
 
-      // move gap: live only
+      // ✅ Move gap: try model first; if model can't compute (missing bucket / NaN), fall back to raw move (live-close)
       let moveGapPts: number | null = null;
+      let moveGapMode: Row["moveGapMode"] = "none";
+
       if (isLive) {
         const result = computeDeviation(g, { spreadIndex });
-        moveGapPts = result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : null;
+        const modelGap = result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : null;
+
+        if (modelGap != null) {
+          moveGapPts = modelGap;
+          moveGapMode = "model";
+        } else {
+          // fallback: raw move (still useful for confluence directionality)
+          const liveNum = safeNum(g?.liveSpreadHome);
+          const closeNum2 = safeNum(g?.closingSpreadHome);
+          if (liveNum != null && closeNum2 != null) {
+            moveGapPts = liveNum - closeNum2;
+            moveGapMode = "raw";
+          }
+        }
       }
 
       const orenEdgePts = computeOrenEdgePts({
@@ -623,6 +661,7 @@ export default function NbaClient() {
 
         moveGapPts,
         moveGapText: moveGapPts == null ? "—" : formatSigned(moveGapPts, 1),
+        moveGapMode,
 
         orenEdgePts,
         orenEdgeText: orenEdgePts == null ? "—" : formatSigned(orenEdgePts, 1),
@@ -695,8 +734,12 @@ export default function NbaClient() {
             <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">NBA Deviation Watchlist</h1>
 
             <p className="mt-4 max-w-3xl text-lg text-foreground/75">
-              Confluence is the main scan metric: when Oren edge and move gap agree on direction and both are meaningful.
+              Confluence lights up when Oren edge and move gap agree on direction and both are meaningful.
             </p>
+
+            <div className="mt-2 text-xs text-foreground/55">
+              {headerDate} • Confluence requires live play + Oren edge + move gap (model or fallback raw move).
+            </div>
           </div>
         </div>
 
@@ -812,8 +855,14 @@ export default function NbaClient() {
                               </div>
                             </Tooltip>
                           </div>
-                          <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">
-                            {r.moveGapText}
+                          <div className="mt-1 flex items-baseline justify-between gap-3">
+                            <div className="tabular-nums text-xl font-semibold text-foreground">{r.moveGapText}</div>
+                            {r.isLive && r.moveGapMode === "raw" ? (
+                              <span className="text-[10px] text-foreground/50">raw</span>
+                            ) : null}
+                            {r.isLive && r.moveGapMode === "model" ? (
+                              <span className="text-[10px] text-foreground/50">model</span>
+                            ) : null}
                           </div>
                         </div>
 
@@ -851,10 +900,6 @@ export default function NbaClient() {
             </div>
           )}
         </section>
-
-        <div className="text-xs text-foreground/55">
-          Note: Confluence requires live play + Oren edge + move gap. Pregame games will show Confluence as —.
-        </div>
       </div>
     </main>
   );
