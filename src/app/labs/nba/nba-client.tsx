@@ -125,10 +125,10 @@ function MoveGapTip() {
     <div className="max-w-sm space-y-2">
       <div className="font-semibold">Move gap</div>
       <div className="text-foreground/70">
-        Helps you spot games where the market has shifted more than usual for this point in the game.
+        Only shown during live play. It flags games where the market has moved more than usual for this moment in the game.
       </div>
       <div className="text-foreground/70">
-        It’s built for scanning—especially late 1Q and mid 2Q/3Q—so you can decide what deserves a closer look.
+        Useful for scanning late 1Q and mid 2Q/3Q—so you can quickly decide what deserves a closer look.
       </div>
       <div className="text-foreground/70">Not a bet signal. No recommendations—just a deviation watchlist.</div>
     </div>
@@ -139,11 +139,11 @@ function OrenEdgeTip() {
   return (
     <div className="max-w-sm space-y-2">
       <div className="font-semibold">Oren edge</div>
-      <div className="text-foreground/70">A private “prior” versus the consensus closing line.</div>
+      <div className="text-foreground/70">A private pregame lean versus the consensus closing line.</div>
       <div className="text-foreground/70">
-        Positive means the home team looks undervalued vs close. Negative means the home team looks overvalued vs close.
+        Right (green) suggests the home side looks undervalued vs close. Left (amber) suggests it looks overvalued vs close.
       </div>
-      <div className="text-foreground/70">Not a bet signal—use as context alongside live market behavior.</div>
+      <div className="text-foreground/70">Not a bet signal—use as context alongside market movement.</div>
     </div>
   );
 }
@@ -153,17 +153,9 @@ function CurrentLineTip() {
     <div className="max-w-sm space-y-2">
       <div className="font-semibold">Current line</div>
       <div className="text-foreground/70">
-        The latest market spread right now. Before tip, it’s a pregame line. During games, it’s the live line.
+        The latest spread right now. Before tip, it’s a pregame number. During games, it’s the live line.
       </div>
     </div>
-  );
-}
-
-function InfoDot() {
-  return (
-    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/10 bg-black/20 text-xs text-foreground/70">
-      i
-    </span>
   );
 }
 
@@ -173,10 +165,10 @@ type Row = {
   key: string;
 
   abs: number;
-  moveGapPts: number;
+  moveGapPts: number | null;
 
-  observedMove: number;
-  expectedMove: number;
+  observedMove: number | null;
+  expectedMove: number | null;
 
   awayTeam: string;
   homeTeam: string;
@@ -231,53 +223,6 @@ function formatClockFromGame(g: any): { clock: string; phase: Row["phase"]; isLi
   return { clock: `P${period} • ${mm}:${ss}`, phase, isLive };
 }
 
-/**
- * Logos via ESPN CDN.
- */
-const NBA_ABBR: Record<string, string> = {
-  "atlanta hawks": "ATL",
-  "boston celtics": "BOS",
-  "brooklyn nets": "BKN",
-  "charlotte hornets": "CHA",
-  "chicago bulls": "CHI",
-  "cleveland cavaliers": "CLE",
-  "dallas mavericks": "DAL",
-  "denver nuggets": "DEN",
-  "detroit pistons": "DET",
-  "golden state warriors": "GSW",
-  "houston rockets": "HOU",
-  "indiana pacers": "IND",
-  "los angeles clippers": "LAC",
-  "los angeles lakers": "LAL",
-  "memphis grizzlies": "MEM",
-  "miami heat": "MIA",
-  "milwaukee bucks": "MIL",
-  "minnesota timberwolves": "MIN",
-  "new orleans pelicans": "NOP",
-  "new york knicks": "NYK",
-  "oklahoma city thunder": "OKC",
-  "orlando magic": "ORL",
-  "philadelphia 76ers": "PHI",
-  "phoenix suns": "PHX",
-  "portland trail blazers": "POR",
-  "sacramento kings": "SAC",
-  "san antonio spurs": "SAS",
-  "toronto raptors": "TOR",
-  "utah jazz": "UTA",
-  "washington wizards": "WAS",
-};
-
-function teamAbbr(name: string): string {
-  const k = String(name ?? "").toLowerCase().trim();
-  return NBA_ABBR[k] ?? name.slice(0, 3).toUpperCase();
-}
-
-function teamLogoUrl(name: string): string | null {
-  const abbr = teamAbbr(name).toLowerCase();
-  if (!abbr || abbr.length < 2) return null;
-  return `https://a.espncdn.com/i/teamlogos/nba/500/${abbr}.png`;
-}
-
 function normalizeTeam(s: any): string {
   return String(s ?? "").trim().toLowerCase();
 }
@@ -309,6 +254,34 @@ function computeOrenEdgePts(args: {
   return impliedSpreadHome - (closingSpreadHome as number);
 }
 
+function OrenEdgeBar({ v }: { v: number | null }) {
+  // visualize -3..+3
+  if (v == null || !Number.isFinite(v)) {
+    return <div className="h-2 w-full rounded-full bg-white/10" />;
+  }
+  const x = clamp(v, -3, 3);
+  const pct = ((x + 3) / 6) * 100; // 0..100
+  const leftPct = Math.min(pct, 50);
+  const rightPct = Math.max(pct, 50);
+
+  return (
+    <div className="relative h-2 w-full rounded-full bg-white/10 overflow-hidden">
+      <div className="absolute inset-y-0 left-1/2 w-px bg-white/25" />
+      {x >= 0 ? (
+        <div
+          className="absolute inset-y-0 bg-[color:var(--accent)]/65"
+          style={{ left: "50%", width: `${rightPct - 50}%` }}
+        />
+      ) : (
+        <div
+          className="absolute inset-y-0 bg-amber-400/60"
+          style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }}
+        />
+      )}
+    </div>
+  );
+}
+
 function Pill({
   children,
   tone = "neutral",
@@ -321,8 +294,6 @@ function Pill({
       ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
       : tone === "final"
       ? "border-white/10 bg-white/5 text-foreground/75"
-      : tone === "pregame"
-      ? "border-white/10 bg-black/20 text-foreground/70"
       : "border-white/10 bg-black/20 text-foreground/70";
 
   return (
@@ -357,6 +328,51 @@ function ScoreLine({
 
   const logoClass = "h-4 w-4 rounded-sm bg-white/5 ring-1 ring-white/10 object-contain flex-none";
 
+  // ESPN CDN (tiny icons)
+  const NBA_ABBR: Record<string, string> = {
+    "atlanta hawks": "ATL",
+    "boston celtics": "BOS",
+    "brooklyn nets": "BKN",
+    "charlotte hornets": "CHA",
+    "chicago bulls": "CHI",
+    "cleveland cavaliers": "CLE",
+    "dallas mavericks": "DAL",
+    "denver nuggets": "DEN",
+    "detroit pistons": "DET",
+    "golden state warriors": "GSW",
+    "houston rockets": "HOU",
+    "indiana pacers": "IND",
+    "los angeles clippers": "LAC",
+    "los angeles lakers": "LAL",
+    "memphis grizzlies": "MEM",
+    "miami heat": "MIA",
+    "milwaukee bucks": "MIL",
+    "minnesota timberwolves": "MIN",
+    "new orleans pelicans": "NOP",
+    "new york knicks": "NYK",
+    "oklahoma city thunder": "OKC",
+    "orlando magic": "ORL",
+    "philadelphia 76ers": "PHI",
+    "phoenix suns": "PHX",
+    "portland trail blazers": "POR",
+    "sacramento kings": "SAC",
+    "san antonio spurs": "SAS",
+    "toronto raptors": "TOR",
+    "utah jazz": "UTA",
+    "washington wizards": "WAS",
+  };
+
+  function teamAbbr(name: string): string {
+    const k = String(name ?? "").toLowerCase().trim();
+    return NBA_ABBR[k] ?? name.slice(0, 3).toUpperCase();
+  }
+
+  function teamLogoUrl(name: string): string | null {
+    const abbr = teamAbbr(name).toLowerCase();
+    if (!abbr || abbr.length < 2) return null;
+    return `https://a.espncdn.com/i/teamlogos/nba/500/${abbr}.png`;
+  }
+
   const TeamLeft = ({ name }: { name: string }) => {
     const abbr = teamAbbr(name);
     const logo = teamLogoUrl(name);
@@ -385,280 +401,6 @@ function ScoreLine({
         <div className={scoreClass(homeWin)}>{homeScore}</div>
       </div>
     </div>
-  );
-}
-
-/** -------- Treemap (squarify) layout (no deps) -------- */
-type Rect = { x: number; y: number; w: number; h: number };
-type TreeItem = { id: string; value: number; row: Row };
-type Placed = { item: TreeItem; rect: Rect };
-
-function sum(items: TreeItem[]) {
-  return items.reduce((a, b) => a + b.value, 0);
-}
-function worstAspect(row: TreeItem[], side: number) {
-  if (row.length === 0) return Infinity;
-  const s = sum(row);
-  if (s <= 0) return Infinity;
-
-  let minV = Infinity;
-  let maxV = 0;
-  for (const it of row) {
-    minV = Math.min(minV, it.value);
-    maxV = Math.max(maxV, it.value);
-  }
-  if (!Number.isFinite(minV) || minV <= 0) return Infinity;
-
-  const s2 = s * s;
-  const side2 = side * side;
-  return Math.max((side2 * maxV) / s2, s2 / (side2 * minV));
-}
-function layoutRow(row: TreeItem[], rect: Rect): { placed: Placed[]; remaining: Rect } {
-  const placed: Placed[] = [];
-  const s = sum(row);
-
-  if (row.length === 0 || s <= 0 || rect.w <= 0 || rect.h <= 0) {
-    return { placed, remaining: rect };
-  }
-
-  const horizontal = rect.w >= rect.h;
-
-  if (horizontal) {
-    const h = s / rect.w;
-    let x = rect.x;
-
-    for (const it of row) {
-      const w = it.value / h;
-      placed.push({ item: it, rect: { x, y: rect.y, w, h } });
-      x += w;
-    }
-
-    return { placed, remaining: { x: rect.x, y: rect.y + h, w: rect.w, h: rect.h - h } };
-  } else {
-    const w = s / rect.h;
-    let y = rect.y;
-
-    for (const it of row) {
-      const h = it.value / w;
-      placed.push({ item: it, rect: { x: rect.x, y, w, h } });
-      y += h;
-    }
-
-    return { placed, remaining: { x: rect.x + w, y: rect.y, w: rect.w - w, h: rect.h } };
-  }
-}
-function squarify(items: TreeItem[], rect: Rect): Placed[] {
-  const placed: Placed[] = [];
-  const remaining = [...items]
-    .filter((it) => Number.isFinite(it.value) && it.value > 0)
-    .sort((a, b) => b.value - a.value);
-
-  let r: Rect = { ...rect };
-  let row: TreeItem[] = [];
-
-  while (remaining.length > 0) {
-    const next = remaining[0];
-    const side = Math.min(r.w, r.h);
-
-    if (row.length === 0) {
-      row.push(next);
-      remaining.shift();
-      continue;
-    }
-
-    const currentWorst = worstAspect(row, side);
-    const nextWorst = worstAspect([...row, next], side);
-
-    if (nextWorst <= currentWorst) {
-      row.push(next);
-      remaining.shift();
-    } else {
-      const res = layoutRow(row, r);
-      placed.push(...res.placed);
-      r = res.remaining;
-      row = [];
-      if (r.w <= 0 || r.h <= 0) break;
-    }
-  }
-
-  if (row.length > 0 && r.w > 0 && r.h > 0) {
-    const res = layoutRow(row, r);
-    placed.push(...res.placed);
-  }
-
-  return placed;
-}
-
-function tileIntensity(absZ: number) {
-  return clamp(absZ / 2.2, 0, 1);
-}
-
-function tileBg(tone: Row["tone"], intensity01: number) {
-  const a = clamp(intensity01, 0, 1);
-  if (tone === "accent") return `rgba(43, 203, 119, ${0.08 + 0.20 * a})`;
-  if (tone === "warn") return `rgba(245, 158, 11, ${0.06 + 0.18 * a})`;
-  return `rgba(255, 255, 255, ${0.02 + 0.06 * a})`;
-}
-
-function tileBorder(tone: Row["tone"], intensity01: number) {
-  const a = clamp(intensity01, 0, 1);
-  if (tone === "accent") return `rgba(43,203,119, ${0.12 + 0.22 * a})`;
-  if (tone === "warn") return `rgba(245,158,11, ${0.10 + 0.22 * a})`;
-  return `rgba(255,255,255, ${0.08 + 0.12 * a})`;
-}
-
-function MetricLabel({
-  label,
-  tooltip,
-}: {
-  label: string;
-  tooltip: React.ReactNode;
-}) {
-  return (
-    <div className="inline-flex items-center gap-2">
-      <span className="text-[11px] text-foreground/55">{label}</span>
-      <Tooltip label={label}>
-        <span className="cursor-help">
-          <InfoDot />
-        </span>
-      </Tooltip>
-      {/** Tooltip content is passed as children */}
-      <span className="hidden">{tooltip}</span>
-    </div>
-  );
-}
-
-/**
- * IMPORTANT:
- * Your Tooltip component likely expects:
- * <Tooltip label="..."> <Content/> </Tooltip> around the trigger.
- * In slate/tiles we use:
- * <Tooltip label="..."><Content/></Tooltip>
- * and a dedicated trigger next to the label.
- */
-function LabelWithTip({
-  label,
-  tip,
-}: {
-  label: string;
-  tip: React.ReactNode;
-}) {
-  return (
-    <div className="inline-flex items-center gap-2">
-      <span className="text-[11px] text-foreground/55">{label}</span>
-      <Tooltip label={label}>{tip}</Tooltip>
-    </div>
-  );
-}
-
-function Tile({
-  r,
-  onClick,
-  compact = false,
-}: {
-  r: Row;
-  onClick: () => void;
-  compact?: boolean;
-}) {
-  const intensity = tileIntensity(r.absZ);
-  const bg = tileBg(r.tone, intensity);
-  const bd = tileBorder(r.tone, intensity);
-
-  const ore = r.orenEdgePts;
-  const oreClass =
-    ore == null
-      ? "text-foreground/55"
-      : ore >= 1.5
-      ? "text-[color:var(--accent)]"
-      : ore <= -1.5
-      ? "text-amber-200"
-      : "text-foreground/80";
-
-  const moveClass = textToneClass(r.tone);
-
-  const phaseTone = r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame";
-  const phaseLabel = r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE";
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "group relative w-full overflow-hidden rounded-2xl border text-left transition",
-        "hover:brightness-[1.02] active:brightness-[0.98]"
-      )}
-      style={{
-        background: bg,
-        borderColor: bd,
-        boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
-      }}
-    >
-      <div className="pointer-events-none absolute inset-0 opacity-0 transition-opacity group-hover:opacity-100">
-        <div className="absolute -inset-10 rounded-full bg-white/5 blur-2xl" />
-      </div>
-
-      <div className={cn("relative p-3", !compact && "p-4")}>
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className={cn("truncate font-semibold text-foreground", compact ? "text-sm" : "text-base")}>
-              {r.matchup}
-            </div>
-            <div className={cn("mt-1 flex items-center gap-2", compact ? "text-xs" : "text-sm")}>
-              <Pill tone={phaseTone}>
-                {r.isLive ? <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" /> : null}
-                {phaseLabel}
-              </Pill>
-              <span className="text-foreground/70">{r.clock}</span>
-            </div>
-          </div>
-
-          <div className={cn("tabular-nums font-semibold", moveClass, compact ? "text-sm" : "text-base")}>
-            {r.scoreText}
-          </div>
-        </div>
-
-        <div className={cn("mt-3 grid grid-cols-3 gap-2", compact && "mt-2")}>
-          <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-[11px] text-foreground/55">Current</div>
-              <Tooltip label="Current line">
-                <div className="cursor-help">
-                  <CurrentLineTip />
-                </div>
-              </Tooltip>
-            </div>
-            <div className={cn("mt-0.5 tabular-nums font-semibold text-foreground", compact ? "text-sm" : "text-base")}>
-              {r.current}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
-            <div className="text-[11px] text-foreground/55">Close</div>
-            <div className={cn("mt-0.5 tabular-nums font-semibold text-foreground", compact ? "text-sm" : "text-base")}>
-              {r.close}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-[11px] text-foreground/55">Oren</div>
-              <Tooltip label="Oren edge">
-                <div className="cursor-help">
-                  <OrenEdgeTip />
-                </div>
-              </Tooltip>
-            </div>
-            <div className={cn("mt-0.5 tabular-nums font-semibold", oreClass, compact ? "text-sm" : "text-base")}>
-              {r.orenEdgeText}
-            </div>
-          </div>
-        </div>
-
-        <div className={cn("mt-2 text-[11px] text-foreground/45", compact && "hidden")}>
-          Watchlist only — not a bet signal.
-        </div>
-      </div>
-    </button>
   );
 }
 
@@ -718,13 +460,11 @@ function DetailDrawer({
               </Tooltip>
             </div>
             <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.current}</div>
-            <div className="mt-1 text-[11px] text-foreground/45">{r.isLive ? "live line" : "pregame line"}</div>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
             <div className="text-xs text-foreground/55">Close (Home)</div>
             <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.close}</div>
-            <div className="mt-1 text-[11px] text-foreground/45">consensus close</div>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
@@ -737,7 +477,7 @@ function DetailDrawer({
               </Tooltip>
             </div>
             <div className={cn("mt-1 tabular-nums text-xl font-semibold", moveClass)}>{r.scoreText}</div>
-            <div className="mt-1 text-[11px] text-foreground/45">unusual move vs typical game states</div>
+            <div className="mt-1 text-[11px] text-foreground/45">{r.isLive ? "live-only" : "shown during live play"}</div>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
@@ -749,102 +489,90 @@ function DetailDrawer({
                 </div>
               </Tooltip>
             </div>
-            <div className={cn("mt-1 tabular-nums text-xl font-semibold", oreClass)}>{r.orenEdgeText}</div>
-            <div className="mt-1 text-[11px] text-foreground/45">private prior vs close</div>
+            <div className="mt-2">
+              <OrenEdgeBar v={r.orenEdgePts} />
+            </div>
+            <div className={cn("mt-2 tabular-nums text-sm font-semibold", oreClass)}>{r.orenEdgeText}</div>
           </div>
         </div>
 
-        <div className="mt-4 text-sm text-foreground/60">
-          This is a watchlist. It does not recommend a wager or predict outcomes.
-        </div>
+        <div className="mt-4 text-sm text-foreground/60">Watchlist only. Not a bet signal.</div>
       </div>
     </div>
   );
 }
 
-function DesktopCard({ r }: { r: Row }) {
-  const moveClass = textToneClass(r.tone);
-  const ore = r.orenEdgePts;
-  const oreClass =
-    ore == null
-      ? "text-foreground/55"
-      : ore >= 1.5
-      ? "text-[color:var(--accent)]"
-      : ore <= -1.5
-      ? "text-amber-200"
-      : "text-foreground/80";
+function HeatTile({ r, onClick }: { r: Row; onClick: () => void }) {
+  const intensity = clamp(Math.abs(r.absZ) / 2.2, 0, 1);
+  const bg =
+    r.tone === "accent"
+      ? `rgba(43, 203, 119, ${0.07 + 0.18 * intensity})`
+      : r.tone === "warn"
+      ? `rgba(245, 158, 11, ${0.06 + 0.18 * intensity})`
+      : `rgba(255, 255, 255, ${0.02 + 0.06 * intensity})`;
 
-  const phaseTone = r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame";
-  const phaseLabel = r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE";
+  const bd =
+    r.tone === "accent"
+      ? `rgba(43,203,119, ${0.10 + 0.25 * intensity})`
+      : r.tone === "warn"
+      ? `rgba(245,158,11, ${0.10 + 0.25 * intensity})`
+      : `rgba(255,255,255, ${0.08 + 0.12 * intensity})`;
+
+  const moveClass = textToneClass(r.tone);
 
   return (
-    <div
-      className={cn(
-        "rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5",
-        r.isLive && "bg-[color:var(--accent)]/5"
-      )}
-      style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.18)" } : undefined}
+    <button
+      type="button"
+      onClick={onClick}
+      className="group w-full rounded-2xl border text-left transition hover:brightness-[1.02] active:brightness-[0.98]"
+      style={{ background: bg, borderColor: bd }}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <div className="truncate text-lg font-semibold text-foreground">{r.matchup}</div>
-            <Pill tone={phaseTone}>
-              {r.isLive ? <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" /> : null}
-              {phaseLabel}
-            </Pill>
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-foreground">{r.matchup}</div>
+            <div className="mt-1 text-xs text-foreground/70">{r.clock}</div>
           </div>
-          <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
+
+          <div className={cn("tabular-nums text-sm font-semibold", moveClass)}>{r.scoreText}</div>
         </div>
 
-        <div className={cn("inline-flex items-center gap-2 tabular-nums text-lg font-semibold", moveClass)}>
-          <span>{r.scoreText}</span>
-          <Tooltip label="Move gap">
-            <div className="cursor-help">
-              <MoveGapTip />
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] text-foreground/55">Current</div>
+              <Tooltip label="Current line">
+                <div className="cursor-help">
+                  <CurrentLineTip />
+                </div>
+              </Tooltip>
             </div>
-          </Tooltip>
-        </div>
-      </div>
-
-      <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
-
-      <div className="mt-4 grid grid-cols-3 gap-3">
-        <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-xs text-foreground/55">Current (Home)</div>
-            <Tooltip label="Current line">
-              <div className="cursor-help">
-                <CurrentLineTip />
-              </div>
-            </Tooltip>
+            <div className="mt-0.5 tabular-nums text-sm font-semibold text-foreground">{r.current}</div>
           </div>
-          <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.current}</div>
-          <div className="mt-1 text-[11px] text-foreground/45">{r.isLive ? "live line" : "pregame line"}</div>
-        </div>
 
-        <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-          <div className="text-xs text-foreground/55">Close (Home)</div>
-          <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.close}</div>
-          <div className="mt-1 text-[11px] text-foreground/45">consensus close</div>
-        </div>
-
-        <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-xs text-foreground/55">Oren edge</div>
-            <Tooltip label="Oren edge">
-              <div className="cursor-help">
-                <OrenEdgeTip />
-              </div>
-            </Tooltip>
+          <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
+            <div className="text-[11px] text-foreground/55">Close</div>
+            <div className="mt-0.5 tabular-nums text-sm font-semibold text-foreground">{r.close}</div>
           </div>
-          <div className={cn("mt-1 tabular-nums text-xl font-semibold", oreClass)}>{r.orenEdgeText}</div>
-          <div className="mt-1 text-[11px] text-foreground/45">private prior vs close</div>
-        </div>
-      </div>
 
-      <div className="mt-3 text-xs text-foreground/55">Lab preview. Review required. Not a bet signal.</div>
-    </div>
+          <div className="rounded-xl border border-white/10 bg-black/10 px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] text-foreground/55">Oren</div>
+              <Tooltip label="Oren edge">
+                <div className="cursor-help">
+                  <OrenEdgeTip />
+                </div>
+              </Tooltip>
+            </div>
+            <div className="mt-1">
+              <OrenEdgeBar v={r.orenEdgePts} />
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 text-[11px] text-foreground/45">Watchlist only — not a bet signal.</div>
+      </div>
+    </button>
   );
 }
 
@@ -983,20 +711,8 @@ export default function NbaClient() {
     const computed = games.map((g: any) => {
       const { clock, phase, isLive } = formatClockFromGame(g);
 
-      const result = computeDeviation(g, { spreadIndex });
-
-      const abs = result && Number.isFinite(result.absDislocationPts) ? result.absDislocationPts : 0;
-      const moveGapPts = result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : 0;
-
-      const observedMove = result && Number.isFinite(result.observedMove) ? result.observedMove : 0;
-      const expectedMove = result && Number.isFinite(result.expectedMove) ? result.expectedMove : 0;
-
-      const absZ = result && Number.isFinite(result.absZ) ? result.absZ : 0;
-      const tone = toneFromAbsZ(absZ);
-
       const awayTeam = String(g?.awayTeam ?? "—");
       const homeTeam = String(g?.homeTeam ?? "—");
-
       const s = getLiveScore(g);
 
       const currentRounded = roundToHalf(g?.liveSpreadHome);
@@ -1006,6 +722,24 @@ export default function NbaClient() {
       const closeLabel = after2pm ? formatSpread(closeRounded, 1) : "—";
 
       const closeNum = typeof closeRounded === "number" ? closeRounded : null;
+
+      // ✅ Move gap should be LIVE ONLY (prevents "not calculating" confusion)
+      let moveGapPts: number | null = null;
+      let observedMove: number | null = null;
+      let expectedMove: number | null = null;
+      let absZ = 0;
+
+      if (isLive) {
+        const result = computeDeviation(g, { spreadIndex });
+        if (result) {
+          moveGapPts = Number.isFinite(result.dislocationPts) ? result.dislocationPts : null;
+          observedMove = Number.isFinite(result.observedMove) ? result.observedMove : null;
+          expectedMove = Number.isFinite(result.expectedMove) ? result.expectedMove : null;
+          absZ = Number.isFinite(result.absZ) ? result.absZ : 0;
+        }
+      }
+
+      const tone = toneFromAbsZ(Math.abs(absZ));
 
       const ore = computeOrenEdgePts({
         homeTeam,
@@ -1018,7 +752,7 @@ export default function NbaClient() {
       return {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
 
-        abs,
+        abs: Math.abs(absZ),
         moveGapPts,
 
         observedMove,
@@ -1035,9 +769,9 @@ export default function NbaClient() {
         current: currentLabel,
         close: closeLabel,
 
-        scoreText: formatSigned(moveGapPts, 1),
+        scoreText: moveGapPts == null ? "—" : formatSigned(moveGapPts, 1),
         tone,
-        absZ,
+        absZ: Math.abs(absZ),
 
         phase,
         isLive,
@@ -1060,8 +794,10 @@ export default function NbaClient() {
       const rb = phaseRank(b);
       if (ra !== rb) return ra - rb;
 
-      if (Math.abs(b.absZ) !== Math.abs(a.absZ)) return Math.abs(b.absZ) - Math.abs(a.absZ);
-      if (b.abs !== a.abs) return b.abs - a.abs;
+      // within bucket, prioritize notable live anomalies
+      const az = Math.abs(a.absZ);
+      const bz = Math.abs(b.absZ);
+      if (bz !== az) return bz - az;
 
       return a.matchup.localeCompare(b.matchup);
     });
@@ -1079,44 +815,27 @@ export default function NbaClient() {
 
   const selectedRow = useMemo(() => rows.find((r) => r.key === selectedKey) ?? null, [rows, selectedKey]);
 
-  const heatRows = useMemo(() => rows.filter((r) => r.isLive || Math.abs(r.absZ) >= 0.75), [rows]);
+  // ✅ Heatmap now uses a non-overlapping grid (no absolute tiles)
+  const heatRows = useMemo(() => {
+    // show live first, then strongest absZ
+    const filtered = rows.filter((r) => r.isLive || r.absZ >= 0.75);
+    return filtered;
+  }, [rows]);
 
-  const treemap = useMemo(() => {
-    const W = 1100;
-    const H = 640;
-    const area = W * H;
-
-    const items = heatRows.map<TreeItem>((r) => {
-      const z = clamp(Math.abs(r.absZ), 0, 3.0);
-      const liveBump = r.isLive ? 0.7 : 0;
-      const weight = 1 + (z + liveBump) * 5.0;
-      return { id: r.key, value: weight, row: r };
+  // simple “feature tiles” without overlap
+  const heatLayout = useMemo(() => {
+    const arr = [...heatRows];
+    // already sorted by phaseRank + absZ from rows, but ensure strongest first within view
+    arr.sort((a, b) => {
+      if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
+      return Math.abs(b.absZ) - Math.abs(a.absZ);
     });
 
-    const total = items.reduce((a, b) => a + b.value, 0);
-    if (!Number.isFinite(total) || total <= 0) return [];
+    const top = arr.slice(0, 1);
+    const next = arr.slice(1, 3);
+    const rest = arr.slice(3);
 
-    const scaled = items.map((it) => ({ ...it, value: (it.value / total) * area }));
-    const placed = squarify(scaled, { x: 0, y: 0, w: W, h: H });
-
-    const gutterPx = 12;
-
-    return placed.map(({ item, rect }) => {
-      const leftPct = (rect.x / W) * 100;
-      const topPct = (rect.y / H) * 100;
-      const widthPct = (rect.w / W) * 100;
-      const heightPct = (rect.h / H) * 100;
-
-      return {
-        item,
-        left: `calc(${leftPct}% + ${gutterPx / 2}px)`,
-        top: `calc(${topPct}% + ${gutterPx / 2}px)`,
-        width: `calc(${widthPct}% - ${gutterPx}px)`,
-        height: `calc(${heightPct}% - ${gutterPx}px)`,
-        widthPct,
-        heightPct,
-      };
-    });
+    return { top, next, rest };
   }, [heatRows]);
 
   return (
@@ -1151,7 +870,7 @@ export default function NbaClient() {
             <h1 className="mt-6 text-4xl font-semibold tracking-tight sm:text-6xl">NBA Deviation Watchlist</h1>
 
             <p className="mt-4 max-w-3xl text-lg text-foreground/75">
-              Scan games where the market is moving unusually for similar game states. Current line is shown pregame and live.
+              Move gap is live-only. Heat map is a clean grid (no overlap). Oren edge is now visual (bar) instead of “just a number.”
             </p>
           </div>
 
@@ -1190,10 +909,9 @@ export default function NbaClient() {
               </div>
             </div>
           ) : view === "slate" ? (
-            <div className="space-y-5">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="text-sm text-foreground/70">Slate is optimized for scanning (no sideways scrolling).</div>
-                <div className="flex items-center gap-2 text-sm text-foreground/70">
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-4 text-sm text-foreground/70">
+                <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Move gap</span>
                   <Tooltip label="Move gap">
                     <div className="cursor-help">
@@ -1201,7 +919,7 @@ export default function NbaClient() {
                     </div>
                   </Tooltip>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-foreground/70">
+                <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Current</span>
                   <Tooltip label="Current line">
                     <div className="cursor-help">
@@ -1209,7 +927,7 @@ export default function NbaClient() {
                     </div>
                   </Tooltip>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-foreground/70">
+                <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Oren edge</span>
                   <Tooltip label="Oren edge">
                     <div className="cursor-help">
@@ -1219,93 +937,92 @@ export default function NbaClient() {
                 </div>
               </div>
 
-              {/* Mobile: card list */}
-              <div className="grid gap-4 sm:hidden">
+              <div className="grid gap-4">
                 {rows.map((r) => (
-                  <div key={r.key}>
-                    <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <div className="truncate text-base font-semibold text-foreground">{r.matchup}</div>
-                            <Pill tone={r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame"}>
-                              {r.isLive ? (
-                                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
-                              ) : null}
-                              {r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE"}
-                            </Pill>
-                          </div>
-                          <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
+                  <div
+                    key={r.key}
+                    className={cn(
+                      "rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5",
+                      r.isLive && "bg-[color:var(--accent)]/5"
+                    )}
+                    style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.18)" } : undefined}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-lg font-semibold text-foreground">{r.matchup}</div>
+                          <Pill tone={r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame"}>
+                            {r.isLive ? (
+                              <span className="inline-block h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
+                            ) : null}
+                            {r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE"}
+                          </Pill>
                         </div>
-                        <div className={cn("tabular-nums text-sm font-semibold", textToneClass(r.tone))}>
+                        <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className={cn("tabular-nums text-lg font-semibold", textToneClass(r.tone))}>
                           {r.scoreText}
                         </div>
+                        <Tooltip label="Move gap">
+                          <div className="cursor-help">
+                            <MoveGapTip />
+                          </div>
+                        </Tooltip>
                       </div>
-
-                      <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
-
-                      <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
-                        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="text-xs text-foreground/55">Current</div>
-                            <Tooltip label="Current line">
-                              <div className="cursor-help">
-                                <CurrentLineTip />
-                              </div>
-                            </Tooltip>
-                          </div>
-                          <div className="mt-1 tabular-nums font-semibold text-foreground">{r.current}</div>
-                        </div>
-
-                        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-                          <div className="text-xs text-foreground/55">Close</div>
-                          <div className="mt-1 tabular-nums font-semibold text-foreground">{r.close}</div>
-                        </div>
-
-                        <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="text-xs text-foreground/55">Oren</div>
-                            <Tooltip label="Oren edge">
-                              <div className="cursor-help">
-                                <OrenEdgeTip />
-                              </div>
-                            </Tooltip>
-                          </div>
-                          <div
-                            className={cn(
-                              "mt-1 tabular-nums font-semibold",
-                              r.orenEdgePts == null
-                                ? "text-foreground/55"
-                                : r.orenEdgePts >= 1.5
-                                ? "text-[color:var(--accent)]"
-                                : r.orenEdgePts <= -1.5
-                                ? "text-amber-200"
-                                : "text-foreground/80"
-                            )}
-                          >
-                            {r.orenEdgeText}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 text-xs text-foreground/55">Lab preview. Review required. Not a bet signal.</div>
                     </div>
-                  </div>
-                ))}
-              </div>
 
-              {/* Desktop: cards (no horizontal scroll) */}
-              <div className="hidden sm:grid gap-4">
-                {rows.map((r) => (
-                  <DesktopCard key={r.key} r={r} />
+                    <ScoreLine
+                      awayTeam={r.awayTeam}
+                      homeTeam={r.homeTeam}
+                      awayScore={r.awayScore}
+                      homeScore={r.homeScore}
+                    />
+
+                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs text-foreground/55">Current (Home)</div>
+                          <Tooltip label="Current line">
+                            <div className="cursor-help">
+                              <CurrentLineTip />
+                            </div>
+                          </Tooltip>
+                        </div>
+                        <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.current}</div>
+                      </div>
+
+                      <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                        <div className="text-xs text-foreground/55">Close (Home)</div>
+                        <div className="mt-1 tabular-nums text-xl font-semibold text-foreground">{r.close}</div>
+                      </div>
+
+                      <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs text-foreground/55">Oren edge</div>
+                          <Tooltip label="Oren edge">
+                            <div className="cursor-help">
+                              <OrenEdgeTip />
+                            </div>
+                          </Tooltip>
+                        </div>
+                        <div className="mt-2">
+                          <OrenEdgeBar v={r.orenEdgePts} />
+                        </div>
+                        <div className="mt-2 text-xs tabular-nums text-foreground/60">{r.orenEdgeText}</div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 text-xs text-foreground/55">Lab preview. Review required. Not a bet signal.</div>
+                  </div>
                 ))}
               </div>
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="text-sm text-foreground/70">Tiles are sized by watchlist priority (stronger anomalies = larger tiles).</div>
-                <div className="flex items-center gap-2 text-sm text-foreground/70">
+              <div className="flex flex-wrap items-center gap-4 text-sm text-foreground/70">
+                <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Move gap</span>
                   <Tooltip label="Move gap">
                     <div className="cursor-help">
@@ -1313,7 +1030,7 @@ export default function NbaClient() {
                     </div>
                   </Tooltip>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-foreground/70">
+                <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Current</span>
                   <Tooltip label="Current line">
                     <div className="cursor-help">
@@ -1321,7 +1038,7 @@ export default function NbaClient() {
                     </div>
                   </Tooltip>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-foreground/70">
+                <div className="flex items-center gap-2">
                   <span className="text-foreground/60">Oren edge</span>
                   <Tooltip label="Oren edge">
                     <div className="cursor-help">
@@ -1332,43 +1049,29 @@ export default function NbaClient() {
               </div>
 
               {heatRows.length === 0 ? (
-                <div className="text-foreground/70">No notable deviations yet. Tiles appear once games are live or moves become unusual.</div>
+                <div className="text-foreground/70">
+                  No notable deviations yet. Heat tiles appear once games are live or moves become unusual.
+                </div>
               ) : (
                 <>
-                  {/* Mobile heat map: clean grid */}
-                  <div className="grid grid-cols-2 gap-3 sm:hidden">
-                    {heatRows.slice(0, 24).map((r) => (
-                      <Tile key={r.key} r={r} compact onClick={() => setSelectedKey(r.key)} />
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {heatLayout.top.map((r) => (
+                      <div key={r.key} className="lg:col-span-2">
+                        <HeatTile r={r} onClick={() => setSelectedKey(r.key)} />
+                      </div>
+                    ))}
+                    {heatLayout.next.map((r) => (
+                      <div key={r.key} className="sm:col-span-1 lg:col-span-1">
+                        <HeatTile r={r} onClick={() => setSelectedKey(r.key)} />
+                      </div>
+                    ))}
+                    {heatLayout.rest.map((r) => (
+                      <HeatTile key={r.key} r={r} onClick={() => setSelectedKey(r.key)} />
                     ))}
                   </div>
 
-                  {/* Desktop heat map: treemap */}
-                  <div className="relative hidden sm:block h-[720px] rounded-2xl border border-white/10 bg-black/10 overflow-hidden">
-                    {treemap.map((p) => {
-                      const r = p.item.row;
-                      const compact = (p.widthPct < 12 || p.heightPct < 12) || (p.widthPct < 18 && p.heightPct < 18);
-
-                      return (
-                        <div
-                          key={p.item.id}
-                          className="absolute"
-                          style={{
-                            left: p.left,
-                            top: p.top,
-                            width: p.width,
-                            height: p.height,
-                          }}
-                        >
-                          <div className="h-full">
-                            <Tile r={r} compact={compact} onClick={() => setSelectedKey(r.key)} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
                   <div className="text-xs text-foreground/55">
-                    Watchlist only. Not a bet signal. Tap a tile to see details.
+                    Watchlist only. Not a bet signal. Tap a tile for details.
                   </div>
                 </>
               )}
