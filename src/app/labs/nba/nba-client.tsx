@@ -195,14 +195,20 @@ function CurrentLineTip() {
   );
 }
 
-function HistoricalTip() {
+function ScoreTip() {
   return (
     <div className="max-w-sm space-y-2">
-      <div className="font-semibold">Historical</div>
+      <div className="font-semibold">Scoreboard</div>
       <div className="text-foreground/70">
-        Conditional context only. “In similar spots (time window + move size + live ML), the underdog covered X%.”
+        When a game is FINAL, we grade Oren Edge vs the closing spread using the final score (OT included).
       </div>
-      <div className="text-foreground/70">Shown only when sample size is adequate. Not a prediction or bet button.</div>
+      <div className="text-foreground/70">
+        If Oren Edge &gt; 0 → predicted <span className="font-medium">HOME</span> to cover. If Oren Edge &lt; 0 →
+        predicted <span className="font-medium">AWAY</span> to cover.
+      </div>
+      <div className="text-foreground/70">
+        Pushes (exact spread) are ignored (not counted). Stored locally in your browser.
+      </div>
     </div>
   );
 }
@@ -306,23 +312,25 @@ function ConfirmedBadge({ on }: { on: boolean }) {
   );
 }
 
-function HistoricalBadge({
-  label,
-  tone,
+function ScoreBadge({
+  kind,
 }: {
-  label: string;
-  tone: "neutral" | "good" | "warn";
+  kind: "hit" | "miss" | "push" | "na";
 }) {
   const cls =
-    tone === "good"
+    kind === "hit"
       ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
-      : tone === "warn"
+      : kind === "miss"
+      ? "border-rose-400/25 bg-rose-400/10 text-rose-200"
+      : kind === "push"
       ? "border-amber-400/25 bg-amber-400/10 text-amber-200"
       : "border-white/10 bg-black/20 text-foreground/70";
 
+  const label = kind === "hit" ? "✓" : kind === "miss" ? "×" : kind === "push" ? "PUSH" : "—";
+
   return (
     <div className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs", cls)}>
-      <span className="text-[10px] tracking-wide">HIST</span>
+      <span className="text-[10px] tracking-wide">SCORE</span>
       <span className="tabular-nums font-semibold">{label}</span>
     </div>
   );
@@ -507,45 +515,59 @@ function inSignalWindow(period: number | null, secondsRemaining: number | null):
   return false;
 }
 
-function inferDogSideFromMoneyline(mlHome: number | null, mlAway: number | null): "home" | "away" | null {
-  if (mlHome == null && mlAway == null) return null;
-  if (mlHome != null && mlAway == null) return "home";
-  if (mlAway != null && mlHome == null) return "away";
+// --- scoring helpers (ATS vs close) ---
 
-  const h = mlHome as number;
-  const a = mlAway as number;
-
-  if (h >= 0 && a < 0) return "home";
-  if (a >= 0 && h < 0) return "away";
-
-  return h >= a ? "home" : "away";
+function homeCovers(closeHomeSpread: number, finalHome: number, finalAway: number): "home" | "away" | "push" {
+  const ats = (finalHome - finalAway) + closeHomeSpread;
+  if (ats > 0) return "home";
+  if (ats < 0) return "away";
+  return "push";
 }
 
-function dogMoneyline(mlHome: number | null, mlAway: number | null): number | null {
-  const side = inferDogSideFromMoneyline(mlHome, mlAway);
-  if (!side) return null;
-  return side === "home" ? mlHome : mlAway;
+function predictedSideFromOrenEdge(orenEdgePts: number): "home" | "away" | "none" {
+  const s = sign(orenEdgePts);
+  if (s > 0) return "home";
+  if (s < 0) return "away";
+  return "none";
 }
 
-function formatMl(x: number | null): string {
-  if (x == null || !Number.isFinite(x)) return "—";
-  const v = Math.trunc(x);
-  if (v > 0) return `+${v}`;
-  if (v < 0) return `${v}`;
-  return "0";
-}
-
-type HistoricalResp = {
-  ok: boolean;
-  n: number;
-  p_dog_cover: number | null;
-  baseline_n?: number;
-  baseline_p_dog_cover?: number | null;
+type ScoreEvent = {
+  id: string; // stable key (use gameId)
+  at: number;
+  matchup: string;
+  predicted: "home" | "away";
+  actual: "home" | "away";
+  correct: boolean;
 };
+
+const SCORE_KEY = "oren_nba_scoreboard_v1";
+
+function loadScoreboard(): { events: Record<string, ScoreEvent> } {
+  try {
+    const raw = localStorage.getItem(SCORE_KEY);
+    if (!raw) return { events: {} };
+    const j = JSON.parse(raw);
+    if (!j || typeof j !== "object") return { events: {} };
+    const events = (j as any).events;
+    if (!events || typeof events !== "object") return { events: {} };
+    return { events };
+  } catch {
+    return { events: {} };
+  }
+}
+
+function saveScoreboard(state: { events: Record<string, ScoreEvent> }) {
+  try {
+    localStorage.setItem(SCORE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+}
 
 type Row = {
   key: string;
 
+  gameId: string;
   awayTeam: string;
   homeTeam: string;
   awayScore: number | null;
@@ -574,15 +596,10 @@ type Row = {
   confluence: number | null;
   confirmed: boolean;
 
-  // moneyline + derived for historical requests
-  liveHomeMl: number | null;
-  liveAwayMl: number | null;
-  dogMl: number | null;
-  dogSide: "home" | "away" | null;
-  absMove: number | null;
+  closeNum: number | null;
 
-  // display
-  mlText: string;
+  // scoring display
+  scoreMark: "hit" | "miss" | "push" | "na";
 };
 
 export default function NbaClient() {
@@ -603,13 +620,23 @@ export default function NbaClient() {
   // cache last readings per game to confirm persistence across refreshes
   const readingsRef = useRef<Map<string, Array<{ t: number; moveGapPts: number; absZ: number }>>>(new Map());
 
-  // historical cache
-  const histCacheRef = useRef<Map<string, { at: number; data: HistoricalResp }>>(new Map());
-  const [histTick, setHistTick] = useState(0);
+  // scoreboard (localStorage-backed)
+  const [scoreState, setScoreState] = useState<{ events: Record<string, ScoreEvent> }>({ events: {} });
+  const [scoreTick, setScoreTick] = useState(0);
 
   useEffect(() => {
     const t = setInterval(() => setNowTick(Date.now()), 60 * 1000);
     return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    // load once
+    try {
+      const s = loadScoreboard();
+      setScoreState(s);
+    } catch {
+      // ignore
+    }
   }, []);
 
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
@@ -803,10 +830,8 @@ export default function NbaClient() {
         const sr = sign(rawMove);
         const aligned = so !== 0 && so === sm && so === sr;
 
-        // "still room": market moved your way, but not so far that it fully erased your pregame edge
         const stillRoom = Math.abs(rawMove) < Math.abs(orenEdgePts) * 1.2;
 
-        // persistence: previous reading exists, at least 60s older, same sign, still z>=1.0
         const history = readingsRef.current.get(String(g.gameId ?? `${awayTeam}-${homeTeam}`)) ?? [];
         const prev = history.length > 0 ? history[history.length - 1] : null;
 
@@ -815,28 +840,26 @@ export default function NbaClient() {
         confirmed = aligned && stillRoom && persists;
       }
 
-      // moneyline fields (future-ready; will be null until live-games includes them)
-      const liveHomeMl =
-        safeNum(g?.liveHomeMoneyline) ??
-        safeNum(g?.live_home_moneyline) ??
-        safeNum(g?.liveHomeMl) ??
-        safeNum(g?.market?.liveHomeMoneyline) ??
-        null;
+      const gameId = String(g?.gameId ?? `${awayTeam}-${homeTeam}`);
 
-      const liveAwayMl =
-        safeNum(g?.liveAwayMoneyline) ??
-        safeNum(g?.live_away_moneyline) ??
-        safeNum(g?.liveAwayMl) ??
-        safeNum(g?.market?.liveAwayMoneyline) ??
-        null;
+      // score mark from stored events
+      const ev = scoreState.events[gameId];
+      const scoreMark: Row["scoreMark"] =
+        ev && ev.correct ? "hit" : ev && !ev.correct ? "miss" : "na";
 
-      const dSide = inferDogSideFromMoneyline(liveHomeMl, liveAwayMl);
-      const dMl = dogMoneyline(liveHomeMl, liveAwayMl);
-
-      const absMove = rawMove == null ? null : Math.abs(rawMove);
+      // if not graded yet, but final + data present, show PUSH/NA locally (grading happens in effect below)
+      const showPushPending =
+        !ev &&
+        phase === "final" &&
+        orenEdgePts != null &&
+        closeNum != null &&
+        typeof s.home === "number" &&
+        typeof s.away === "number" &&
+        homeCovers(closeNum, s.home, s.away) === "push";
 
       return {
-        key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
+        key: gameId,
+        gameId,
 
         awayTeam,
         homeTeam,
@@ -866,13 +889,9 @@ export default function NbaClient() {
         confluence,
         confirmed,
 
-        liveHomeMl,
-        liveAwayMl,
-        dogMl: dMl,
-        dogSide: dSide,
-        absMove,
+        closeNum,
 
-        mlText: dMl == null ? "—" : `Dog ML ${formatMl(dMl)}`,
+        scoreMark: showPushPending ? "push" : scoreMark,
       };
     });
 
@@ -899,7 +918,8 @@ export default function NbaClient() {
     });
 
     return computed;
-  }, [games, after2pm, spreadIndex, orenMap, orenParams]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games, after2pm, spreadIndex, orenMap, orenParams, scoreTick]);
 
   // update persistence cache AFTER render (so confirmed lights up on the next refresh)
   useEffect(() => {
@@ -917,6 +937,54 @@ export default function NbaClient() {
     }
   }, [rows]);
 
+  // SCORE: when a game is FINAL and ungraded, grade it once and persist
+  useEffect(() => {
+    let changed = false;
+    const next = { ...scoreState, events: { ...scoreState.events } };
+
+    for (const r of rows) {
+      if (r.phase !== "final") continue;
+
+      // already graded
+      if (next.events[r.gameId]) continue;
+
+      // need: close spread, oren edge, final score
+      if (r.closeNum == null) continue;
+      if (r.orenEdgePts == null || !Number.isFinite(r.orenEdgePts)) continue;
+      if (typeof r.homeScore !== "number" || typeof r.awayScore !== "number") continue;
+
+      const actual = homeCovers(r.closeNum, r.homeScore, r.awayScore);
+      if (actual === "push") {
+        // store a "push" marker? user said "correct checkmark" + keep score overtime.
+        // pushes muddy winrate; we simply do NOT store/grade.
+        continue;
+      }
+
+      const predicted = predictedSideFromOrenEdge(r.orenEdgePts);
+      if (predicted === "none") continue;
+
+      const correct = predicted === actual;
+
+      next.events[r.gameId] = {
+        id: r.gameId,
+        at: Date.now(),
+        matchup: r.matchup,
+        predicted,
+        actual,
+        correct,
+      };
+
+      changed = true;
+    }
+
+    if (changed) {
+      setScoreState(next);
+      saveScoreboard(next);
+      setScoreTick((x) => x + 1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
+
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
   const orenBadge = useMemo(() => {
@@ -925,142 +993,26 @@ export default function NbaClient() {
     return "Oren: Ready";
   }, [orenStatus]);
 
-  function histKeyForRow(r: Row) {
-    // Only compute keys when required fields exist.
-    if (!r.isLive) return null;
-    if (r.period == null || r.secondsRemaining == null) return null;
-    if (r.absMove == null || r.dogMl == null) return null;
+  const scoreboard = useMemo(() => {
+    const events = Object.values(scoreState.events || {});
+    events.sort((a, b) => b.at - a.at);
 
-    // TS-safe narrowing for template usage:
-    const absMove = r.absMove;
-    const dogMl = r.dogMl;
+    const total = events.length;
+    const correct = events.filter((e) => e.correct).length;
+    const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
 
-    return `${r.key}|p${r.period}|s${r.secondsRemaining}|m${absMove.toFixed(2)}|ml${Math.round(dogMl)}`;
-  }
+    const last = events.slice(0, 6);
 
-  function getCachedHistorical(k: string) {
-    const hit = histCacheRef.current.get(k);
-    if (!hit) return null;
-    // 10 min client cache: stable enough and avoids hammering
-    if (Date.now() - hit.at > 10 * 60_000) return null;
-    return hit.data;
-  }
+    return { total, correct, pct, last };
+  }, [scoreState, scoreTick]);
 
-  // Pull Historical for only the best candidates (live + signal window + has ML + has close/live)
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      const candidates = rows
-        .filter((r) => {
-          if (!r.isLive) return false;
-          if (!inSignalWindow(r.period, r.secondsRemaining)) return false;
-          if (r.absMove == null || r.dogMl == null) return false;
-          // only when we can actually compute absMove from live/close
-          return true;
-        })
-        .slice(0, 8);
-
-      const tasks: Array<Promise<void>> = [];
-
-      for (const r of candidates) {
-        const k = histKeyForRow(r);
-        if (!k) continue;
-        if (getCachedHistorical(k)) continue;
-
-        tasks.push(
-          (async () => {
-            try {
-              if (r.period == null || r.secondsRemaining == null || r.absMove == null || r.dogMl == null) return;
-
-              // TS-safe locals (fixes your exact error class)
-              const absMove = r.absMove;
-              const dogMl = r.dogMl;
-
-              const qs = new URLSearchParams();
-              qs.set("season", "2025-2026");
-              qs.set("period", String(r.period));
-              qs.set("secondsRemaining", String(r.secondsRemaining));
-              qs.set("absMove", String(absMove));
-              qs.set("liveMl", String(Math.round(dogMl)));
-
-              const res = await fetch(`/api/labs/nba/historical?${qs.toString()}`, { cache: "no-store" });
-              const ct = res.headers.get("content-type") || "";
-              if (!ct.includes("application/json")) return;
-
-              const json = (await res.json().catch(() => null)) as HistoricalResp | null;
-              if (!json || typeof json !== "object" || !("ok" in json)) return;
-
-              histCacheRef.current.set(k, { at: Date.now(), data: json });
-              if (!cancelled) setHistTick((x) => x + 1);
-            } catch {
-              // silent: no badge
-            }
-          })()
-        );
-      }
-
-      if (tasks.length > 0) await Promise.all(tasks);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [rows]);
-
-  const HIST_MIN_N = 150;
-  const HIST_MIN_DELTA = 0.05; // vs baseline
-  const HIST_MIN_PCT = 0.55; // “meaningfully different” guard
-
-  function renderHistoricalForRow(r: Row) {
-    const k = histKeyForRow(r);
-    if (!k) return null;
-
-    const data = getCachedHistorical(k);
-    if (!data || !data.ok) return null;
-
-    const n = typeof data.n === "number" ? data.n : 0;
-    const p = typeof data.p_dog_cover === "number" ? data.p_dog_cover : null;
-
-    const baseP =
-      typeof data.baseline_p_dog_cover === "number" ? data.baseline_p_dog_cover : null;
-
-    if (n < HIST_MIN_N) return null;
-    if (p == null) return null;
-
-    // must be meaningfully different from baseline (if available)
-    if (baseP != null) {
-      if (Math.abs(p - baseP) < HIST_MIN_DELTA) return null;
-    } else {
-      // if baseline missing, require a stronger absolute level
-      if (p < HIST_MIN_PCT) return null;
-    }
-
-    const pct = Math.round(p * 100);
-    const label = `${pct}% (n=${n})`;
-
-    const tone: "neutral" | "good" | "warn" = p >= 0.6 ? "good" : p >= 0.55 ? "warn" : "neutral";
-
-    return (
-      <div className="flex items-center gap-2">
-        <HistoricalBadge label={label} tone={tone} />
-        <Tooltip label="Historical">
-          <div className="cursor-help">
-            <HistoricalTip />
-          </div>
-        </Tooltip>
-      </div>
-    );
-  }
-
-  // histTick is only to force re-render when cache fills; unused directly is fine.
-  void histTick;
+  const updatedAtLabelTop = updatedAtLabel;
 
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-5xl space-y-8 px-6 py-16">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
+          <div className="w-full">
             <div className="flex flex-wrap items-center gap-2">
               <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-2 text-sm text-foreground/80">
                 Labs • NBA
@@ -1068,7 +1020,7 @@ export default function NbaClient() {
 
               <Pill tone="neutral">{isStale ? "Snapshot" : "Live feed"}</Pill>
 
-              {updatedAtLabel ? <div className="text-xs text-foreground/55">Updated {updatedAtLabel} PT</div> : null}
+              {updatedAtLabelTop ? <div className="text-xs text-foreground/55">Updated {updatedAtLabelTop} PT</div> : null}
 
               {liveCount > 0 ? (
                 <Pill tone="live">
@@ -1093,6 +1045,62 @@ export default function NbaClient() {
             </p>
 
             <div className="mt-2 text-xs text-foreground/55">{headerDate} • Watchlist only. Not a bet signal.</div>
+
+            {/* SCOREBOARD */}
+            <div className="mt-6 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="text-sm font-semibold text-foreground">Oren Edge Scoreboard</div>
+                  <Tooltip label="Scoreboard">
+                    <div className="cursor-help">
+                      <ScoreTip />
+                    </div>
+                  </Tooltip>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Pill tone="neutral">
+                    <span className="text-foreground/60">Correct</span>
+                    <span className="tabular-nums font-semibold">{scoreboard.correct}</span>
+                  </Pill>
+                  <Pill tone="neutral">
+                    <span className="text-foreground/60">Total</span>
+                    <span className="tabular-nums font-semibold">{scoreboard.total}</span>
+                  </Pill>
+                  <Pill tone="neutral">
+                    <span className="text-foreground/60">Win%</span>
+                    <span className="tabular-nums font-semibold">{scoreboard.total > 0 ? `${scoreboard.pct}%` : "—"}</span>
+                  </Pill>
+                </div>
+              </div>
+
+              {scoreboard.last.length > 0 ? (
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {scoreboard.last.map((e) => (
+                    <div
+                      key={e.id}
+                      className="flex items-center justify-between rounded-xl border border-white/10 bg-black/10 px-3 py-2"
+                    >
+                      <div className="min-w-0 truncate text-sm text-foreground/75">{e.matchup}</div>
+                      <div className="ml-3 flex items-center gap-2">
+                        <div className="text-[10px] text-foreground/55">
+                          {e.predicted.toUpperCase()} → {e.actual.toUpperCase()}
+                        </div>
+                        <ScoreBadge kind={e.correct ? "hit" : "miss"} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-3 text-sm text-foreground/60">
+                  No graded finals yet. Once games end, they’ll show up here automatically.
+                </div>
+              )}
+
+              <div className="mt-3 text-xs text-foreground/55">
+                Graded ATS vs close using final score (OT included). Pushes are ignored.
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1150,10 +1158,10 @@ export default function NbaClient() {
                   </Tooltip>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-foreground/60">Historical</span>
-                  <Tooltip label="Historical">
+                  <span className="text-foreground/60">Score</span>
+                  <Tooltip label="Scoreboard">
                     <div className="cursor-help">
-                      <HistoricalTip />
+                      <ScoreTip />
                     </div>
                   </Tooltip>
                 </div>
@@ -1191,18 +1199,11 @@ export default function NbaClient() {
                               ) : null}
                               {r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE"}
                             </Pill>
+
+                            {/* ✅ check mark / score marker */}
+                            {r.phase === "final" ? <ScoreBadge kind={r.scoreMark} /> : null}
                           </div>
                           <div className="mt-1 text-sm text-foreground/70">{r.clock}</div>
-
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            {r.isLive ? (
-                              <Pill tone="neutral">
-                                <span className="text-foreground/60">{r.mlText}</span>
-                              </Pill>
-                            ) : null}
-
-                            {renderHistoricalForRow(r)}
-                          </div>
                         </div>
 
                         <div className="flex flex-col items-end gap-2">
