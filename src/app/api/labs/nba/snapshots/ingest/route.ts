@@ -12,7 +12,8 @@ export const dynamic = "force-dynamic";
  *
  * Fix in this version:
  * - Tolerant field mapping for period/clock/spreads + supports multiple payload shapes
- * - Debug mode to return why rows are being skipped
+ * - Adds live moneyline capture (home/away) when available
+ * - Safe insert fallback: if moneyline columns don't exist yet, insert without them and return a warning
  *
  * Security:
  * - Requires header: x-admin-token == process.env.ADMIN_SEED_TOKEN
@@ -143,6 +144,81 @@ function getLiveHomeSpread(g: any): number | null {
   return v;
 }
 
+// Moneyline (live). Convention: negative = favorite, positive = dog.
+function getLiveHomeMoneyline(g: any): number | null {
+  const v = num(
+    pick(
+      // direct common
+      g?.liveMoneylineHome,
+      g?.live_moneyline_home,
+      g?.homeMoneylineLive,
+      g?.home_moneyline_live,
+      g?.liveHomeMoneyline,
+      g?.live_home_moneyline,
+
+      // nested market/lines/live
+      g?.market?.liveHomeMoneyline,
+      g?.market?.live_home_moneyline,
+      g?.market?.homeMoneylineLive,
+      g?.market?.home_moneyline_live,
+
+      g?.lines?.live?.moneylineHome,
+      g?.lines?.live?.homeMoneyline,
+      g?.lines?.inplay?.moneylineHome,
+      g?.lines?.inplay?.homeMoneyline,
+
+      g?.live?.moneylineHome,
+      g?.live?.homeMoneyline,
+
+      // some providers: moneyline: { home, away } or { homePrice, awayPrice }
+      g?.moneyline?.home,
+      g?.moneyline?.homePrice,
+      g?.ml?.home
+    )
+  );
+  return v;
+}
+
+function getLiveAwayMoneyline(g: any): number | null {
+  const v = num(
+    pick(
+      // direct common
+      g?.liveMoneylineAway,
+      g?.live_moneyline_away,
+      g?.awayMoneylineLive,
+      g?.away_moneyline_live,
+      g?.liveAwayMoneyline,
+      g?.live_away_moneyline,
+
+      // nested market/lines/live
+      g?.market?.liveAwayMoneyline,
+      g?.market?.live_away_moneyline,
+      g?.market?.awayMoneylineLive,
+      g?.market?.away_moneyline_live,
+
+      g?.lines?.live?.moneylineAway,
+      g?.lines?.live?.awayMoneyline,
+      g?.lines?.inplay?.moneylineAway,
+      g?.lines?.inplay?.awayMoneyline,
+
+      g?.live?.moneylineAway,
+      g?.live?.awayMoneyline,
+
+      // some providers: moneyline: { home, away } or { homePrice, awayPrice }
+      g?.moneyline?.away,
+      g?.moneyline?.awayPrice,
+      g?.ml?.away
+    )
+  );
+  return v;
+}
+
+function looksLikeMissingColumnError(msg: string): boolean {
+  const s = String(msg || "").toLowerCase();
+  // supabase/postgres often: 'column "x" of relation "y" does not exist'
+  return s.includes("does not exist") && s.includes("column");
+}
+
 export async function POST(req: Request) {
   const adminToken = req.headers.get("x-admin-token") || "";
   const expected = process.env.ADMIN_SEED_TOKEN || "";
@@ -180,7 +256,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, inserted: 0, skipped: 0, note: "No games available." });
   }
 
-  const payload: any[] = [];
+  // We build two payloads:
+  // - payloadWithMl: includes live_home_moneyline/live_away_moneyline (nullable)
+  // - payloadNoMl: omits those keys entirely
+  // Then we try insert with ML first; if the table doesn't have columns yet, we fallback.
+  const payloadWithMl: any[] = [];
+  const payloadNoMl: any[] = [];
+
   let skipped = 0;
 
   const skipReasons: Record<string, number> = {
@@ -192,9 +274,7 @@ export async function POST(req: Request) {
     non_regulation_period: 0,
   };
 
-  const firstItemKeys = debug
-    ? Object.keys(items[0] || {}).slice(0, 80) // enough to see the shape
-    : null;
+  const firstItemKeys = debug ? Object.keys(items[0] || {}).slice(0, 80) : null;
 
   const examples: any[] = [];
 
@@ -204,6 +284,9 @@ export async function POST(req: Request) {
     const secondsRemaining = getSecondsRemaining(g);
     const closing = getClosingHomeSpread(g);
     const live = getLiveHomeSpread(g);
+
+    const liveHomeMl = getLiveHomeMoneyline(g);
+    const liveAwayMl = getLiveAwayMoneyline(g);
 
     let ok = true;
 
@@ -241,6 +324,8 @@ export async function POST(req: Request) {
           secondsRemaining,
           closing,
           live,
+          liveHomeMl,
+          liveAwayMl,
           // show a small slice of the object so we can adapt mapping further if needed
           sample: {
             gameId: g?.gameId,
@@ -250,6 +335,8 @@ export async function POST(req: Request) {
             secondsRemainingInPeriod: g?.secondsRemainingInPeriod,
             closingSpreadHome: g?.closingSpreadHome,
             liveSpreadHome: g?.liveSpreadHome,
+            liveMoneylineHome: g?.liveMoneylineHome,
+            liveMoneylineAway: g?.liveMoneylineAway,
             market: g?.market,
             clock: g?.clock,
             state: g?.state,
@@ -261,7 +348,7 @@ export async function POST(req: Request) {
       continue;
     }
 
-    payload.push({
+    const baseRow = {
       sport,
       league,
       season,
@@ -270,10 +357,19 @@ export async function POST(req: Request) {
       seconds_remaining_in_period: secondsRemaining,
       closing_home_spread: closing,
       live_home_spread: live,
+    };
+
+    payloadNoMl.push(baseRow);
+
+    payloadWithMl.push({
+      ...baseRow,
+      // nullable — we store when available; otherwise null
+      live_home_moneyline: liveHomeMl,
+      live_away_moneyline: liveAwayMl,
     });
   }
 
-  if (payload.length === 0) {
+  if (payloadNoMl.length === 0) {
     return jsonError(
       400,
       "No usable rows to ingest.",
@@ -296,9 +392,19 @@ export async function POST(req: Request) {
       season,
       sport,
       league,
-      wouldInsert: payload.length,
+      wouldInsert: payloadNoMl.length,
       skipped,
-      ...(debug ? { skipReasons, firstItemKeys, examples } : {}),
+      // show whether ML exists in the feed for at least one row (helps confirm provider wiring)
+      ...(debug
+        ? {
+            skipReasons,
+            firstItemKeys,
+            examples,
+            moneylineSeen: payloadWithMl.some(
+              (r) => r.live_home_moneyline != null || r.live_away_moneyline != null
+            ),
+          }
+        : {}),
     });
   }
 
@@ -309,15 +415,38 @@ export async function POST(req: Request) {
     return jsonError(500, "Supabase misconfigured.", e?.message || String(e));
   }
 
-  const { error } = await sb.from("nba_line_snapshots").insert(payload);
-  if (error) return jsonError(500, "Supabase insert failed.", error.message);
+  // Try insert WITH ML first (best). If columns aren't present yet, fallback safely.
+  const { error: errWithMl } = await sb.from("nba_line_snapshots").insert(payloadWithMl);
+
+  if (errWithMl) {
+    const msg = errWithMl.message || "";
+    const fallbackAllowed = looksLikeMissingColumnError(msg);
+
+    if (!fallbackAllowed) {
+      return jsonError(500, "Supabase insert failed.", msg);
+    }
+
+    const { error: errNoMl } = await sb.from("nba_line_snapshots").insert(payloadNoMl);
+    if (errNoMl) return jsonError(500, "Supabase insert failed (fallback).", errNoMl.message);
+
+    return NextResponse.json({
+      ok: true,
+      season,
+      sport,
+      league,
+      inserted: payloadNoMl.length,
+      skipped,
+      warning:
+        "Inserted without moneyline columns because nba_line_snapshots is missing live_home_moneyline/live_away_moneyline. Add columns to enable ML snapshots.",
+    });
+  }
 
   return NextResponse.json({
     ok: true,
     season,
     sport,
     league,
-    inserted: payload.length,
+    inserted: payloadWithMl.length,
     skipped,
   });
 }
