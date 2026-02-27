@@ -24,9 +24,12 @@ type LiveGameItem = {
   liveSpreadHome: number | null;
   closingSpreadHome: number | null;
 
-  // ✅ NEW: live moneyline (American odds)
+  // ✅ live moneyline (American odds)
   liveMoneylineHome: number | null;
   liveMoneylineAway: number | null;
+
+  // ✅ NEW: server-computed (keeps Oren Edge formula hidden)
+  orenEdgePts: number | null;
 
   phase: Phase;
 };
@@ -44,6 +47,10 @@ type LiveOk = {
     closingSeeded?: number;
     closingAttached?: number;
     moneylineAttached?: number;
+
+    // ✅ NEW: diagnostic only (does NOT leak model)
+    orenEdgeAttached?: number;
+    rankingsLoaded?: boolean;
   };
 };
 
@@ -134,7 +141,7 @@ function classifyPhase(
   const sr = hasNumber(it.secondsRemaining) ? it.secondsRemaining : null;
   const hasScore = hasNumber(it.awayScore) && hasNumber(it.homeScore);
 
-  // Key fix: Q4 + scores + no clock => FINAL (prevents “P4 • —” hanging forever)
+  // Key fix: Q4 + scores + no clock => FINAL
   if (p != null && p >= 4 && hasScore && (sr === 0 || sr === null)) return "final";
 
   if (p != null && p >= 1 && hasScore) return "live";
@@ -168,7 +175,7 @@ function filterItemsByAllowedDates(items: LiveGameItem[], allowed: Set<string>) 
 }
 
 function supabaseAdminOrNull() {
-  const url = process.env.SUPABASE_URL;
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   return createClient(url, key, { auth: { persistSession: false } });
@@ -214,7 +221,6 @@ async function getMoneylineMap(
 
     const gameKey = makeMatchKey(awayTeam, homeTeam, dk);
 
-    // Try common shapes from provider objects:
     const home =
       toNum((o as any)?.liveMoneylineHome) ??
       toNum((o as any)?.moneylineHome) ??
@@ -237,7 +243,6 @@ async function getMoneylineMap(
       toNum((o as any)?.h2h?.away) ??
       null;
 
-    // If neither exists, skip
     if (home == null && away == null) continue;
 
     map.set(gameKey, { home: home != null ? Math.trunc(home) : null, away: away != null ? Math.trunc(away) : null });
@@ -315,9 +320,75 @@ function computeSlateActive(
   return nowT >= start && nowT <= end;
 }
 
+/* ---------------------------
+   OREN EDGE: server-only model
+---------------------------- */
+
+function normalizeTeamKey(s: any): string {
+  return String(s ?? "").trim().toLowerCase();
+}
+
+function orenRating(rank: number, A: number, k: number): number {
+  if (!Number.isFinite(rank) || rank < 1) return 0;
+  return A * Math.exp(-k * (rank - 1));
+}
+
+function computeOrenEdgePts(args: {
+  homeTeam: string;
+  awayTeam: string;
+  closingSpreadHome: number;
+  rankMap: Record<string, number>;
+  params: { A: number; k: number; S: number };
+}): number | null {
+  const { homeTeam, awayTeam, closingSpreadHome, rankMap, params } = args;
+
+  const homeRank = rankMap[normalizeTeamKey(homeTeam)];
+  const awayRank = rankMap[normalizeTeamKey(awayTeam)];
+  if (!Number.isFinite(homeRank) || !Number.isFinite(awayRank)) return null;
+
+  const homeRating = orenRating(homeRank, params.A, params.k);
+  const awayRating = orenRating(awayRank, params.A, params.k);
+
+  const impliedSpreadHome = params.S * (homeRating - awayRating);
+  return impliedSpreadHome - closingSpreadHome;
+}
+
+async function loadRankMapServer(): Promise<Record<string, number> | null> {
+  const sb = supabaseAdminOrNull();
+  if (!sb) return null;
+
+  // Default table name; override with env if your table differs.
+  const table = process.env.NBA_POWER_RANKINGS_TABLE || "nba_power_rankings";
+
+  // Expect columns: team, rank
+  const { data, error } = await sb.from(table).select("team, rank").limit(200);
+  if (error || !Array.isArray(data)) return null;
+
+  const map: Record<string, number> = {};
+  for (const row of data as any[]) {
+    const team = normalizeTeamKey(row?.team);
+    const rank = toNum(row?.rank);
+    if (!team || rank == null) continue;
+    map[team] = Math.trunc(rank);
+  }
+
+  return Object.keys(map).length ? map : null;
+}
+
+function orenParamsFromEnv() {
+  const A = toNum(process.env.OREN_A) ?? 10;
+  const k = toNum(process.env.OREN_K) ?? 0.12;
+  const S = toNum(process.env.OREN_S) ?? 1.0;
+  return { A, k, S };
+}
+
 async function pollProviders(now: Date): Promise<LiveOk> {
   const { today, keys } = allowedDateKeys(now);
   const allowed = new Set(keys);
+
+  // ✅ Load rankings ONCE (server-only). If missing, orenEdgePts stays null.
+  const rankMap = await loadRankMapServer();
+  const params = orenParamsFromEnv();
 
   const odds = await fetchTheOddsApiSpreads();
   const slateActive = computeSlateActive(
@@ -326,7 +397,6 @@ async function pollProviders(now: Date): Promise<LiveOk> {
     allowed
   );
 
-  // ✅ NEW: moneyline attachment map (if provider includes it)
   const moneylineMap = await getMoneylineMap(odds as any[], allowed);
 
   // Seed closing from odds (first seen consensus)
@@ -395,6 +465,7 @@ async function pollProviders(now: Date): Promise<LiveOk> {
       closingSpreadHome: null,
       liveMoneylineHome: ml?.home ?? null,
       liveMoneylineAway: ml?.away ?? null,
+      orenEdgePts: null, // computed after closing spread attached
       phase,
     });
   }
@@ -425,6 +496,7 @@ async function pollProviders(now: Date): Promise<LiveOk> {
         closingSpreadHome: null,
         liveMoneylineHome: ml?.home ?? null,
         liveMoneylineAway: ml?.away ?? null,
+        orenEdgePts: null,
         phase: "pregame",
       });
     }
@@ -433,10 +505,34 @@ async function pollProviders(now: Date): Promise<LiveOk> {
   const filtered = filterItemsByAllowedDates(items, allowed);
 
   const closingMap = await getClosingMap(filtered.map((it) => it.gameId));
-  const attached = filtered.map((it) => ({
-    ...it,
-    closingSpreadHome: closingMap.get(it.gameId) ?? null,
-  }));
+
+  // Attach closing + compute orenEdgePts (server-only)
+  let orenEdgeAttached = 0;
+
+  const attached = filtered.map((it) => {
+    const closing = closingMap.get(it.gameId) ?? null;
+
+    let orenEdgePts: number | null = null;
+    if (closing != null && rankMap) {
+      const edge = computeOrenEdgePts({
+        homeTeam: it.homeTeam,
+        awayTeam: it.awayTeam,
+        closingSpreadHome: closing,
+        rankMap,
+        params,
+      });
+      if (edge != null && Number.isFinite(edge)) {
+        orenEdgePts = edge;
+        orenEdgeAttached++;
+      }
+    }
+
+    return {
+      ...it,
+      closingSpreadHome: closing,
+      orenEdgePts,
+    };
+  });
 
   let moneylineAttached = 0;
   for (const it of attached) {
@@ -456,6 +552,8 @@ async function pollProviders(now: Date): Promise<LiveOk> {
       closingSeeded,
       closingAttached: closingMap.size,
       moneylineAttached,
+      orenEdgeAttached,
+      rankingsLoaded: !!rankMap,
     },
   };
 }
