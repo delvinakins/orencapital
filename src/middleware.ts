@@ -1,3 +1,4 @@
+// src/middleware.ts
 import { NextResponse, type NextRequest } from "next/server";
 
 export function middleware(req: NextRequest) {
@@ -13,6 +14,8 @@ export function middleware(req: NextRequest) {
   return NextResponse.next();
 }
 
+// ✅ IMPORTANT: exclude /api so API routes don't get treated like pages (HTML)
+// This fixes: curl .../api/... returning <!DOCTYPE html>...
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
 };

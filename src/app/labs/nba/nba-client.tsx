@@ -1,4 +1,3 @@
-// src/app/labs/nba/nba-client.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -287,8 +286,7 @@ function ConfluenceBadge({ score }: { score: number | null }) {
       ? "border-white/10 bg-white/5 text-foreground/80"
       : "border-white/10 bg-black/20 text-foreground/70";
 
-  const label =
-    score == null ? "—" : score >= 55 ? "HIGH" : score >= 25 ? "WATCH" : score >= 10 ? "LOW" : "—";
+  const label = score == null ? "—" : score >= 55 ? "HIGH" : score >= 25 ? "WATCH" : score >= 10 ? "LOW" : "—";
 
   return (
     <div className={cn("inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs", cls)}>
@@ -535,6 +533,12 @@ type ScoreboardState = { version: 1; records: Record<string, ScoreRecord> };
 
 const SCOREBOARD_KEY = "oren:nba:scoreboard:v1";
 
+// Strategy C: global scoreboard + local fallback.
+// We'll throttle sync attempts with this key (per-device).
+const SCOREBOARD_SYNC_LAST_KEY = "oren:nba:scoreboard:sync:last:v1";
+
+type GlobalTotals = { hits: number; misses: number; push: number; hitRate: number | null };
+
 function safeReadScoreboard(): ScoreboardState {
   try {
     if (typeof window === "undefined") return { version: 1, records: {} };
@@ -626,6 +630,10 @@ export default function NbaClient() {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [scoreboard, setScoreboard] = useState<ScoreboardState>(() => ({ version: 1, records: {} }));
 
+  // ✅ global scoreboard totals (strategy C)
+  const [globalTotals, setGlobalTotals] = useState<GlobalTotals | null>(null);
+  const [globalStatus, setGlobalStatus] = useState<"idle" | "loading" | "ok" | "missing">("idle");
+
   const readingsRef = useRef<Map<string, Array<{ t: number; moveGapPts: number; absZ: number }>>>(new Map());
 
   useEffect(() => {
@@ -633,6 +641,7 @@ export default function NbaClient() {
     return () => clearInterval(t);
   }, []);
 
+  // ✅ ensure local scoreboard loads on mobile as well
   useEffect(() => {
     setScoreboard(safeReadScoreboard());
   }, []);
@@ -732,10 +741,65 @@ export default function NbaClient() {
     }
   }
 
+  // ✅ global totals fetcher
+  async function loadGlobalTotals() {
+    try {
+      setGlobalStatus((s) => (s === "ok" ? "ok" : "loading"));
+      const res = await fetch(
+        `/api/labs/nba/scoreboard/global?season=2025-2026&league=nba&sport=basketball&_t=${Date.now()}`,
+        { cache: "no-store" }
+      );
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("application/json")) {
+        setGlobalStatus("missing");
+        return;
+      }
+      const json = await res.json().catch(() => null);
+      if (json?.ok && json?.totals) {
+        setGlobalTotals(json.totals as GlobalTotals);
+        setGlobalStatus("ok");
+      } else {
+        setGlobalStatus("missing");
+      }
+    } catch {
+      setGlobalStatus("missing");
+    }
+  }
+
+  // ✅ strategy C: sync endpoint (server-trusted grading + upsert)
+  async function syncGlobalScoreboard() {
+    try {
+      // throttle: once per 6 hours per device
+      if (typeof window !== "undefined") {
+        const last = Number(window.localStorage.getItem(SCOREBOARD_SYNC_LAST_KEY) || "0");
+        if (Number.isFinite(last) && Date.now() - last < 6 * 60 * 60 * 1000) return;
+        window.localStorage.setItem(SCOREBOARD_SYNC_LAST_KEY, String(Date.now()));
+      }
+
+      await fetch(`/api/labs/nba/scoreboard/sync?season=2025-2026&league=nba&sport=basketball&_t=${Date.now()}`, {
+        method: "POST",
+        cache: "no-store",
+      }).catch(() => null);
+
+      // refresh global totals after sync attempt
+      await loadGlobalTotals();
+    } catch {
+      // ignore
+    }
+  }
+
   useEffect(() => {
     load();
     const interval = setInterval(load, 90 * 1000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // load global totals on mount + periodically
+  useEffect(() => {
+    loadGlobalTotals();
+    const t = setInterval(loadGlobalTotals, 3 * 60 * 1000);
+    return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -927,6 +991,14 @@ export default function NbaClient() {
     });
   }, [rows, meta]);
 
+  // ✅ after local save changes, attempt global sync (throttled) + refresh totals
+  useEffect(() => {
+    const recs = Object.values(scoreboard.records || {});
+    if (recs.length === 0) return;
+    syncGlobalScoreboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scoreboard]);
+
   // update persistence cache AFTER render
   useEffect(() => {
     const now = Date.now();
@@ -976,6 +1048,16 @@ export default function NbaClient() {
 
     return { hits, misses, pushes, graded, p, days };
   }, [scoreboard]);
+
+  const globalSummary = useMemo(() => {
+    if (!globalTotals) return null;
+    return {
+      hits: globalTotals.hits,
+      misses: globalTotals.misses,
+      pushes: globalTotals.push,
+      p: globalTotals.hitRate,
+    };
+  }, [globalTotals]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -1042,6 +1124,45 @@ export default function NbaClient() {
                     <span className="tabular-nums font-semibold">{formatPct(scoreSummary.p)}</span>
                     <span className="text-foreground/70">Hit rate</span>
                   </Pill>
+                </div>
+              </div>
+
+              {/* Global totals row */}
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs text-foreground/55">
+                  Global (all devices){" "}
+                  <span className="text-foreground/40">
+                    • {globalStatus === "loading" ? "Loading…" : globalStatus === "missing" ? "Unavailable" : "Ready"}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Pill tone="neutral">
+                    <span className="tabular-nums font-semibold">{globalSummary ? globalSummary.hits : "—"}</span>
+                    <span className="text-foreground/70">Hits</span>
+                  </Pill>
+                  <Pill tone="neutral">
+                    <span className="tabular-nums font-semibold">{globalSummary ? globalSummary.misses : "—"}</span>
+                    <span className="text-foreground/70">Misses</span>
+                  </Pill>
+                  <Pill tone="neutral">
+                    <span className="tabular-nums font-semibold">{globalSummary ? globalSummary.pushes : "—"}</span>
+                    <span className="text-foreground/70">Push</span>
+                  </Pill>
+                  <Pill tone="neutral">
+                    <span className="tabular-nums font-semibold">{formatPct(globalSummary ? globalSummary.p : null)}</span>
+                    <span className="text-foreground/70">Hit rate</span>
+                  </Pill>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      syncGlobalScoreboard();
+                    }}
+                    className="rounded-xl border border-[color:var(--border)] bg-white/5 px-3 py-2 text-xs font-semibold text-white hover:bg-white/10"
+                  >
+                    Sync global
+                  </button>
                 </div>
               </div>
 

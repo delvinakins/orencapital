@@ -1,4 +1,3 @@
-// src/app/api/labs/nba/scoreboard/global/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
@@ -22,7 +21,7 @@ function supabaseAdmin() {
 /**
  * GET /api/labs/nba/scoreboard/global?season=2025-2026&league=nba&sport=basketball
  *
- * Returns season-scoped global totals from public.nba_edge_scoreboard.
+ * Returns global totals for the requested scope.
  */
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -38,7 +37,7 @@ export async function GET(req: Request) {
     return jsonError(500, "Supabase misconfigured.", e?.message || String(e));
   }
 
-  const { data: all, error: readErr } = await sb
+  const { data, error } = await sb
     .from("nba_edge_scoreboard")
     .select("mark")
     .eq("season", season)
@@ -46,13 +45,13 @@ export async function GET(req: Request) {
     .eq("sport", sport)
     .limit(200000);
 
-  if (readErr) return jsonError(500, "Supabase read failed.", readErr.message);
+  if (error) return jsonError(500, "Supabase read failed.", error.message);
 
   let hits = 0;
   let misses = 0;
   let push = 0;
 
-  for (const r of (all || []) as any[]) {
+  for (const r of (data || []) as any[]) {
     if (r?.mark === "hit") hits++;
     else if (r?.mark === "miss") misses++;
     else if (r?.mark === "push") push++;
