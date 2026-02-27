@@ -1,3 +1,4 @@
+// FILE: src/app/risk-engine/page.tsx
 "use client";
 
 import type React from "react";
@@ -159,7 +160,9 @@ function Input({
 
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-foreground/70">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</label>
+      <label className="text-sm text-foreground/70">
+        {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
+      </label>
       <input
         type={type}
         inputMode={inputMode}
@@ -187,7 +190,9 @@ function Select({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-foreground/70">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</label>
+      <label className="text-sm text-foreground/70">
+        {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
+      </label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -220,8 +225,8 @@ function Card({
     tone === "good"
       ? "border-emerald-800/60"
       : tone === "warn"
-        ? "border-amber-800/60"
-        : "border-[color:var(--border)]";
+      ? "border-amber-800/60"
+      : "border-[color:var(--border)]";
 
   return (
     <div className={`oc-glass rounded-xl p-5 sm:p-6 ${toneClass}`}>
@@ -376,7 +381,10 @@ export default function RiskEnginePage() {
   }, [totals.totalRisk, targetDollarRisk]);
 
   function addPosition() {
-    setPositions((prev) => [...prev, { id: uid(), label: "", side: "long", entry: "", stop: "", qty: "", multiplier: "1" }]);
+    setPositions((prev) => [
+      ...prev,
+      { id: uid(), label: "", side: "long", entry: "", stop: "", qty: "", multiplier: "1" },
+    ]);
   }
 
   function updatePos(id: string, patch: Partial<Position>) {
@@ -458,7 +466,7 @@ export default function RiskEnginePage() {
         ];
 
         writeLocalPortfolios(next);
-        setMsg("Saved locally ✅ (Free)");
+        setMsg("Saved locally ✅");
         setBusy(null);
         await refreshPortfolios();
         return;
@@ -477,7 +485,7 @@ export default function RiskEnginePage() {
         return;
       }
 
-      setMsg("Portfolio saved ✅ (Cloud)");
+      setMsg("Portfolio saved ✅");
       setBusy(null);
       await refreshPortfolios();
     } catch (e: any) {
@@ -527,7 +535,7 @@ export default function RiskEnginePage() {
       setFixedRisk(String(data.fixedRisk ?? "100"));
       setPositions(Array.isArray(data.positions) ? data.positions : []);
 
-      setMsg(isPro ? "Portfolio loaded ✅ (Cloud)" : "Portfolio loaded ✅ (Local)");
+      setMsg(isPro ? "Portfolio loaded ✅" : "Portfolio loaded ✅");
       setBusy(null);
     } catch (e: any) {
       setBusy(null);
@@ -556,35 +564,30 @@ export default function RiskEnginePage() {
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-10 sm:py-16 space-y-8 sm:space-y-10">
-        <header className="space-y-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h1 className="text-3xl font-semibold tracking-tight">Risk Engine</h1>
-              <p className="mt-2 text-sm text-foreground/70">
-                Build positions with intention: quantify risk, then decide if it’s worth taking.
-              </p>
-            </div>
+      <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-10 sm:py-16 space-y-8">
+        {/* Page Header (matches Survivability) */}
+        <header className="space-y-3">
+          <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
+            <span className="relative inline-block">
+              <span className="relative z-10 text-[color:var(--accent)]">Position Risk</span>
+              <span
+                aria-hidden
+                className="absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-90"
+              />
+              <span
+                aria-hidden
+                className="absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-10"
+              />
+            </span>
+          </h1>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="text-xs text-foreground/60">
-                Plan:{" "}
-                <span className={isPro ? "text-emerald-300" : "text-foreground/80"}>
-                  {isPro ? `Pro (${proStatus || "active"})` : "Free"}
-                </span>
-              </div>
+          <p className="text-[15px] text-foreground/70 max-w-2xl">
+            Build positions with intention. Quantify risk first, then decide if the trade is worth taking.
+          </p>
 
-              {!isPro && (
-                <Link href="/pricing" className="oc-btn oc-btn-secondary">
-                  Upgrade
-                </Link>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 pt-2">
             <Link href="/variance" className="oc-btn oc-btn-secondary">
-              Variance Simulator →
+              Simulator →
             </Link>
 
             <Link
@@ -595,6 +598,19 @@ export default function RiskEnginePage() {
             >
               Run simulator with these settings
             </Link>
+
+            {!isPro && (
+              <Link href="/pricing" className="oc-btn oc-btn-secondary">
+                Upgrade
+              </Link>
+            )}
+
+            <div className="text-xs text-foreground/60">
+              Plan:{" "}
+              <span className={isPro ? "text-emerald-300" : "text-foreground/80"}>
+                {isPro ? `Pro${proStatus ? ` (${proStatus})` : ""}` : "Free"}
+              </span>
+            </div>
           </div>
         </header>
 
@@ -622,7 +638,7 @@ export default function RiskEnginePage() {
                   <span className="font-semibold">Constant-fraction</span>: risk scales with equity (classic “risk 1% per trade”).
                 </div>
                 <div>
-                  <span className="font-semibold">Fixed-dollar</span>: risk a flat $ each trade (emotionally simpler early on).
+                  <span className="font-semibold">Fixed-dollar</span>: risk a flat $ each trade (simpler early on).
                 </div>
               </div>
             }
@@ -642,7 +658,7 @@ export default function RiskEnginePage() {
               value={fixedRisk}
               onChange={setFixedRisk}
               type="number"
-              tip="Target risk per trade in dollars (flat). Example: $50 risk per trade regardless of account size."
+              tip="Target risk per trade in dollars. Example: $50 risk per trade regardless of account size."
             />
           )}
         </section>
@@ -665,7 +681,7 @@ export default function RiskEnginePage() {
             value={riskOk ? "Within target ✅" : "Over target ⚠️"}
             sub={riskOk ? "Looks reasonable." : "Reduce size or tighten stops."}
             tone={riskOk ? "good" : "warn"}
-            tip="If positions risk more than your target, you’re more likely to panic at the worst time."
+            tip="If positions risk more than your target, you’ll be forced into bad decisions under stress."
           />
         </section>
 
@@ -700,7 +716,7 @@ export default function RiskEnginePage() {
                       onChange={(v) => updatePos(p.id, { label: v })}
                       placeholder="AAPL"
                       type="text"
-                      tip='Ticker or nickname. Letters + numbers allowed (e.g., "AAPL", "SPY-1").'
+                      tip='Ticker or nickname (e.g., "AAPL", "SPY-1").'
                     />
 
                     <Select
@@ -711,7 +727,7 @@ export default function RiskEnginePage() {
                         { value: "long", label: "Long" },
                         { value: "short", label: "Short" },
                       ]}
-                      tip="Side changes your trade logic, but risk magnitude is still entry-to-stop distance."
+                      tip="Side affects P/L direction, but the risk math is still entry-to-stop distance."
                     />
 
                     <Input
@@ -729,7 +745,7 @@ export default function RiskEnginePage() {
                       onChange={(v) => updatePos(p.id, { stop: v })}
                       type="number"
                       placeholder="185"
-                      tip="Your invalidation level. If the stop is vague, the risk math is fake."
+                      tip="Your invalidation level. If the stop is vague, the risk math is fiction."
                     />
 
                     <Input
@@ -776,13 +792,13 @@ export default function RiskEnginePage() {
           </div>
         </section>
 
-        {/* Save / Load (Free local, Pro cloud) */}
+        {/* Save / Load */}
         <section className="oc-glass rounded-2xl p-4 sm:p-6 space-y-4 overflow-visible">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-lg font-semibold">Save / Load</div>
               <div className="mt-1 text-sm text-foreground/70">
-                {isPro ? "Cloud save/load (Pro): sync across devices." : "Local save/load (Free): stored in this browser only."}
+                {isPro ? "Cloud save/load: sync across devices." : "Local save/load: stored in this browser."}
               </div>
             </div>
 
@@ -799,11 +815,11 @@ export default function RiskEnginePage() {
 
           {!isPro && (
             <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]/55 backdrop-blur-[2px] p-3 text-sm text-foreground/80">
-              Want this on every device?{" "}
+              Want cloud sync?{" "}
               <Link href="/pricing" className="underline underline-offset-2">
                 Upgrade to Pro
-              </Link>{" "}
-              for cloud save/load.
+              </Link>
+              .
             </div>
           )}
 
@@ -818,9 +834,7 @@ export default function RiskEnginePage() {
 
             <div className="flex flex-col gap-2 md:col-span-2">
               <label className="text-sm text-foreground/70">
-                <Tooltip label="Saved portfolios">
-                  Your saved configurations. Loading replaces the current editor state.
-                </Tooltip>
+                <Tooltip label="Saved portfolios">Loading replaces the current editor state.</Tooltip>
               </label>
 
               <div className="flex flex-col sm:flex-row gap-2">
@@ -849,7 +863,7 @@ export default function RiskEnginePage() {
           </div>
         </section>
 
-        {/* Journal panel (existing) */}
+        {/* Journal panel */}
         <JournalPanel
           isPro={isPro}
           snapshot={{
@@ -867,7 +881,7 @@ export default function RiskEnginePage() {
           }}
         />
 
-        {/* OpenAI: Natural-language → Journal preview/apply/save */}
+        {/* Natural-language → Journal preview/apply/save */}
         <JournalQuickAdd />
       </div>
     </main>
