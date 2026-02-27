@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import TopNav from "@/components/TopNav";
 import { Inter_Tight } from "next/font/google";
 
-// Force dynamic rendering so TopNav reflects latest Pro status (no stale cache)
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -16,6 +15,13 @@ const interTight = Inter_Tight({
 export const metadata: Metadata = {
   title: "Oren Capital",
   description: "Risk discipline for serious traders.",
+  icons: {
+    icon: [
+      { url: "/icon.png", type: "image/png" },
+      { url: "/favicon.ico", type: "image/x-icon" },
+    ],
+    apple: [{ url: "/apple-icon.png", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
