@@ -24,6 +24,7 @@ type LiveGameItem = {
   liveSpreadHome: number | null;
   closingSpreadHome: number | null;
 
+  // live moneyline (American odds)
   liveMoneylineHome: number | null;
   liveMoneylineAway: number | null;
 
@@ -36,17 +37,10 @@ type LiveOk = {
   meta: {
     stale: boolean;
     updatedAt: string;
-
-    // display controls
-    mode: "yesterday_finals" | "today_slate";
-    dateKeyPT: string; // what we are showing (yday until noon PT, then today/next slate)
-    allowedDateKeysPT: string[]; // for debugging
-    firstTipIso?: string | null;
-    unlockAtIso?: string | null;
-
     window: "active" | "offhours";
     storage?: "supabase" | "none";
-
+    dateKeyPT?: string;
+    allowedDateKeysPT?: string[];
     closingSeeded?: number;
     closingAttached?: number;
     moneylineAttached?: number;
@@ -92,8 +86,8 @@ function dateKeyPT(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function addDaysUTC(dateKeyStr: string, deltaDays: number): string {
-  const [y, m, d] = dateKeyStr.split("-").map((x) => Number(x));
+function addDaysUTC(dateKey: string, deltaDays: number): string {
+  const [y, m, d] = dateKey.split("-").map((x) => Number(x));
   const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
   dt.setUTCDate(dt.getUTCDate() + deltaDays);
   const yy = dt.getUTCFullYear();
@@ -140,7 +134,7 @@ function classifyPhase(
   const sr = hasNumber(it.secondsRemaining) ? it.secondsRemaining : null;
   const hasScore = hasNumber(it.awayScore) && hasNumber(it.homeScore);
 
-  // Q4 + scores + no clock => FINAL
+  // Key fix: Q4 + scores + no clock => FINAL (prevents “P4 • —” hanging forever)
   if (p != null && p >= 4 && hasScore && (sr === 0 || sr === null)) return "final";
 
   if (p != null && p >= 1 && hasScore) return "live";
@@ -154,31 +148,29 @@ function itemDateKeyFromGameId(gameId: string): string | null {
   return k;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DISPLAY RULES (your requirement)
-// - Show yesterday finals until 12:00 PM PT (3:00 PM ET).
-// - At/after 12:00 PM PT, show the upcoming slate for “today”.
-// - If today has no slate, fall forward to the next available slate date (workaround).
-// - Oren Edge + Close unlock at (firstTip - 2 hours).
-// ─────────────────────────────────────────────────────────────────────────────
-
-function chooseDisplayKey(now: Date) {
+function allowedDateKeys(now: Date) {
   const today = dateKeyPT(now);
   const yday = addDaysUTC(today, -1);
-  const noonPT = 12 * 60;
 
   const mins = minutesPT(now);
-  const mode: "yesterday_finals" | "today_slate" = mins < noonPT ? "yesterday_finals" : "today_slate";
-  const primary = mode === "yesterday_finals" ? yday : today;
+  const NOON_PT = 12 * 60;
 
-  return { today, yday, mode, primary };
+  // Until noon PT, keep showing yesterday's finals as the primary slate day.
+  const primary = mins < NOON_PT ? yday : today;
+
+  // Allow both days so late updates / early odds don't vanish, but we display primary.
+  const keys = new Set<string>();
+  keys.add(primary);
+  keys.add(primary === today ? yday : today);
+
+  return { today, primary, keys: Array.from(keys) };
 }
 
-function filterItemsByDateKey(items: LiveGameItem[], key: string) {
+function filterItemsByAllowedDates(items: LiveGameItem[], allowed: Set<string>) {
   return items.filter((it) => {
     const k = itemDateKeyFromGameId(it.gameId);
     if (!k) return true;
-    return k === key;
+    return allowed.has(k);
   });
 }
 
@@ -196,10 +188,7 @@ async function getClosingMap(keys: string[]) {
   const sb = supabaseAdminOrNull();
   if (!sb) return map;
 
-  const { data, error } = await sb
-    .from("nba_closing_lines")
-    .select("game_key, closing_home_spread")
-    .in("game_key", keys);
+  const { data, error } = await sb.from("nba_closing_lines").select("game_key, closing_home_spread").in("game_key", keys);
 
   if (error || !Array.isArray(data)) return map;
 
@@ -212,15 +201,16 @@ async function getClosingMap(keys: string[]) {
   return map;
 }
 
+// pull live moneylines from odds provider + attach by game key
 async function getMoneylineMap(
   odds: any[],
-  wantDateKey: string
+  allowed: Set<string>
 ): Promise<Map<string, { home: number | null; away: number | null }>> {
   const map = new Map<string, { home: number | null; away: number | null }>();
 
   for (const o of odds || []) {
     const dk = String(o?.laDateKey ?? "").trim();
-    if (dk && dk !== wantDateKey) continue;
+    if (dk && !allowed.has(dk)) continue;
 
     const awayTeam = canonicalTeamName(String(o?.awayTeam ?? "").trim());
     const homeTeam = canonicalTeamName(String(o?.homeTeam ?? "").trim());
@@ -228,6 +218,7 @@ async function getMoneylineMap(
 
     const gameKey = makeMatchKey(awayTeam, homeTeam, dk);
 
+    // Try common shapes from provider objects:
     const home =
       toNum((o as any)?.liveMoneylineHome) ??
       toNum((o as any)?.moneylineHome) ??
@@ -252,7 +243,10 @@ async function getMoneylineMap(
 
     if (home == null && away == null) continue;
 
-    map.set(gameKey, { home: home != null ? Math.trunc(home) : null, away: away != null ? Math.trunc(away) : null });
+    map.set(gameKey, {
+      home: home != null ? Math.trunc(home) : null,
+      away: away != null ? Math.trunc(away) : null,
+    });
   }
 
   return map;
@@ -291,42 +285,22 @@ async function seedClosingFromOdds(candidates: Array<{ gameKey: string; closingH
   return toInsert.length;
 }
 
-function computeFirstTipIsoForDate(
-  odds: Array<{ laDateKey: string | null; commenceTimeIso: string | null }>,
-  wantDateKey: string
-): string | null {
-  const ts: number[] = [];
-  for (const o of odds || []) {
-    const dk = o.laDateKey ?? "";
-    if (dk !== wantDateKey) continue;
-    const iso = o.commenceTimeIso;
-    if (!iso) continue;
-    const t = Date.parse(iso);
-    if (Number.isFinite(t)) ts.push(t);
-  }
-  if (ts.length === 0) return null;
-  return new Date(Math.min(...ts)).toISOString();
-}
-
-function addHoursIso(iso: string, hours: number): string | null {
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return null;
-  return new Date(t + hours * 60 * 60 * 1000).toISOString();
-}
-
+/**
+ * Slate-aware polling window:
+ * Active if now is within (firstTip - PRE) .. (lastTip + POST).
+ */
 function computeSlateActive(
   odds: Array<{ laDateKey: string | null; commenceTimeIso: string | null }>,
   now: Date,
-  wantDateKey: string
+  allowed: Set<string>
 ) {
-  // more forgiving window: start 2h before first tip, end 6h after last tip
   const PRE_MIN = 120;
   const POST_MIN = 360;
 
   const times: number[] = [];
-  for (const o of odds || []) {
+  for (const o of odds) {
     const dk = o.laDateKey ?? "";
-    if (dk !== wantDateKey) continue;
+    if (dk && !allowed.has(dk)) continue;
 
     const iso = o.commenceTimeIso;
     if (!iso) continue;
@@ -347,47 +321,23 @@ function computeSlateActive(
   return nowT >= start && nowT <= end;
 }
 
-function nextSlateDateKeyFromOdds(odds: any[], todayKey: string): string | null {
-  const keys = new Set<string>();
-  for (const o of odds || []) {
-    const dk = String(o?.laDateKey ?? "").trim();
-    if (dk && dk.length === 10) keys.add(dk);
-  }
-  const arr = Array.from(keys).sort((a, b) => a.localeCompare(b));
-  const next = arr.find((k) => k >= todayKey) ?? null;
-  return next;
-}
-
 async function pollProviders(now: Date): Promise<LiveOk> {
-  const { today, yday, mode, primary } = chooseDisplayKey(now);
+  const { today, primary, keys } = allowedDateKeys(now);
+  const allowed = new Set(keys);
 
   const odds = await fetchTheOddsApiSpreads();
-
-  // Workaround for “tricky days”:
-  // after noon PT, if there is no slate for today, show the next slate date key available.
-  let wantDateKey = primary;
-  if (mode === "today_slate") {
-    const next = nextSlateDateKeyFromOdds(odds as any[], today);
-    if (next) wantDateKey = next;
-  }
-
   const slateActive = computeSlateActive(
-    odds.map((o: any) => ({ laDateKey: o.laDateKey, commenceTimeIso: o.commenceTimeIso })),
+    odds.map((o) => ({ laDateKey: o.laDateKey, commenceTimeIso: o.commenceTimeIso })),
     now,
-    wantDateKey
+    allowed
   );
 
-  const firstTipIso = computeFirstTipIsoForDate(
-    odds.map((o: any) => ({ laDateKey: o.laDateKey, commenceTimeIso: o.commenceTimeIso })),
-    wantDateKey
-  );
-  const unlockAtIso = firstTipIso ? addHoursIso(firstTipIso, -2) : null;
+  // moneyline attachment map (if provider includes it)
+  const moneylineMap = await getMoneylineMap(odds as any[], allowed);
 
-  const moneylineMap = await getMoneylineMap(odds as any[], wantDateKey);
-
-  // Seed closing from odds (first seen consensus) — only for the date we’re showing
-  const closingCandidates = (odds as any[])
-    .filter((o) => String(o?.laDateKey ?? "").trim() === wantDateKey)
+  // Seed closing from odds (first seen consensus)
+  const closingCandidates = odds
+    .filter((o) => (o.laDateKey ? allowed.has(o.laDateKey) : true))
     .map((o) => ({
       gameKey: makeMatchKey(o.awayTeam, o.homeTeam, o.laDateKey || ""),
       closingHomeSpread: toNum(o.liveHomeSpread) ?? NaN,
@@ -404,21 +354,19 @@ async function pollProviders(now: Date): Promise<LiveOk> {
   const oddsByKey = new Map<string, number | null>();
   const oddsByMatch = new Map<string, number | null>();
 
-  for (const o of odds as any[]) {
-    const dk = String(o?.laDateKey ?? "").trim();
+  for (const o of odds) {
     const match = `${o.awayTeam}@${o.homeTeam}`;
-
-    if (dk === wantDateKey) {
-      oddsByKey.set(`${dk}|${match}`, roundHalf(toNum(o.liveHomeSpread)) ?? null);
-    }
     oddsByMatch.set(match, roundHalf(toNum(o.liveHomeSpread)) ?? null);
+
+    const dk = o.laDateKey ?? "";
+    if (dk && allowed.has(dk)) oddsByKey.set(`${dk}|${match}`, roundHalf(toNum(o.liveHomeSpread)) ?? null);
   }
 
   const items: LiveGameItem[] = [];
 
   for (const raw of scores as any[]) {
     const laKey = String(raw?.laDateKey ?? "").trim();
-    if (laKey && laKey !== wantDateKey) continue;
+    if (laKey && !allowed.has(laKey)) continue;
 
     const awayTeam = canonicalTeamName(String(raw?.awayTeam ?? "").trim());
     const homeTeam = canonicalTeamName(String(raw?.homeTeam ?? "").trim());
@@ -438,6 +386,7 @@ async function pollProviders(now: Date): Promise<LiveOk> {
     if (!hasAny) continue;
 
     const phase = classifyPhase({ period, secondsRemaining, awayScore, homeScore }, raw?.status);
+
     const ml = moneylineMap.get(gameKey) ?? null;
 
     items.push({
@@ -456,23 +405,24 @@ async function pollProviders(now: Date): Promise<LiveOk> {
     });
   }
 
-  // Fallback to odds slate if scores missing (pregame tiles)
-  if (items.length === 0 && (odds as any[]).length > 0) {
-    for (const o of odds as any[]) {
-      const dk = String(o?.laDateKey ?? "").trim();
-      if (dk !== wantDateKey) continue;
+  // Fallback to odds slate if scores missing
+  if (items.length === 0 && odds.length > 0) {
+    for (const o of odds) {
+      const dk = o.laDateKey ?? "";
+      if (dk && !allowed.has(dk)) continue;
 
       const awayTeam = canonicalTeamName(String(o?.awayTeam ?? "").trim());
       const homeTeam = canonicalTeamName(String(o?.homeTeam ?? "").trim());
       if (!awayTeam || !homeTeam) continue;
 
       const gameKey = makeMatchKey(awayTeam, homeTeam, dk);
+
       const ml = moneylineMap.get(gameKey) ?? null;
 
       items.push({
         gameId: gameKey,
-        awayTeam,
-        homeTeam,
+        awayTeam: awayTeam,
+        homeTeam: homeTeam,
         awayScore: null,
         homeScore: null,
         period: 0,
@@ -486,7 +436,9 @@ async function pollProviders(now: Date): Promise<LiveOk> {
     }
   }
 
-  const filtered = filterItemsByDateKey(items, wantDateKey);
+  // DISPLAY PRIMARY ONLY (yesterday until noon PT, then today)
+  const primarySet = new Set<string>([primary]);
+  const filtered = filterItemsByAllowedDates(items, primarySet);
 
   const closingMap = await getClosingMap(filtered.map((it) => it.gameId));
   const attached = filtered.map((it) => ({
@@ -505,13 +457,12 @@ async function pollProviders(now: Date): Promise<LiveOk> {
     meta: {
       stale: !slateActive,
       updatedAt: nowIso(),
-      mode,
-      dateKeyPT: wantDateKey,
-      allowedDateKeysPT: mode === "yesterday_finals" ? [yday] : [wantDateKey],
-      firstTipIso: firstTipIso ?? null,
-      unlockAtIso: unlockAtIso ?? null,
       window: slateActive ? "active" : "offhours",
       storage: supabaseAdminOrNull() ? "supabase" : "none",
+      // dateKeyPT is what the UI should consider the "display day"
+      dateKeyPT: primary,
+      // show both allowed keys for debugging/visibility
+      allowedDateKeysPT: keys,
       closingSeeded,
       closingAttached: closingMap.size,
       moneylineAttached,
