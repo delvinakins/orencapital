@@ -113,6 +113,7 @@ export default function TopNav() {
                     <MenuItem href="/variance" label="Simulator" onClick={() => setMoreOpen(false)} />
                     <MenuItem href="/portfolio" label="Portfolio" onClick={() => setMoreOpen(false)} />
                     <MenuItem href="/journal" label="Journal" onClick={() => setMoreOpen(false)} />
+                    <MenuItem href="/risk-death" label="Risk Death" onClick={() => setMoreOpen(false)} />
                     <MenuItem href={labsHref} label={labsLabel} onClick={() => setMoreOpen(false)} />
                     <div className={`my-1 h-px ${border}`} />
                     <MenuItem href="/pricing" label="Pricing" onClick={() => setMoreOpen(false)} />
@@ -158,7 +159,9 @@ export default function TopNav() {
                 </button>
 
                 {acctOpen && (
-                  <div className={`absolute right-0 mt-3 w-52 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
+                  <div
+                    className={`absolute right-0 mt-3 w-52 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}
+                  >
                     <MenuItem href="/account" label="Account" onClick={() => setAcctOpen(false)} />
                     <MenuItem href="/account/billing" label="Billing" onClick={() => setAcctOpen(false)} />
                     <div className={`my-1 h-px ${border}`} />
@@ -172,7 +175,10 @@ export default function TopNav() {
                 )}
               </div>
             ) : (
-              <Link href="/login" className={`rounded-xl border ${border} bg-white/5 px-4 py-2 text-sm text-white hover:bg-white/10`}>
+              <Link
+                href="/login"
+                className={`rounded-xl border ${border} bg-white/5 px-4 py-2 text-sm text-white hover:bg-white/10`}
+              >
                 Login
               </Link>
             )}
@@ -197,6 +203,7 @@ export default function TopNav() {
                 <MobileItem href="/variance" label="Simulator" onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/portfolio" label="Portfolio" onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/journal" label="Journal" onClick={() => setMobileOpen(false)} />
+                <MobileItem href="/risk-death" label="Risk Death" onClick={() => setMobileOpen(false)} />
                 <MobileItem href={labsHref} label={labsLabel} onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/pricing" label="Pricing" onClick={() => setMobileOpen(false)} />
 
@@ -220,11 +227,7 @@ function NavLink({ href, label }: { href: string; label: string }) {
 
 function MenuItem({ href, label, onClick }: { href: string; label: string; onClick?: () => void }) {
   return (
-    <Link
-      href={href}
-      onClick={onClick}
-      className="block px-4 py-2.5 text-sm text-slate-300 hover:bg-white/5 hover:text-white"
-    >
+    <Link href={href} onClick={onClick} className="block px-4 py-2.5 text-sm text-slate-300 hover:bg-white/5 hover:text-white">
       {label}
     </Link>
   );
