@@ -16,7 +16,11 @@ export const metadata: Metadata = {
   title: "Oren Capital",
   description: "Risk discipline for serious traders.",
   icons: {
-    icon: [{ url: "/favicon.ico" }],
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/icon.svg", type: "image/svg+xml" }
+    ],
+    apple: [{ url: "/apple-touch-icon.png" }],
   },
 };
 
