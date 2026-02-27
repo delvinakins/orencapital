@@ -264,7 +264,6 @@ export default function RiskDeathClient() {
           <h1 className="text-3xl font-semibold tracking-tight sm:text-5xl">Blow-Up Risk</h1>
           <p className="text-sm text-foreground/55 max-w-3xl">
             A fast Monte Carlo estimate of how often a betting/trading profile “dies” (crosses a drawdown line) over a horizon.
-            This is generic risk-of-ruin math—your Oren Edge formula stays private and untouched.
           </p>
         </div>
 
