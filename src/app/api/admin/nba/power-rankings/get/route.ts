@@ -7,22 +7,25 @@ import { supabaseService } from "@/lib/supabase/service";
 
 export const dynamic = "force-dynamic";
 
-function supabaseServer() {
-  const cookieStore = cookies();
+async function supabaseServer() {
+  // ✅ Next cookies() is async now
+  const cookieStore = await cookies();
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anon) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
 
+  // ✅ Route Handler cookies are read-only: implement a read-only adapter
   return createServerClient(url, anon, {
     cookies: {
       get(name) {
         return cookieStore.get(name)?.value;
       },
-      set(name, value, options) {
-        cookieStore.set({ name, value, ...options });
+      set() {
+        // no-op (route handler cookies are read-only)
       },
-      remove(name, options) {
-        cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+      remove() {
+        // no-op (route handler cookies are read-only)
       },
     },
   });
@@ -39,8 +42,9 @@ const DEFAULT_TEAMS = [
 export async function GET(req: Request) {
   try {
     // auth gate (must be signed in + admin email)
-    const supa = supabaseServer();
+    const supa = await supabaseServer();
     const { data } = await supa.auth.getUser();
+
     const email = data.user?.email ?? null;
     if (!email) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     if (!isAdminEmail(email)) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });

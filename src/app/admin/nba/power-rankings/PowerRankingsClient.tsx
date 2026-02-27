@@ -1,6 +1,7 @@
 // src/app/admin/nba/power-rankings/PowerRankingsClient.tsx
 "use client";
 
+import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   DndContext,
@@ -9,7 +10,7 @@ import {
   closestCenter,
   useSensor,
   useSensors,
-  DragEndEvent,
+  type DragEndEvent,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -38,15 +39,7 @@ function num(v: any, fallback: number) {
   return Number.isFinite(x) ? x : fallback;
 }
 
-function SortRow({
-  id,
-  rank,
-  team,
-}: {
-  id: string;
-  rank: number;
-  team: string;
-}) {
+function SortRow({ id, rank, team }: { id: string; rank: number; team: string }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
 
   const style: React.CSSProperties = {
@@ -66,7 +59,7 @@ function SortRow({
           type="button"
           {...attributes}
           {...listeners}
-          className={`h-8 w-8 rounded-lg border ${border} bg-white/5 text-foreground/70 hover:bg-white/10 active:scale-[0.98]`}
+          className={`h-8 w-8 rounded-lg border ${border} bg-white/5 text-foreground/70 hover:bg-white/10 active:scale-[0.98] transition-colors`}
           aria-label="Drag handle"
           title="Drag"
         >
@@ -186,9 +179,7 @@ export default function PowerRankingsClient() {
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="text-sm font-medium">Settings</div>
-            <div className="text-xs text-foreground/45 mt-0.5">
-              Season + Oren Edge params. Rankings are 1..30.
-            </div>
+            <div className="text-xs text-foreground/45 mt-0.5">Season + Oren Edge params. Rankings are 1..30.</div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -196,15 +187,16 @@ export default function PowerRankingsClient() {
               type="button"
               onClick={load}
               disabled={loading}
-              className={`rounded-xl border ${border} bg-white/5 px-4 py-2 text-sm text-foreground hover:bg-white/10 disabled:opacity-60`}
+              className={`rounded-xl border ${border} bg-white/5 px-4 py-2 text-sm text-foreground hover:bg-white/10 disabled:opacity-60 transition-colors`}
             >
               {loading ? "Loading…" : "Refresh"}
             </button>
+
             <button
               type="button"
               onClick={save}
               disabled={saving || loading || items.length === 0}
-              className={`rounded-xl border ${border} bg-[color:var(--accent)]/15 px-4 py-2 text-sm font-semibold text-[color:var(--accent)] hover:bg-[color:var(--accent)]/20 disabled:opacity-60`}
+              className={`rounded-xl border ${border} bg-[color:var(--accent)]/15 px-4 py-2 text-sm font-semibold text-[color:var(--accent)] hover:bg-[color:var(--accent)]/20 disabled:opacity-60 transition-colors`}
             >
               {saving ? "Saving…" : "Save changes"}
             </button>
@@ -212,9 +204,7 @@ export default function PowerRankingsClient() {
         </div>
 
         {!!msg && (
-          <div className={`rounded-xl border ${border} ${subtle} px-3.5 py-3 text-sm text-foreground/80`}>
-            {msg}
-          </div>
+          <div className={`rounded-xl border ${border} ${subtle} px-3.5 py-3 text-sm text-foreground/80`}>{msg}</div>
         )}
 
         <div className="grid gap-3 md:grid-cols-4">
@@ -267,9 +257,7 @@ export default function PowerRankingsClient() {
             <div className="text-sm font-medium">Power Rankings</div>
             <div className="text-xs text-foreground/45 mt-0.5">Drag handle to reorder.</div>
           </div>
-          <div className="text-xs text-foreground/45 tabular-nums">
-            {items.length} teams
-          </div>
+          <div className="text-xs text-foreground/45 tabular-nums">{items.length} teams</div>
         </div>
 
         {loading ? (
@@ -290,9 +278,7 @@ export default function PowerRankingsClient() {
           </DndContext>
         )}
 
-        <div className="text-[11px] text-foreground/35">
-          Tip: keep changes small and track performance in the watchlist scoreboard.
-        </div>
+        <div className="text-[11px] text-foreground/35">Tip: keep changes small and track performance in the watchlist scoreboard.</div>
       </section>
     </div>
   );

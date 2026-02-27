@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { computeDeviation } from "@/lib/labs/nba/heatmap";
 import { buildDistributionIndex } from "@/lib/nba/deviation-engine";
@@ -423,9 +423,15 @@ function OrenEdgeBar({ v }: { v: number | null }) {
     <div className="relative h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
       <div className="absolute inset-y-0 left-1/2 w-px bg-white/25" />
       {x >= 0 ? (
-        <div className="absolute inset-y-0 bg-[color:var(--accent)]/65" style={{ left: "50%", width: `${rightPct - 50}%` }} />
+        <div
+          className="absolute inset-y-0 bg-[color:var(--accent)]/65"
+          style={{ left: "50%", width: `${rightPct - 50}%` }}
+        />
       ) : (
-        <div className="absolute inset-y-0 bg-amber-400/60" style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }} />
+        <div
+          className="absolute inset-y-0 bg-amber-400/60"
+          style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }}
+        />
       )}
     </div>
   );
@@ -445,11 +451,7 @@ function Pill({
       ? "border-white/10 bg-white/5 text-foreground/75"
       : "border-white/10 bg-black/20 text-foreground/60";
 
-  return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs", cls)}>
-      {children}
-    </span>
-  );
+  return <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs", cls)}>{children}</span>;
 }
 
 type ScoreMark = "hit" | "miss" | "push" | "na";
@@ -475,16 +477,36 @@ function ScoreMarkBadge({ mark }: { mark: ScoreMark }) {
 
 // ─── Score line ──────────────────────────────────────────────────────────────
 const NBA_ABBR: Record<string, string> = {
-  "atlanta hawks": "ATL", "boston celtics": "BOS", "brooklyn nets": "BKN",
-  "charlotte hornets": "CHA", "chicago bulls": "CHI", "cleveland cavaliers": "CLE",
-  "dallas mavericks": "DAL", "denver nuggets": "DEN", "detroit pistons": "DET",
-  "golden state warriors": "GSW", "houston rockets": "HOU", "indiana pacers": "IND",
-  "los angeles clippers": "LAC", "los angeles lakers": "LAL", "memphis grizzlies": "MEM",
-  "miami heat": "MIA", "milwaukee bucks": "MIL", "minnesota timberwolves": "MIN",
-  "new orleans pelicans": "NOP", "new york knicks": "NYK", "oklahoma city thunder": "OKC",
-  "orlando magic": "ORL", "philadelphia 76ers": "PHI", "phoenix suns": "PHX",
-  "portland trail blazers": "POR", "sacramento kings": "SAC", "san antonio spurs": "SAS",
-  "toronto raptors": "TOR", "utah jazz": "UTA", "washington wizards": "WAS",
+  "atlanta hawks": "ATL",
+  "boston celtics": "BOS",
+  "brooklyn nets": "BKN",
+  "charlotte hornets": "CHA",
+  "chicago bulls": "CHI",
+  "cleveland cavaliers": "CLE",
+  "dallas mavericks": "DAL",
+  "denver nuggets": "DEN",
+  "detroit pistons": "DET",
+  "golden state warriors": "GSW",
+  "houston rockets": "HOU",
+  "indiana pacers": "IND",
+  "los angeles clippers": "LAC",
+  "los angeles lakers": "LAL",
+  "memphis grizzlies": "MEM",
+  "miami heat": "MIA",
+  "milwaukee bucks": "MIL",
+  "minnesota timberwolves": "MIN",
+  "new orleans pelicans": "NOP",
+  "new york knicks": "NYK",
+  "oklahoma city thunder": "OKC",
+  "orlando magic": "ORL",
+  "philadelphia 76ers": "PHI",
+  "phoenix suns": "PHX",
+  "portland trail blazers": "POR",
+  "sacramento kings": "SAC",
+  "san antonio spurs": "SAS",
+  "toronto raptors": "TOR",
+  "utah jazz": "UTA",
+  "washington wizards": "WAS",
 };
 
 function teamAbbr(name: string): string {
@@ -500,7 +522,7 @@ function teamLogoUrl(name: string): string | null {
 
 function teamDisplayName(name: string): string {
   const k = String(name ?? "").toLowerCase().trim();
-  return k.replace(/\b\w/g, (c) => c.toUpperCase());
+  return k.replace(/\b\w/g, (c: string) => c.toUpperCase());
 }
 
 function ScoreLine({
@@ -535,18 +557,16 @@ function ScoreLine({
           <span className="font-semibold tracking-wide text-sm">{abbr}</span>
           <span className="hidden sm:inline text-xs text-foreground/40 truncate">{fullName}</span>
         </div>
-        <span className={cn("tabular-nums font-bold text-base", isWinner ? "text-foreground" : "text-foreground/60")}>
-          {score}
-        </span>
+        <span className={cn("tabular-nums font-bold text-base", isWinner ? "text-foreground" : "text-foreground/60")}>{score}</span>
       </div>
     );
   };
 
   return (
     <div className="mt-3 rounded-xl border border-white/8 bg-black/15 px-3.5 py-2.5 space-y-2">
-      <TeamRow name={awayTeam} score={awayScore!} isWinner={awayWin} />
+      <TeamRow name={awayTeam} score={awayScore} isWinner={awayWin} />
       <div className="h-px bg-white/8" />
-      <TeamRow name={homeTeam} score={homeScore!} isWinner={homeWin} />
+      <TeamRow name={homeTeam} score={homeScore} isWinner={homeWin} />
     </div>
   );
 }
@@ -584,9 +604,10 @@ function safeReadScoreboard(): ScoreboardState {
     if (typeof window === "undefined") return { version: 1, records: {} };
     const raw = window.localStorage.getItem(SCOREBOARD_KEY);
     if (!raw) return { version: 1, records: {} };
-    const j = JSON.parse(raw);
-    if (j?.version !== 1 || typeof j?.records !== "object") return { version: 1, records: {} };
-    return { version: 1, records: j.records };
+    const j: unknown = JSON.parse(raw);
+    const jj = j as { version?: unknown; records?: unknown };
+    if (jj?.version !== 1 || typeof jj?.records !== "object" || jj.records == null) return { version: 1, records: {} };
+    return { version: 1, records: jj.records as Record<string, ScoreRecord> };
   } catch {
     return { version: 1, records: {} };
   }
@@ -652,6 +673,8 @@ type Row = {
   scoreMark: ScoreMark;
 };
 
+type DayAgg = { hit: number; miss: number; push: number };
+
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function NbaClient() {
   const [games, setGames] = useState<GameClockState[]>([]);
@@ -713,9 +736,9 @@ export default function NbaClient() {
           setOrenStatus("missing");
           return;
         }
-        const json = await res.json().catch(() => null);
+        const json: any = await res.json().catch(() => null);
         if (json?.ok && json?.map) {
-          setOrenMap(json.map);
+          setOrenMap(json.map as Record<string, number>);
           if (json?.params) {
             const { A = 10, k = 0.12, S = 1.0 } = json.params;
             if ([A, k, S].every(Number.isFinite)) setOrenParams({ A: Number(A), k: Number(k), S: Number(S) });
@@ -741,7 +764,7 @@ export default function NbaClient() {
         setLoading(false);
         return;
       }
-      const json = await res.json().catch(() => null);
+      const json: any = await res.json().catch(() => null);
       if (json?.ok && Array.isArray(json.items)) {
         setGames(json.items);
         setMeta(json.meta as LiveMeta);
@@ -765,9 +788,9 @@ export default function NbaClient() {
         `/api/labs/nba/scoreboard/global?season=2025-2026&league=nba&sport=basketball&_t=${Date.now()}`,
         { cache: "no-store" }
       );
-      const json = res.headers.get("content-type")?.includes("application/json") ? await res.json().catch(() => null) : null;
+      const json: any = res.headers.get("content-type")?.includes("application/json") ? await res.json().catch(() => null) : null;
       if (json?.ok && json?.totals) {
-        setGlobalTotals(json.totals);
+        setGlobalTotals(json.totals as GlobalTotals);
         setGlobalStatus("ok");
       } else setGlobalStatus("missing");
     } catch {
@@ -807,7 +830,7 @@ export default function NbaClient() {
 
   const rows = useMemo<Row[]>(() => {
     const now = Date.now();
-    const computed: Row[] = games.map((g: any) => {
+    const computed: Row[] = (games as any[]).map((g: any) => {
       const { phase, isLive } = derivePhaseAndLive(g);
       const awayTeam = String(g?.awayTeam ?? "—");
       const homeTeam = String(g?.homeTeam ?? "—");
@@ -839,9 +862,9 @@ export default function NbaClient() {
       let absZ: number | null = null;
 
       if (isLive) {
-        const result = computeDeviation(g, { spreadIndex });
-        const modelGap = result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : null;
-        absZ = result && Number.isFinite(result.absZ) ? result.absZ : null;
+        const result: any = computeDeviation(g, { spreadIndex });
+        const modelGap = result && Number.isFinite(result.dislocationPts) ? (result.dislocationPts as number) : null;
+        absZ = result && Number.isFinite(result.absZ) ? (result.absZ as number) : null;
         if (modelGap != null) {
           moveGapPts = modelGap;
           moveGapMode = "model";
@@ -873,9 +896,9 @@ export default function NbaClient() {
         Number.isFinite(orenEdgePts) &&
         rawMove != null
       ) {
-        const so = sign(orenEdgePts),
-          sm = sign(moveGapPts),
-          sr = sign(rawMove);
+        const so = sign(orenEdgePts);
+        const sm = sign(moveGapPts);
+        const sr = sign(rawMove);
         const aligned = so !== 0 && so === sm && so === sr;
         const stillRoom = Math.abs(rawMove) < Math.abs(orenEdgePts) * 1.2;
 
@@ -921,6 +944,7 @@ export default function NbaClient() {
     });
 
     const phaseRank = (r: Row) => ({ live: 0, pregame: 1, unknown: 2, final: 3 }[r.phase] ?? 2);
+
     computed.sort((a, b) => {
       const rd = phaseRank(a) - phaseRank(b);
       if (rd !== 0) return rd;
@@ -938,7 +962,7 @@ export default function NbaClient() {
     if (typeof window === "undefined") return;
     const dateKey = meta?.dateKeyPT ? String(meta.dateKeyPT) : dateKeyPTNow();
 
-    setScoreboard((prev) => {
+    setScoreboard((prev: ScoreboardState) => {
       const next: ScoreboardState = { version: 1, records: { ...(prev.records || {}) } };
       let changed = false;
 
@@ -977,14 +1001,14 @@ export default function NbaClient() {
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
   const scoreSummary = useMemo(() => {
-    const recs = Object.values(scoreboard.records || {});
-    const hits = recs.filter((r) => r.mark === "hit").length;
-    const misses = recs.filter((r) => r.mark === "miss").length;
-    const pushes = recs.filter((r) => r.mark === "push").length;
+    const recs = Object.values(scoreboard.records || {}) as ScoreRecord[];
+    const hits = recs.filter((r: ScoreRecord) => r.mark === "hit").length;
+    const misses = recs.filter((r: ScoreRecord) => r.mark === "miss").length;
+    const pushes = recs.filter((r: ScoreRecord) => r.mark === "push").length;
     const graded = hits + misses;
     const p = graded > 0 ? hits / graded : null;
 
-    const byDay = new Map<string, { hit: number; miss: number; push: number }>();
+    const byDay = new Map<string, DayAgg>();
     for (const r of recs) {
       const k = r.dateKeyPT || "—";
       const cur = byDay.get(k) ?? { hit: 0, miss: 0, push: 0 };
@@ -1099,7 +1123,7 @@ export default function NbaClient() {
 
           {scoreSummary.days.length > 0 ? (
             <div className="grid gap-2 sm:grid-cols-3 border-t border-white/8 pt-3">
-              {scoreSummary.days.map(([day, v]) => {
+              {scoreSummary.days.map(([day, v]: [string, DayAgg]) => {
                 const graded = v.hit + v.miss;
                 const p = graded > 0 ? v.hit / graded : null;
                 return (
@@ -1154,7 +1178,7 @@ export default function NbaClient() {
 
               {/* Game cards */}
               <div className="grid gap-3">
-                {rows.map((r) => {
+                {rows.map((r: Row) => {
                   const cTone = confluenceTone(r.confluence);
                   const ring =
                     r.confirmed
@@ -1204,12 +1228,7 @@ export default function NbaClient() {
                         </div>
                       </div>
 
-                      <ScoreLine
-                        awayTeam={r.awayTeam}
-                        homeTeam={r.homeTeam}
-                        awayScore={r.awayScore}
-                        homeScore={r.homeScore}
-                      />
+                      <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
 
                       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                         <div className="rounded-xl border border-white/8 bg-black/10 px-3.5 py-3">
