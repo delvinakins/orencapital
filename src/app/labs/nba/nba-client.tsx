@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { computeDeviation } from "@/lib/labs/nba/heatmap";
 import { buildDistributionIndex } from "@/lib/nba/deviation-engine";
 
@@ -12,9 +12,6 @@ type LiveMeta =
       updatedAt?: string;
       window?: "active" | "offhours";
       dateKeyPT?: string;
-
-      // ✅ from your server response (live-games meta)
-      rankingsLoaded?: boolean;
     }
   | undefined;
 
@@ -24,15 +21,13 @@ function InfoTip({ content }: { content: React.ReactNode }) {
     <span className="group relative inline-flex">
       <button
         type="button"
-        className="flex h-4 w-4 items-center justify-center rounded-full border border-white/20 text-[10px] text-foreground/50 hover:border-white/40 hover:text-foreground/80 transition-colors"
+        className="flex h-4 w-4 items-center justify-center rounded-full border border-white/20 text-[10px] text-foreground/50 transition-colors hover:border-white/40 hover:text-foreground/80"
         tabIndex={0}
         aria-label="More info"
       >
         i
       </button>
-      <span
-        className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-72 -translate-x-1/2 rounded-xl border border-white/15 bg-[#111] p-3 text-xs text-foreground/75 opacity-0 shadow-xl transition-opacity group-hover:pointer-events-auto group-hover:opacity-100"
-      >
+      <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-72 -translate-x-1/2 rounded-xl border border-white/15 bg-[#111] p-3 text-xs text-foreground/75 opacity-0 shadow-xl transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
         {content}
       </span>
     </span>
@@ -197,14 +192,43 @@ function dateKeyPTNow(): string {
   }).format(new Date());
 }
 
-function isAfter2pmPT(now: Date): boolean {
+// ✅ Unlock at 3pm ET (prevents “just finals” for visitors until late afternoon)
+function isAfter3pmET(now: Date): boolean {
   const hourStr = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
+    timeZone: "America/New_York",
     hour: "numeric",
     hour12: false,
   }).format(now);
   const h = Number(hourStr);
-  return Number.isFinite(h) ? h >= 14 : false;
+  return Number.isFinite(h) ? h >= 15 : false;
+}
+
+function normalizeTeam(s: any): string {
+  return String(s ?? "").trim().toLowerCase();
+}
+
+function orenRating(rank: number, A: number, k: number): number {
+  if (!Number.isFinite(rank) || rank < 1) return 0;
+  return A * Math.exp(-k * (rank - 1));
+}
+
+function computeOrenEdgePts(args: {
+  homeTeam: string;
+  awayTeam: string;
+  closingSpreadHome: number | null;
+  rankMap: Record<string, number> | null;
+  params: { A: number; k: number; S: number } | null;
+}): number | null {
+  const { homeTeam, awayTeam, closingSpreadHome, rankMap, params } = args;
+  if (!rankMap || !params) return null;
+  if (!Number.isFinite(closingSpreadHome as any)) return null;
+  const homeRank = rankMap[normalizeTeam(homeTeam)];
+  const awayRank = rankMap[normalizeTeam(awayTeam)];
+  if (!Number.isFinite(homeRank) || !Number.isFinite(awayRank)) return null;
+  const homeRating = orenRating(homeRank, params.A, params.k);
+  const awayRating = orenRating(awayRank, params.A, params.k);
+  const impliedSpreadHome = params.S * (homeRating - awayRating);
+  return impliedSpreadHome - (closingSpreadHome as number);
 }
 
 function sign(x: number) {
@@ -278,7 +302,7 @@ function OrenEdgeBar({ v }: { v: number | null }) {
   const rightPct = Math.max(pct, 50);
 
   return (
-    <div className="relative h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+    <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-white/10">
       <div className="absolute inset-y-0 left-1/2 w-px bg-white/25" />
       {x >= 0 ? (
         <div className="absolute inset-y-0 bg-[color:var(--accent)]/65" style={{ left: "50%", width: `${rightPct - 50}%` }} />
@@ -303,11 +327,7 @@ function Pill({
       ? "border-white/10 bg-white/5 text-foreground/75"
       : "border-white/10 bg-black/20 text-foreground/60";
 
-  return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs", cls)}>
-      {children}
-    </span>
-  );
+  return <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs", cls)}>{children}</span>;
 }
 
 type ScoreMark = "hit" | "miss" | "push" | "na";
@@ -331,18 +351,38 @@ function ScoreMarkBadge({ mark }: { mark: ScoreMark }) {
   );
 }
 
-// ─── Score line ──────────────────────────────────────────────────────────────
+// ─── Score line / logos ──────────────────────────────────────────────────────
 const NBA_ABBR: Record<string, string> = {
-  "atlanta hawks": "ATL", "boston celtics": "BOS", "brooklyn nets": "BKN",
-  "charlotte hornets": "CHA", "chicago bulls": "CHI", "cleveland cavaliers": "CLE",
-  "dallas mavericks": "DAL", "denver nuggets": "DEN", "detroit pistons": "DET",
-  "golden state warriors": "GSW", "houston rockets": "HOU", "indiana pacers": "IND",
-  "los angeles clippers": "LAC", "los angeles lakers": "LAL", "memphis grizzlies": "MEM",
-  "miami heat": "MIA", "milwaukee bucks": "MIL", "minnesota timberwolves": "MIN",
-  "new orleans pelicans": "NOP", "new york knicks": "NYK", "oklahoma city thunder": "OKC",
-  "orlando magic": "ORL", "philadelphia 76ers": "PHI", "phoenix suns": "PHX",
-  "portland trail blazers": "POR", "sacramento kings": "SAC", "san antonio spurs": "SAS",
-  "toronto raptors": "TOR", "utah jazz": "UTA", "washington wizards": "WAS",
+  "atlanta hawks": "ATL",
+  "boston celtics": "BOS",
+  "brooklyn nets": "BKN",
+  "charlotte hornets": "CHA",
+  "chicago bulls": "CHI",
+  "cleveland cavaliers": "CLE",
+  "dallas mavericks": "DAL",
+  "denver nuggets": "DEN",
+  "detroit pistons": "DET",
+  "golden state warriors": "GSW",
+  "houston rockets": "HOU",
+  "indiana pacers": "IND",
+  "los angeles clippers": "LAC",
+  "los angeles lakers": "LAL",
+  "memphis grizzlies": "MEM",
+  "miami heat": "MIA",
+  "milwaukee bucks": "MIL",
+  "minnesota timberwolves": "MIN",
+  "new orleans pelicans": "NOP",
+  "new york knicks": "NYK",
+  "oklahoma city thunder": "OKC",
+  "orlando magic": "ORL",
+  "philadelphia 76ers": "PHI",
+  "phoenix suns": "PHX",
+  "portland trail blazers": "POR",
+  "sacramento kings": "SAC",
+  "san antonio spurs": "SAS",
+  "toronto raptors": "TOR",
+  "utah jazz": "UTA",
+  "washington wizards": "WAS",
 };
 
 function teamAbbr(name: string): string {
@@ -353,7 +393,15 @@ function teamAbbr(name: string): string {
 function teamLogoUrl(name: string): string | null {
   const abbr = teamAbbr(name).toLowerCase();
   if (!abbr || abbr.length < 2) return null;
-  return `https://a.espncdn.com/i/teamlogos/nba/500/${abbr}.png`;
+
+  // ✅ ESPN filename overrides (fixes NOP / UTA placeholders)
+  const ESPN_KEY: Record<string, string> = {
+    nop: "no",
+    uta: "utah",
+  };
+
+  const key = ESPN_KEY[abbr] ?? abbr;
+  return `https://a.espncdn.com/i/teamlogos/nba/500/${key}.png`;
 }
 
 function teamDisplayName(name: string): string {
@@ -362,9 +410,15 @@ function teamDisplayName(name: string): string {
 }
 
 function ScoreLine({
-  awayTeam, homeTeam, awayScore, homeScore,
+  awayTeam,
+  homeTeam,
+  awayScore,
+  homeScore,
 }: {
-  awayTeam: string; homeTeam: string; awayScore: number | null; homeScore: number | null;
+  awayTeam: string;
+  homeTeam: string;
+  awayScore: number | null;
+  homeScore: number | null;
 }) {
   const hasScore = typeof awayScore === "number" && typeof homeScore === "number";
   if (!hasScore) return <div className="mt-2 text-xs text-foreground/40">Score unavailable</div>;
@@ -376,18 +430,24 @@ function ScoreLine({
     const abbr = teamAbbr(name);
     const fullName = teamDisplayName(name);
     const logo = teamLogoUrl(name);
+
     return (
       <div className={cn("flex items-center justify-between gap-2", isWinner ? "text-foreground" : "text-foreground/60")}>
         <div className="flex min-w-0 items-center gap-2">
           {logo ? (
-            <img src={logo} alt={`${abbr} logo`} className="h-5 w-5 flex-none rounded object-contain" loading="lazy" />
+            <img
+              src={logo}
+              alt={`${abbr} logo`}
+              className="h-5 w-5 flex-none rounded object-contain"
+              loading="lazy"
+            />
           ) : (
             <div className="h-5 w-5 flex-none rounded bg-white/5" />
           )}
-          <span className="font-semibold tracking-wide text-xs sm:text-sm">{abbr}</span>
-          <span className="hidden sm:inline text-xs text-foreground/40 truncate">{fullName}</span>
+          <span className="font-semibold tracking-wide text-sm">{abbr}</span>
+          <span className="hidden sm:inline truncate text-xs text-foreground/40">{fullName}</span>
         </div>
-        <span className={cn("tabular-nums font-bold text-sm sm:text-base", isWinner ? "text-foreground" : "text-foreground/60")}>
+        <span className={cn("tabular-nums font-bold text-base", isWinner ? "text-foreground" : "text-foreground/60")}>
           {score}
         </span>
       </div>
@@ -395,7 +455,7 @@ function ScoreLine({
   };
 
   return (
-    <div className="mt-3 rounded-xl border border-white/8 bg-black/15 px-3 py-2 space-y-2">
+    <div className="mt-3 space-y-2 rounded-xl border border-white/8 bg-black/15 px-3.5 py-2.5">
       <TeamRow name={awayTeam} score={awayScore!} isWinner={awayWin} />
       <div className="h-px bg-white/8" />
       <TeamRow name={homeTeam} score={homeScore!} isWinner={homeWin} />
@@ -461,8 +521,10 @@ function computeAtsMarginHome(finalHome: number, finalAway: number, closingHomeS
 
 function computeOrenAtsScoreMark(args: {
   phase: "pregame" | "live" | "final" | "unknown";
-  awayScore: number | null; homeScore: number | null;
-  closingHomeSpread: number | null; orenEdgePts: number | null;
+  awayScore: number | null;
+  homeScore: number | null;
+  closingHomeSpread: number | null;
+  orenEdgePts: number | null;
 }): ScoreMark {
   const { phase, awayScore, homeScore, closingHomeSpread, orenEdgePts } = args;
   if (phase !== "final") return "na";
@@ -472,22 +534,33 @@ function computeOrenAtsScoreMark(args: {
   const ats = computeAtsMarginHome(homeScore, awayScore, closingHomeSpread);
   if (!Number.isFinite(ats)) return "na";
   if (ats === 0) return "push";
-  return sign(orenEdgePts) > 0 === ats > 0 ? "hit" : "miss";
+  return (sign(orenEdgePts) > 0) === (ats > 0) ? "hit" : "miss";
 }
 
 // ─── Row type ────────────────────────────────────────────────────────────────
 type Row = {
-  key: string; gameId: string;
-  awayTeam: string; homeTeam: string;
-  awayScore: number | null; homeScore: number | null;
-  matchup: string; clock: string;
-  current: string; close: string;
-  phase: "pregame" | "live" | "final" | "unknown"; isLive: boolean;
-  period: number | null; secondsRemaining: number | null;
-  moveGapPts: number | null; moveGapText: string;
-  moveGapMode: "model" | "raw" | "none"; absZ: number | null;
-  orenEdgePts: number | null; orenEdgeText: string;
-  confluence: number | null; confirmed: boolean;
+  key: string;
+  gameId: string;
+  awayTeam: string;
+  homeTeam: string;
+  awayScore: number | null;
+  homeScore: number | null;
+  matchup: string;
+  clock: string;
+  current: string;
+  close: string;
+  phase: "pregame" | "live" | "final" | "unknown";
+  isLive: boolean;
+  period: number | null;
+  secondsRemaining: number | null;
+  moveGapPts: number | null;
+  moveGapText: string;
+  moveGapMode: "model" | "raw" | "none";
+  absZ: number | null;
+  orenEdgePts: number | null;
+  orenEdgeText: string;
+  confluence: number | null;
+  confirmed: boolean;
   scoreMark: ScoreMark;
 };
 
@@ -501,6 +574,10 @@ export default function NbaClient() {
   const [spreadIndex, setSpreadIndex] = useState<any>(() => makeStubIndex());
   const [indexSource, setIndexSource] = useState<"stub" | "remote">("stub");
 
+  const [orenMap, setOrenMap] = useState<Record<string, number> | null>(null);
+  const [orenParams, setOrenParams] = useState<{ A: number; k: number; S: number } | null>(null);
+  const [orenStatus, setOrenStatus] = useState<"loading" | "ok" | "missing">("loading");
+
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [scoreboard, setScoreboard] = useState<ScoreboardState>(() => ({ version: 1, records: {} }));
   const [globalTotals, setGlobalTotals] = useState<GlobalTotals | null>(null);
@@ -513,9 +590,11 @@ export default function NbaClient() {
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => { setScoreboard(safeReadScoreboard()); }, []);
+  useEffect(() => {
+    setScoreboard(safeReadScoreboard());
+  }, []);
 
-  const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
+  const afterUnlock = useMemo(() => isAfter3pmET(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
   // distributions
@@ -537,12 +616,42 @@ export default function NbaClient() {
     })();
   }, []);
 
+  // oren rankings
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/labs/nba/oren-score?season=2025-2026", { cache: "no-store" });
+        if (!res.headers.get("content-type")?.includes("application/json")) {
+          setOrenStatus("missing");
+          return;
+        }
+        const json = await res.json().catch(() => null);
+        if (json?.ok && json?.map) {
+          setOrenMap(json.map);
+          if (json?.params) {
+            const { A = 10, k = 0.12, S = 1.0 } = json.params;
+            if ([A, k, S].every(Number.isFinite)) setOrenParams({ A: Number(A), k: Number(k), S: Number(S) });
+          }
+          setOrenStatus("ok");
+        } else {
+          setOrenStatus("missing");
+        }
+      } catch {
+        setOrenStatus("missing");
+      }
+    })();
+  }, []);
+
   async function load() {
     setLoadError(null);
     try {
       const res = await fetch("/api/labs/nba/live-games", { cache: "no-store" });
       if (!res.headers.get("content-type")?.includes("application/json")) {
-        setGames([]); setMeta(undefined); setLoadError("Unable to load games right now."); setLoading(false); return;
+        setGames([]);
+        setMeta(undefined);
+        setLoadError("Unable to load games right now.");
+        setLoading(false);
+        return;
       }
       const json = await res.json().catch(() => null);
       if (json?.ok && Array.isArray(json.items)) {
@@ -550,10 +659,14 @@ export default function NbaClient() {
         setMeta(json.meta as LiveMeta);
         setLoading(false);
       } else {
-        setMeta(undefined); setLoadError("Live feed is offline right now."); setLoading(false);
+        setMeta(undefined);
+        setLoadError("Live feed is offline right now.");
+        setLoading(false);
       }
     } catch {
-      setMeta(undefined); setLoadError("Unable to load games right now."); setLoading(false);
+      setMeta(undefined);
+      setLoadError("Unable to load games right now.");
+      setLoading(false);
     }
   }
 
@@ -565,9 +678,13 @@ export default function NbaClient() {
         { cache: "no-store" }
       );
       const json = res.headers.get("content-type")?.includes("application/json") ? await res.json().catch(() => null) : null;
-      if (json?.ok && json?.totals) { setGlobalTotals(json.totals); setGlobalStatus("ok"); }
-      else setGlobalStatus("missing");
-    } catch { setGlobalStatus("missing"); }
+      if (json?.ok && json?.totals) {
+        setGlobalTotals(json.totals);
+        setGlobalStatus("ok");
+      } else setGlobalStatus("missing");
+    } catch {
+      setGlobalStatus("missing");
+    }
   }
 
   async function syncGlobalScoreboard() {
@@ -585,12 +702,20 @@ export default function NbaClient() {
     } catch {}
   }
 
-  useEffect(() => { load(); const t = setInterval(load, 90_000); return () => clearInterval(t); }, []);
-  useEffect(() => { loadGlobalTotals(); const t = setInterval(loadGlobalTotals, 3 * 60_000); return () => clearInterval(t); }, []);
+  // auto refresh
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 90_000);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => {
+    loadGlobalTotals();
+    const t = setInterval(loadGlobalTotals, 3 * 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   const updatedAtLabel = useMemo(() => formatUpdatedAtPT(meta?.updatedAt), [meta?.updatedAt]);
   const isStale = Boolean(meta?.stale);
-  const orenReady = Boolean(meta?.rankingsLoaded);
 
   const rows = useMemo<Row[]>(() => {
     const now = Date.now();
@@ -600,44 +725,56 @@ export default function NbaClient() {
       const awayTeam = String(g?.awayTeam ?? "—");
       const homeTeam = String(g?.homeTeam ?? "—");
       const s = getLiveScore(g);
-
       const period = safeInt(g?.period);
       const secondsRemaining = safeInt(g?.secondsRemaining);
 
       const clock =
-        phase === "final" ? "Final"
-        : phase === "pregame" || period == null || period === 0 ? "Pregame"
-        : secondsRemaining == null ? `P${period} • —`
-        : `P${period} • ${Math.floor(secondsRemaining / 60)}:${String(secondsRemaining % 60).padStart(2, "0")}`;
+        phase === "final"
+          ? "Final"
+          : phase === "pregame" || period == null || period === 0
+          ? "Pregame"
+          : secondsRemaining == null
+          ? `P${period} • —`
+          : `P${period} • ${Math.floor(secondsRemaining / 60)}:${String(secondsRemaining % 60).padStart(2, "0")}`;
 
       const currentRounded = roundToHalf(g?.liveSpreadHome);
       const closeRounded = roundToHalf(g?.closingSpreadHome);
-      const currentLabel = after2pm ? formatSpread(currentRounded, 1) : "—";
-      const closeLabel = after2pm ? formatSpread(closeRounded, 1) : "—";
+
+      // ✅ Gate public viewing until 3pm ET
+      const currentLabel = afterUnlock ? formatSpread(currentRounded, 1) : "—";
+      const closeLabel = afterUnlock ? formatSpread(closeRounded, 1) : "—";
+      const closeNum = afterUnlock && typeof closeRounded === "number" ? closeRounded : null;
 
       const liveNum = safeNum(g?.liveSpreadHome);
       const closeNum2 = safeNum(g?.closingSpreadHome);
-      const rawMove = liveNum != null && closeNum2 != null ? liveNum - closeNum2 : null;
+      const rawMove = afterUnlock && liveNum != null && closeNum2 != null ? liveNum - closeNum2 : null;
 
       let moveGapPts: number | null = null;
       let moveGapMode: Row["moveGapMode"] = "none";
       let absZ: number | null = null;
 
-      if (isLive) {
+      if (afterUnlock && isLive) {
         const result = computeDeviation(g, { spreadIndex });
         const modelGap = result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : null;
         absZ = result && Number.isFinite(result.absZ) ? result.absZ : null;
-        if (modelGap != null) { moveGapPts = modelGap; moveGapMode = "model"; }
-        else if (rawMove != null) { moveGapPts = rawMove; moveGapMode = "raw"; }
+        if (modelGap != null) {
+          moveGapPts = modelGap;
+          moveGapMode = "model";
+        } else if (rawMove != null) {
+          moveGapPts = rawMove;
+          moveGapMode = "raw";
+        }
       }
 
-      // ✅ server-computed; no client model
-      const orenEdgePts = safeNum(g?.orenEdgePts);
+      const orenEdgePts = afterUnlock
+        ? computeOrenEdgePts({ homeTeam, awayTeam, closingSpreadHome: closeNum, rankMap: orenMap, params: orenParams })
+        : null;
 
-      const confluence = computeConfluenceScore({ orenEdgePts, moveGapPts, isLive });
+      const confluence = computeConfluenceScore({ orenEdgePts, moveGapPts, isLive: afterUnlock ? isLive : false });
 
       let confirmed = false;
       if (
+        afterUnlock &&
         isLive &&
         moveGapMode === "model" &&
         moveGapPts != null &&
@@ -648,7 +785,9 @@ export default function NbaClient() {
         Number.isFinite(orenEdgePts) &&
         rawMove != null
       ) {
-        const so = sign(orenEdgePts), sm = sign(moveGapPts), sr = sign(rawMove);
+        const so = sign(orenEdgePts),
+          sm = sign(moveGapPts),
+          sr = sign(rawMove);
         const aligned = so !== 0 && so === sm && so === sr;
         const stillRoom = Math.abs(rawMove) < Math.abs(orenEdgePts) * 1.2;
         const history = readingsRef.current.get(String(g.gameId ?? `${awayTeam}-${homeTeam}`)) ?? [];
@@ -657,26 +796,38 @@ export default function NbaClient() {
         confirmed = aligned && stillRoom && persists;
       }
 
-      const closeForAts = safeNum(g?.closingSpreadHome);
-
       return {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
         gameId: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
-        awayTeam, homeTeam, awayScore: s.away, homeScore: s.home,
-        matchup: `${awayTeam} @ ${homeTeam}`, clock,
-        current: currentLabel, close: closeLabel,
-        phase, isLive, period, secondsRemaining,
-        moveGapPts, moveGapText: moveGapPts == null ? "—" : formatSigned(moveGapPts, 1),
-        moveGapMode, absZ,
-        orenEdgePts, orenEdgeText: orenEdgePts == null ? "—" : formatSigned(orenEdgePts, 1),
-        confluence, confirmed,
-        scoreMark: computeOrenAtsScoreMark({
-          phase,
-          awayScore: s.away,
-          homeScore: s.home,
-          closingHomeSpread: closeForAts,
-          orenEdgePts
-        }),
+        awayTeam,
+        homeTeam,
+        awayScore: afterUnlock ? s.away : null,
+        homeScore: afterUnlock ? s.home : null,
+        matchup: `${awayTeam} @ ${homeTeam}`,
+        clock: afterUnlock ? clock : "Locked",
+        current: currentLabel,
+        close: closeLabel,
+        phase,
+        isLive: afterUnlock ? isLive : false,
+        period,
+        secondsRemaining,
+        moveGapPts,
+        moveGapText: moveGapPts == null ? "—" : formatSigned(moveGapPts, 1),
+        moveGapMode,
+        absZ,
+        orenEdgePts,
+        orenEdgeText: orenEdgePts == null ? "—" : formatSigned(orenEdgePts, 1),
+        confluence,
+        confirmed,
+        scoreMark: afterUnlock
+          ? computeOrenAtsScoreMark({
+              phase,
+              awayScore: s.away,
+              homeScore: s.home,
+              closingHomeSpread: closeNum,
+              orenEdgePts,
+            })
+          : "na",
       };
     });
 
@@ -689,11 +840,13 @@ export default function NbaClient() {
       if (cd !== 0) return cd;
       return a.matchup.localeCompare(b.matchup);
     });
-    return computed;
-  }, [games, after2pm, spreadIndex]);
 
-  // persist finals
+    return computed;
+  }, [games, afterUnlock, spreadIndex, orenMap, orenParams]);
+
+  // persist finals (only after unlock, otherwise visitors don’t see finals-only drift)
   useEffect(() => {
+    if (!afterUnlock) return;
     if (typeof window === "undefined") return;
     const dateKey = meta?.dateKeyPT ? String(meta.dateKeyPT) : dateKeyPTNow();
     setScoreboard((prev) => {
@@ -702,21 +855,24 @@ export default function NbaClient() {
       for (const r of rows) {
         if (r.phase !== "final" || r.scoreMark === "na") continue;
         if (!next.records[r.gameId]) {
-          next.records[r.gameId] = { gameId: r.gameId, dateKeyPT: dateKey, mark: r.scoreMark, ts: Date.now() };
+          next.records[r.gameId] = { gameId: r.gameId, dateKeyPT: dateKey, mark: r.scoreMark as any, ts: Date.now() };
           changed = true;
         }
       }
       if (changed) safeWriteScoreboard(next);
       return next;
     });
-  }, [rows, meta]);
+  }, [rows, meta, afterUnlock]);
 
   useEffect(() => {
+    if (!afterUnlock) return;
     if (Object.values(scoreboard.records || {}).length === 0) return;
     syncGlobalScoreboard();
-  }, [scoreboard]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scoreboard, afterUnlock]);
 
   useEffect(() => {
+    if (!afterUnlock) return;
     const now = Date.now();
     for (const r of rows) {
       if (!r.isLive || r.moveGapMode !== "model" || r.moveGapPts == null || r.absZ == null) continue;
@@ -725,7 +881,7 @@ export default function NbaClient() {
       while (arr.length > 3) arr.shift();
       readingsRef.current.set(r.key, arr);
     }
-  }, [rows]);
+  }, [rows, afterUnlock]);
 
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
@@ -736,11 +892,14 @@ export default function NbaClient() {
     const pushes = recs.filter((r) => r.mark === "push").length;
     const graded = hits + misses;
     const p = graded > 0 ? hits / graded : null;
+
     const byDay = new Map<string, { hit: number; miss: number; push: number }>();
     for (const r of recs) {
       const k = r.dateKeyPT || "—";
       const cur = byDay.get(k) ?? { hit: 0, miss: 0, push: 0 };
-      if (r.mark === "hit") cur.hit++; else if (r.mark === "miss") cur.miss++; else cur.push++;
+      if (r.mark === "hit") cur.hit++;
+      else if (r.mark === "miss") cur.miss++;
+      else cur.push++;
       byDay.set(k, cur);
     }
     const days = Array.from(byDay.entries()).sort((a, b) => a[0].localeCompare(b[0])).slice(-7).reverse();
@@ -752,33 +911,40 @@ export default function NbaClient() {
     return { hits: globalTotals.hits, misses: globalTotals.misses, pushes: globalTotals.push, p: globalTotals.hitRate };
   }, [globalTotals]);
 
+  const globalLabel = useMemo(() => {
+    if (!afterUnlock) return "Locked until 3 pm ET";
+    if (globalStatus === "loading") return "Loading…";
+    if (globalStatus === "missing") return "Unavailable";
+    return "Synced";
+  }, [globalStatus, afterUnlock]);
+
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
-    <main className="min-h-screen bg-background text-foreground overflow-x-hidden">
+    <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-5xl space-y-6 px-4 py-12 sm:px-6">
-
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <div className="space-y-4">
-          {/* Status pills row */}
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1 text-xs text-foreground/70">
               Labs · NBA
             </div>
             <Pill tone="neutral">{isStale ? "Snapshot" : "Live feed"}</Pill>
-            {liveCount > 0 ? (
-              <Pill tone="live">
-                <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
-                {liveCount} live
-              </Pill>
+            {afterUnlock ? (
+              liveCount > 0 ? (
+                <Pill tone="live">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
+                  {liveCount} live
+                </Pill>
+              ) : (
+                <Pill>0 live</Pill>
+              )
             ) : (
-              <Pill>0 live</Pill>
+              <Pill>Locked</Pill>
             )}
-            {!after2pm && <Pill>Spreads unlock 2 pm PT</Pill>}
+            {!afterUnlock && <Pill>Unlocks 3 pm ET</Pill>}
             <Pill>Index: {indexSource === "remote" ? "Market" : "Stub"}</Pill>
-            <Pill>Oren: {orenReady ? "Ready" : "Missing"}</Pill>
-            {updatedAtLabel && (
-              <span className="text-xs text-foreground/40">Updated {updatedAtLabel} PT</span>
-            )}
+            <Pill>Oren: {orenStatus === "loading" ? "Loading" : orenStatus === "missing" ? "Missing" : "Ready"}</Pill>
+            {updatedAtLabel && <span className="text-xs text-foreground/40">Updated {updatedAtLabel} PT</span>}
           </div>
 
           <div>
@@ -790,27 +956,26 @@ export default function NbaClient() {
         </div>
 
         {/* ── Scoreboard ─────────────────────────────────────────────────── */}
-        <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 space-y-4">
+        <div className="space-y-4 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-sm font-medium">Oren Edge Scoreboard</div>
-              <div className="text-xs text-foreground/45 mt-0.5">Finals only · Oren edge sign vs ATS result</div>
+              <div className="mt-0.5 text-xs text-foreground/45">Finals only · Oren edge sign vs ATS result</div>
             </div>
 
-            {/* Local totals */}
             <div className="flex flex-wrap items-center gap-1.5">
               {[
-                { label: "Hits", val: scoreSummary.hits },
-                { label: "Miss", val: scoreSummary.misses },
-                { label: "Push", val: scoreSummary.pushes },
+                { label: "Hits", val: afterUnlock ? scoreSummary.hits : "—" },
+                { label: "Miss", val: afterUnlock ? scoreSummary.misses : "—" },
+                { label: "Push", val: afterUnlock ? scoreSummary.pushes : "—" },
               ].map(({ label, val }) => (
                 <Pill key={label}>
-                  <span className="tabular-nums font-semibold">{val}</span>
+                  <span className="tabular-nums font-semibold">{val as any}</span>
                   <span className="text-foreground/50">{label}</span>
                 </Pill>
               ))}
               <Pill>
-                <span className="tabular-nums font-semibold">{formatPct(scoreSummary.p)}</span>
+                <span className="tabular-nums font-semibold">{afterUnlock ? formatPct(scoreSummary.p) : "—"}</span>
                 <span className="text-foreground/50">Hit rate</span>
               </Pill>
             </div>
@@ -819,16 +984,14 @@ export default function NbaClient() {
           {/* Global totals */}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-3">
             <div className="text-xs text-foreground/45">
-              Global (all devices) ·{" "}
-              <span className="text-foreground/30">
-                {globalStatus === "loading" ? "Loading…" : globalStatus === "missing" ? "Unavailable" : "Synced"}
-              </span>
+              Global totals · <span className="text-foreground/35">{globalLabel}</span>
             </div>
+
             <div className="flex flex-wrap items-center gap-1.5">
               {[
-                { label: "Hits", val: globalSummary?.hits },
-                { label: "Miss", val: globalSummary?.misses },
-                { label: "Push", val: globalSummary?.pushes },
+                { label: "Hits", val: afterUnlock ? globalSummary?.hits : null },
+                { label: "Miss", val: afterUnlock ? globalSummary?.misses : null },
+                { label: "Push", val: afterUnlock ? globalSummary?.pushes : null },
               ].map(({ label, val }) => (
                 <Pill key={label}>
                   <span className="tabular-nums font-semibold">{val ?? "—"}</span>
@@ -836,13 +999,18 @@ export default function NbaClient() {
                 </Pill>
               ))}
               <Pill>
-                <span className="tabular-nums font-semibold">{formatPct(globalSummary?.p ?? null)}</span>
+                <span className="tabular-nums font-semibold">{afterUnlock ? formatPct(globalSummary?.p ?? null) : "—"}</span>
                 <span className="text-foreground/50">Hit rate</span>
               </Pill>
+
               <button
                 type="button"
+                disabled={!afterUnlock}
                 onClick={syncGlobalScoreboard}
-                className="rounded-xl border border-[color:var(--border)] bg-white/5 px-3 py-1.5 text-xs font-medium text-foreground/70 hover:bg-white/10 hover:text-foreground transition-colors"
+                className={cn(
+                  "rounded-xl border border-[color:var(--border)] bg-white/5 px-3 py-1.5 text-xs font-medium text-foreground/70 transition-colors hover:bg-white/10 hover:text-foreground",
+                  !afterUnlock && "opacity-50 cursor-not-allowed hover:bg-white/5 hover:text-foreground/70"
+                )}
               >
                 Sync
               </button>
@@ -850,30 +1018,34 @@ export default function NbaClient() {
           </div>
 
           {/* Per-day breakdown */}
-          {scoreSummary.days.length > 0 ? (
-            <div className="grid gap-2 sm:grid-cols-3 border-t border-white/8 pt-3">
-              {scoreSummary.days.map(([day, v]) => {
-                const graded = v.hit + v.miss;
-                const p = graded > 0 ? v.hit / graded : null;
-                return (
-                  <div key={day} className="rounded-xl border border-white/8 bg-black/10 px-3.5 py-3">
-                    <div className="text-[10px] text-foreground/40 tracking-wide uppercase">{day}</div>
-                    <div className="mt-1 flex items-center justify-between gap-2">
-                      <span className="text-sm">
-                        <span className="font-semibold">{v.hit}</span>
-                        <span className="text-foreground/40">–</span>
-                        <span className="font-semibold">{v.miss}</span>
-                        {v.push > 0 && <span className="text-xs text-foreground/40 ml-1">({v.push}p)</span>}
-                      </span>
-                      <span className="tabular-nums text-sm font-semibold">{formatPct(p)}</span>
+          {afterUnlock ? (
+            scoreSummary.days.length > 0 ? (
+              <div className="grid gap-2 border-t border-white/8 pt-3 sm:grid-cols-3">
+                {scoreSummary.days.map(([day, v]) => {
+                  const graded = v.hit + v.miss;
+                  const p = graded > 0 ? v.hit / graded : null;
+                  return (
+                    <div key={day} className="rounded-xl border border-white/8 bg-black/10 px-3.5 py-3">
+                      <div className="text-[10px] tracking-wide text-foreground/40 uppercase">{day}</div>
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <span className="text-sm">
+                          <span className="font-semibold">{v.hit}</span>
+                          <span className="text-foreground/40">–</span>
+                          <span className="font-semibold">{v.miss}</span>
+                          {v.push > 0 && <span className="ml-1 text-xs text-foreground/40">({v.push}p)</span>}
+                        </span>
+                        <span className="tabular-nums text-sm font-semibold">{formatPct(p)}</span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="border-t border-white/8 pt-3 text-xs text-foreground/40">No graded finals saved yet on this device.</div>
+            )
           ) : (
-            <div className="text-xs text-foreground/40 border-t border-white/8 pt-3">
-              No graded finals saved yet on this device.
+            <div className="border-t border-white/8 pt-3 text-xs text-foreground/40">
+              Score + scoreboard unlock at <span className="text-foreground/60">3 pm ET</span>.
             </div>
           )}
         </div>
@@ -885,12 +1057,14 @@ export default function NbaClient() {
           ) : rows.length === 0 ? (
             <div className="space-y-1 text-sm text-foreground/60">
               <div>{loadError ?? "Live feed is offline right now."}</div>
-              <div className="text-xs text-foreground/40">If you checked after hours, the last snapshot will appear once it exists.</div>
+              <div className="text-xs text-foreground/40">
+                If you checked after hours, the last snapshot will appear once it exists.
+              </div>
             </div>
           ) : (
             <div className="space-y-5">
               {/* ── Legend ── */}
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-foreground/50 border-b border-white/8 pb-4">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-white/8 pb-4 text-xs text-foreground/50">
                 {[
                   { label: "Confirmed", content: <ConfirmedTipContent /> },
                   { label: "Confluence", content: <ConfluenceTipContent /> },
@@ -910,10 +1084,13 @@ export default function NbaClient() {
                 {rows.map((r) => {
                   const cTone = confluenceTone(r.confluence);
                   const ring =
-                    r.confirmed ? "ring-1 ring-[color:var(--accent)]/35"
-                    : cTone === "high" ? "ring-1 ring-[color:var(--accent)]/20"
-                    : cTone === "mid" ? "ring-1 ring-amber-400/15"
-                    : "";
+                    r.confirmed
+                      ? "ring-1 ring-[color:var(--accent)]/35"
+                      : cTone === "high"
+                      ? "ring-1 ring-[color:var(--accent)]/20"
+                      : cTone === "mid"
+                      ? "ring-1 ring-amber-400/15"
+                      : "";
 
                   return (
                     <div
@@ -925,10 +1102,9 @@ export default function NbaClient() {
                       )}
                       style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.08)" } : undefined}
                     >
-                      {/* Card header (stack on mobile to prevent horizontal scroll) */}
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="text-base font-semibold text-foreground">
                               {teamAbbr(r.awayTeam)} @ {teamAbbr(r.homeTeam)}
                             </span>
@@ -937,13 +1113,12 @@ export default function NbaClient() {
                               {r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE"}
                             </Pill>
                           </div>
-                          <div className="mt-0.5 text-xs text-foreground/45 truncate">
+                          <div className="mt-0.5 text-xs text-foreground/45">
                             {r.awayTeam} @ {r.homeTeam} · {r.clock}
                           </div>
                         </div>
 
-                        {/* Badges: wrap on mobile, align right on desktop */}
-                        <div className="flex flex-wrap items-center gap-2 sm:flex-col sm:items-end sm:gap-1.5">
+                        <div className="flex flex-col items-end gap-1.5 flex-none">
                           <ScoreMarkBadge mark={r.scoreMark} />
                           <div className="flex items-center gap-1.5">
                             <ConfirmedBadge on={r.confirmed} />
@@ -956,15 +1131,17 @@ export default function NbaClient() {
                         </div>
                       </div>
 
-                      {/* Score line */}
-                      <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
+                      <ScoreLine
+                        awayTeam={r.awayTeam}
+                        homeTeam={r.homeTeam}
+                        awayScore={r.awayScore}
+                        homeScore={r.homeScore}
+                      />
 
-                      {/* Stat grid */}
                       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                        {/* Move gap */}
                         <div className="rounded-xl border border-white/8 bg-black/10 px-3.5 py-3">
                           <div className="flex items-center justify-between gap-1">
-                            <span className="text-[10px] text-foreground/45 uppercase tracking-wide">Move gap</span>
+                            <span className="text-[10px] uppercase tracking-wide text-foreground/45">Move gap</span>
                             <InfoTip content={<MoveGapTipContent />} />
                           </div>
                           <div className="mt-1.5 flex items-baseline gap-2">
@@ -975,25 +1152,22 @@ export default function NbaClient() {
                           </div>
                         </div>
 
-                        {/* Current */}
                         <div className="rounded-xl border border-white/8 bg-black/10 px-3.5 py-3">
                           <div className="flex items-center justify-between gap-1">
-                            <span className="text-[10px] text-foreground/45 uppercase tracking-wide">Current</span>
+                            <span className="text-[10px] uppercase tracking-wide text-foreground/45">Current</span>
                             <InfoTip content={<CurrentLineTipContent />} />
                           </div>
                           <div className="mt-1.5 tabular-nums text-lg font-semibold">{r.current}</div>
                         </div>
 
-                        {/* Close */}
                         <div className="rounded-xl border border-white/8 bg-black/10 px-3.5 py-3">
-                          <span className="text-[10px] text-foreground/45 uppercase tracking-wide">Close</span>
+                          <span className="text-[10px] uppercase tracking-wide text-foreground/45">Close</span>
                           <div className="mt-1.5 tabular-nums text-lg font-semibold">{r.close}</div>
                         </div>
 
-                        {/* Oren edge */}
                         <div className="rounded-xl border border-white/8 bg-black/10 px-3.5 py-3">
                           <div className="flex items-center justify-between gap-1">
-                            <span className="text-[10px] text-foreground/45 uppercase tracking-wide">Oren edge</span>
+                            <span className="text-[10px] uppercase tracking-wide text-foreground/45">Oren edge</span>
                             <InfoTip content={<OrenEdgeTipContent />} />
                           </div>
                           <div className="mt-2">
@@ -1003,9 +1177,7 @@ export default function NbaClient() {
                         </div>
                       </div>
 
-                      <div className="mt-2.5 text-[10px] text-foreground/35 tracking-wide">
-                        Watchlist only · Not a bet signal
-                      </div>
+                      <div className="mt-2.5 text-[10px] tracking-wide text-foreground/35">Watchlist only · Not a bet signal</div>
                     </div>
                   );
                 })}
