@@ -24,12 +24,8 @@ type LiveGameItem = {
   liveSpreadHome: number | null;
   closingSpreadHome: number | null;
 
-  // ✅ live moneyline (American odds)
   liveMoneylineHome: number | null;
   liveMoneylineAway: number | null;
-
-  // ✅ NEW: server-computed (keeps Oren Edge formula hidden)
-  orenEdgePts: number | null;
 
   phase: Phase;
 };
@@ -40,17 +36,20 @@ type LiveOk = {
   meta: {
     stale: boolean;
     updatedAt: string;
+
+    // display controls
+    mode: "yesterday_finals" | "today_slate";
+    dateKeyPT: string; // what we are showing (yday until noon PT, then today/next slate)
+    allowedDateKeysPT: string[]; // for debugging
+    firstTipIso?: string | null;
+    unlockAtIso?: string | null;
+
     window: "active" | "offhours";
     storage?: "supabase" | "none";
-    dateKeyPT?: string;
-    allowedDateKeysPT?: string[];
+
     closingSeeded?: number;
     closingAttached?: number;
     moneylineAttached?: number;
-
-    // ✅ NEW: diagnostic only (does NOT leak model)
-    orenEdgeAttached?: number;
-    rankingsLoaded?: boolean;
   };
 };
 
@@ -93,8 +92,8 @@ function dateKeyPT(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function addDaysUTC(dateKey: string, deltaDays: number): string {
-  const [y, m, d] = dateKey.split("-").map((x) => Number(x));
+function addDaysUTC(dateKeyStr: string, deltaDays: number): string {
+  const [y, m, d] = dateKeyStr.split("-").map((x) => Number(x));
   const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
   dt.setUTCDate(dt.getUTCDate() + deltaDays);
   const yy = dt.getUTCFullYear();
@@ -141,7 +140,7 @@ function classifyPhase(
   const sr = hasNumber(it.secondsRemaining) ? it.secondsRemaining : null;
   const hasScore = hasNumber(it.awayScore) && hasNumber(it.homeScore);
 
-  // Key fix: Q4 + scores + no clock => FINAL
+  // Q4 + scores + no clock => FINAL
   if (p != null && p >= 4 && hasScore && (sr === 0 || sr === null)) return "final";
 
   if (p != null && p >= 1 && hasScore) return "live";
@@ -155,27 +154,36 @@ function itemDateKeyFromGameId(gameId: string): string | null {
   return k;
 }
 
-function allowedDateKeys(now: Date) {
+// ─────────────────────────────────────────────────────────────────────────────
+// DISPLAY RULES (your requirement)
+// - Show yesterday finals until 12:00 PM PT (3:00 PM ET).
+// - At/after 12:00 PM PT, show the upcoming slate for “today”.
+// - If today has no slate, fall forward to the next available slate date (workaround).
+// - Oren Edge + Close unlock at (firstTip - 2 hours).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function chooseDisplayKey(now: Date) {
   const today = dateKeyPT(now);
   const yday = addDaysUTC(today, -1);
+  const noonPT = 12 * 60;
 
-  const keys = new Set<string>([today]);
-  // Early AM PT: allow yesterday for late games
-  if (minutesPT(now) <= 5 * 60) keys.add(yday);
+  const mins = minutesPT(now);
+  const mode: "yesterday_finals" | "today_slate" = mins < noonPT ? "yesterday_finals" : "today_slate";
+  const primary = mode === "yesterday_finals" ? yday : today;
 
-  return { today, keys: Array.from(keys) };
+  return { today, yday, mode, primary };
 }
 
-function filterItemsByAllowedDates(items: LiveGameItem[], allowed: Set<string>) {
+function filterItemsByDateKey(items: LiveGameItem[], key: string) {
   return items.filter((it) => {
     const k = itemDateKeyFromGameId(it.gameId);
     if (!k) return true;
-    return allowed.has(k);
+    return k === key;
   });
 }
 
 function supabaseAdminOrNull() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   return createClient(url, key, { auth: { persistSession: false } });
@@ -204,16 +212,15 @@ async function getClosingMap(keys: string[]) {
   return map;
 }
 
-// ✅ NEW: pull live moneylines from odds provider + attach by game key
 async function getMoneylineMap(
   odds: any[],
-  allowed: Set<string>
+  wantDateKey: string
 ): Promise<Map<string, { home: number | null; away: number | null }>> {
   const map = new Map<string, { home: number | null; away: number | null }>();
 
   for (const o of odds || []) {
     const dk = String(o?.laDateKey ?? "").trim();
-    if (dk && !allowed.has(dk)) continue;
+    if (dk && dk !== wantDateKey) continue;
 
     const awayTeam = canonicalTeamName(String(o?.awayTeam ?? "").trim());
     const homeTeam = canonicalTeamName(String(o?.homeTeam ?? "").trim());
@@ -284,22 +291,42 @@ async function seedClosingFromOdds(candidates: Array<{ gameKey: string; closingH
   return toInsert.length;
 }
 
-/**
- * Slate-aware polling window:
- * Active if now is within (firstTip - PRE) .. (lastTip + POST).
- */
+function computeFirstTipIsoForDate(
+  odds: Array<{ laDateKey: string | null; commenceTimeIso: string | null }>,
+  wantDateKey: string
+): string | null {
+  const ts: number[] = [];
+  for (const o of odds || []) {
+    const dk = o.laDateKey ?? "";
+    if (dk !== wantDateKey) continue;
+    const iso = o.commenceTimeIso;
+    if (!iso) continue;
+    const t = Date.parse(iso);
+    if (Number.isFinite(t)) ts.push(t);
+  }
+  if (ts.length === 0) return null;
+  return new Date(Math.min(...ts)).toISOString();
+}
+
+function addHoursIso(iso: string, hours: number): string | null {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  return new Date(t + hours * 60 * 60 * 1000).toISOString();
+}
+
 function computeSlateActive(
   odds: Array<{ laDateKey: string | null; commenceTimeIso: string | null }>,
   now: Date,
-  allowed: Set<string>
+  wantDateKey: string
 ) {
+  // more forgiving window: start 2h before first tip, end 6h after last tip
   const PRE_MIN = 120;
   const POST_MIN = 360;
 
   const times: number[] = [];
-  for (const o of odds) {
+  for (const o of odds || []) {
     const dk = o.laDateKey ?? "";
-    if (dk && !allowed.has(dk)) continue;
+    if (dk !== wantDateKey) continue;
 
     const iso = o.commenceTimeIso;
     if (!iso) continue;
@@ -320,88 +347,47 @@ function computeSlateActive(
   return nowT >= start && nowT <= end;
 }
 
-/* ---------------------------
-   OREN EDGE: server-only model
----------------------------- */
-
-function normalizeTeamKey(s: any): string {
-  return String(s ?? "").trim().toLowerCase();
-}
-
-function orenRating(rank: number, A: number, k: number): number {
-  if (!Number.isFinite(rank) || rank < 1) return 0;
-  return A * Math.exp(-k * (rank - 1));
-}
-
-function computeOrenEdgePts(args: {
-  homeTeam: string;
-  awayTeam: string;
-  closingSpreadHome: number;
-  rankMap: Record<string, number>;
-  params: { A: number; k: number; S: number };
-}): number | null {
-  const { homeTeam, awayTeam, closingSpreadHome, rankMap, params } = args;
-
-  const homeRank = rankMap[normalizeTeamKey(homeTeam)];
-  const awayRank = rankMap[normalizeTeamKey(awayTeam)];
-  if (!Number.isFinite(homeRank) || !Number.isFinite(awayRank)) return null;
-
-  const homeRating = orenRating(homeRank, params.A, params.k);
-  const awayRating = orenRating(awayRank, params.A, params.k);
-
-  const impliedSpreadHome = params.S * (homeRating - awayRating);
-  return impliedSpreadHome - closingSpreadHome;
-}
-
-async function loadRankMapServer(): Promise<Record<string, number> | null> {
-  const sb = supabaseAdminOrNull();
-  if (!sb) return null;
-
-  // Default table name; override with env if your table differs.
-  const table = process.env.NBA_POWER_RANKINGS_TABLE || "nba_power_rankings";
-
-  // Expect columns: team, rank
-  const { data, error } = await sb.from(table).select("team, rank").limit(200);
-  if (error || !Array.isArray(data)) return null;
-
-  const map: Record<string, number> = {};
-  for (const row of data as any[]) {
-    const team = normalizeTeamKey(row?.team);
-    const rank = toNum(row?.rank);
-    if (!team || rank == null) continue;
-    map[team] = Math.trunc(rank);
+function nextSlateDateKeyFromOdds(odds: any[], todayKey: string): string | null {
+  const keys = new Set<string>();
+  for (const o of odds || []) {
+    const dk = String(o?.laDateKey ?? "").trim();
+    if (dk && dk.length === 10) keys.add(dk);
   }
-
-  return Object.keys(map).length ? map : null;
-}
-
-function orenParamsFromEnv() {
-  const A = toNum(process.env.OREN_A) ?? 10;
-  const k = toNum(process.env.OREN_K) ?? 0.12;
-  const S = toNum(process.env.OREN_S) ?? 1.0;
-  return { A, k, S };
+  const arr = Array.from(keys).sort((a, b) => a.localeCompare(b));
+  const next = arr.find((k) => k >= todayKey) ?? null;
+  return next;
 }
 
 async function pollProviders(now: Date): Promise<LiveOk> {
-  const { today, keys } = allowedDateKeys(now);
-  const allowed = new Set(keys);
-
-  // ✅ Load rankings ONCE (server-only). If missing, orenEdgePts stays null.
-  const rankMap = await loadRankMapServer();
-  const params = orenParamsFromEnv();
+  const { today, yday, mode, primary } = chooseDisplayKey(now);
 
   const odds = await fetchTheOddsApiSpreads();
+
+  // Workaround for “tricky days”:
+  // after noon PT, if there is no slate for today, show the next slate date key available.
+  let wantDateKey = primary;
+  if (mode === "today_slate") {
+    const next = nextSlateDateKeyFromOdds(odds as any[], today);
+    if (next) wantDateKey = next;
+  }
+
   const slateActive = computeSlateActive(
-    odds.map((o) => ({ laDateKey: o.laDateKey, commenceTimeIso: o.commenceTimeIso })),
+    odds.map((o: any) => ({ laDateKey: o.laDateKey, commenceTimeIso: o.commenceTimeIso })),
     now,
-    allowed
+    wantDateKey
   );
 
-  const moneylineMap = await getMoneylineMap(odds as any[], allowed);
+  const firstTipIso = computeFirstTipIsoForDate(
+    odds.map((o: any) => ({ laDateKey: o.laDateKey, commenceTimeIso: o.commenceTimeIso })),
+    wantDateKey
+  );
+  const unlockAtIso = firstTipIso ? addHoursIso(firstTipIso, -2) : null;
 
-  // Seed closing from odds (first seen consensus)
-  const closingCandidates = odds
-    .filter((o) => (o.laDateKey ? allowed.has(o.laDateKey) : true))
+  const moneylineMap = await getMoneylineMap(odds as any[], wantDateKey);
+
+  // Seed closing from odds (first seen consensus) — only for the date we’re showing
+  const closingCandidates = (odds as any[])
+    .filter((o) => String(o?.laDateKey ?? "").trim() === wantDateKey)
     .map((o) => ({
       gameKey: makeMatchKey(o.awayTeam, o.homeTeam, o.laDateKey || ""),
       closingHomeSpread: toNum(o.liveHomeSpread) ?? NaN,
@@ -418,19 +404,21 @@ async function pollProviders(now: Date): Promise<LiveOk> {
   const oddsByKey = new Map<string, number | null>();
   const oddsByMatch = new Map<string, number | null>();
 
-  for (const o of odds) {
+  for (const o of odds as any[]) {
+    const dk = String(o?.laDateKey ?? "").trim();
     const match = `${o.awayTeam}@${o.homeTeam}`;
-    oddsByMatch.set(match, roundHalf(toNum(o.liveHomeSpread)) ?? null);
 
-    const dk = o.laDateKey ?? "";
-    if (dk && allowed.has(dk)) oddsByKey.set(`${dk}|${match}`, roundHalf(toNum(o.liveHomeSpread)) ?? null);
+    if (dk === wantDateKey) {
+      oddsByKey.set(`${dk}|${match}`, roundHalf(toNum(o.liveHomeSpread)) ?? null);
+    }
+    oddsByMatch.set(match, roundHalf(toNum(o.liveHomeSpread)) ?? null);
   }
 
   const items: LiveGameItem[] = [];
 
   for (const raw of scores as any[]) {
     const laKey = String(raw?.laDateKey ?? "").trim();
-    if (laKey && !allowed.has(laKey)) continue;
+    if (laKey && laKey !== wantDateKey) continue;
 
     const awayTeam = canonicalTeamName(String(raw?.awayTeam ?? "").trim());
     const homeTeam = canonicalTeamName(String(raw?.homeTeam ?? "").trim());
@@ -450,7 +438,6 @@ async function pollProviders(now: Date): Promise<LiveOk> {
     if (!hasAny) continue;
 
     const phase = classifyPhase({ period, secondsRemaining, awayScore, homeScore }, raw?.status);
-
     const ml = moneylineMap.get(gameKey) ?? null;
 
     items.push({
@@ -465,29 +452,27 @@ async function pollProviders(now: Date): Promise<LiveOk> {
       closingSpreadHome: null,
       liveMoneylineHome: ml?.home ?? null,
       liveMoneylineAway: ml?.away ?? null,
-      orenEdgePts: null, // computed after closing spread attached
       phase,
     });
   }
 
-  // Fallback to odds slate if scores missing
-  if (items.length === 0 && odds.length > 0) {
-    for (const o of odds) {
-      const dk = o.laDateKey ?? "";
-      if (dk && !allowed.has(dk)) continue;
+  // Fallback to odds slate if scores missing (pregame tiles)
+  if (items.length === 0 && (odds as any[]).length > 0) {
+    for (const o of odds as any[]) {
+      const dk = String(o?.laDateKey ?? "").trim();
+      if (dk !== wantDateKey) continue;
 
       const awayTeam = canonicalTeamName(String(o?.awayTeam ?? "").trim());
       const homeTeam = canonicalTeamName(String(o?.homeTeam ?? "").trim());
       if (!awayTeam || !homeTeam) continue;
 
       const gameKey = makeMatchKey(awayTeam, homeTeam, dk);
-
       const ml = moneylineMap.get(gameKey) ?? null;
 
       items.push({
         gameId: gameKey,
-        awayTeam: awayTeam,
-        homeTeam: homeTeam,
+        awayTeam,
+        homeTeam,
         awayScore: null,
         homeScore: null,
         period: 0,
@@ -496,43 +481,18 @@ async function pollProviders(now: Date): Promise<LiveOk> {
         closingSpreadHome: null,
         liveMoneylineHome: ml?.home ?? null,
         liveMoneylineAway: ml?.away ?? null,
-        orenEdgePts: null,
         phase: "pregame",
       });
     }
   }
 
-  const filtered = filterItemsByAllowedDates(items, allowed);
+  const filtered = filterItemsByDateKey(items, wantDateKey);
 
   const closingMap = await getClosingMap(filtered.map((it) => it.gameId));
-
-  // Attach closing + compute orenEdgePts (server-only)
-  let orenEdgeAttached = 0;
-
-  const attached = filtered.map((it) => {
-    const closing = closingMap.get(it.gameId) ?? null;
-
-    let orenEdgePts: number | null = null;
-    if (closing != null && rankMap) {
-      const edge = computeOrenEdgePts({
-        homeTeam: it.homeTeam,
-        awayTeam: it.awayTeam,
-        closingSpreadHome: closing,
-        rankMap,
-        params,
-      });
-      if (edge != null && Number.isFinite(edge)) {
-        orenEdgePts = edge;
-        orenEdgeAttached++;
-      }
-    }
-
-    return {
-      ...it,
-      closingSpreadHome: closing,
-      orenEdgePts,
-    };
-  });
+  const attached = filtered.map((it) => ({
+    ...it,
+    closingSpreadHome: closingMap.get(it.gameId) ?? null,
+  }));
 
   let moneylineAttached = 0;
   for (const it of attached) {
@@ -545,15 +505,16 @@ async function pollProviders(now: Date): Promise<LiveOk> {
     meta: {
       stale: !slateActive,
       updatedAt: nowIso(),
+      mode,
+      dateKeyPT: wantDateKey,
+      allowedDateKeysPT: mode === "yesterday_finals" ? [yday] : [wantDateKey],
+      firstTipIso: firstTipIso ?? null,
+      unlockAtIso: unlockAtIso ?? null,
       window: slateActive ? "active" : "offhours",
       storage: supabaseAdminOrNull() ? "supabase" : "none",
-      dateKeyPT: today,
-      allowedDateKeysPT: keys,
       closingSeeded,
       closingAttached: closingMap.size,
       moneylineAttached,
-      orenEdgeAttached,
-      rankingsLoaded: !!rankMap,
     },
   };
 }
