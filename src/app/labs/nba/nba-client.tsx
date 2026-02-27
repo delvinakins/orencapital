@@ -1,7 +1,6 @@
-// src/app/labs/nba/nba-client.tsx
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { computeDeviation } from "@/lib/labs/nba/heatmap";
 import { buildDistributionIndex } from "@/lib/nba/deviation-engine";
@@ -17,93 +16,99 @@ type LiveMeta =
     }
   | undefined;
 
-// ─── Inline tooltip (FIXED: not trapped on mobile, click-to-toggle, closes on outside/scroll) ──
+/**
+ * ✅ FIXED TOOLTIP (NOT TRAPPED)
+ * - Renders tooltip in a portal at document.body (so it can't trap hover inside card)
+ * - Opens on hover (desktop) + click/tap (mobile)
+ * - Closes on mouse leave, click outside, or Escape
+ * - Positions above/below with viewport clamping
+ */
 function InfoTip({ content }: { content: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const tipRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
-  const [pos, setPos] = useState<{ top: number; left: number; width: number }>({
+  const [pos, setPos] = useState<{ top: number; left: number; placement: "top" | "bottom" }>({
     top: 0,
     left: 0,
-    width: 288, // ~ w-72
+    placement: "top",
   });
 
   useEffect(() => setMounted(true), []);
 
   const close = () => setOpen(false);
+  const toggle = () => setOpen((v) => !v);
+
+  function computePosition() {
+    const btn = btnRef.current;
+    if (!btn) return;
+
+    const r = btn.getBoundingClientRect();
+    const vw = window.innerWidth || 0;
+    const vh = window.innerHeight || 0;
+
+    const TIP_W = 288; // w-72
+    const TIP_H_EST = 120; // conservative estimate; we'll clamp anyway
+
+    // Prefer top, but flip if not enough space
+    const spaceTop = r.top;
+    const spaceBottom = vh - r.bottom;
+
+    const placement: "top" | "bottom" = spaceTop >= TIP_H_EST + 12 ? "top" : spaceBottom >= TIP_H_EST + 12 ? "bottom" : "top";
+
+    const rawLeft = r.left + r.width / 2 - TIP_W / 2;
+    const left = Math.max(12, Math.min(vw - TIP_W - 12, rawLeft));
+
+    const top =
+      placement === "top"
+        ? Math.max(12, r.top - 10) // we’ll translate with CSS
+        : Math.min(vh - 12, r.bottom + 10);
+
+    setPos({ top, left, placement });
+  }
 
   useLayoutEffect(() => {
     if (!open) return;
-    const b = btnRef.current;
-    if (!b) return;
+    computePosition();
 
-    const update = () => {
-      const r = b.getBoundingClientRect();
-      const vw = window.innerWidth || 375;
-      const margin = 12;
+    const onResize = () => computePosition();
+    const onScroll = () => computePosition();
 
-      const width = Math.min(288, vw - margin * 2);
-      // center under button
-      let left = r.left + r.width / 2 - width / 2;
-      left = Math.max(margin, Math.min(left, vw - width - margin));
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
-      const top = Math.max(margin, r.top - 8); // we position with translateY(-100%) in tooltip
+  useEffect(() => {
+    if (!open) return;
 
-      setPos({ top, left, width });
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
     };
 
-    update();
-
-    const onDocPointerDown = (e: MouseEvent | TouchEvent) => {
+    const onDown = (e: MouseEvent | TouchEvent) => {
       const t = e.target as Node | null;
-      if (!t) return close();
+      if (!t) return;
       if (btnRef.current?.contains(t)) return;
       if (tipRef.current?.contains(t)) return;
       close();
     };
 
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-
-    const onScroll = () => close();
-    const onResize = () => update();
-
-    document.addEventListener("mousedown", onDocPointerDown, { passive: true });
-    document.addEventListener("touchstart", onDocPointerDown, { passive: true });
-    document.addEventListener("keydown", onKeyDown);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onResize);
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown, { passive: true });
 
     return () => {
-      document.removeEventListener("mousedown", onDocPointerDown as any);
-      document.removeEventListener("touchstart", onDocPointerDown as any);
-      document.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("scroll", onScroll as any);
-      window.removeEventListener("resize", onResize);
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown as any);
     };
   }, [open]);
-
-  const Tip = (
-    <div
-      ref={tipRef}
-      role="tooltip"
-      className="fixed z-[100] rounded-xl border border-white/15 bg-[#111] p-3 text-xs text-foreground/80 shadow-xl"
-      style={{
-        left: pos.left,
-        top: pos.top,
-        width: pos.width,
-        transform: "translateY(-100%)",
-      }}
-      // Prevent taps inside tooltip from bubbling and instantly closing on some mobile browsers
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {content}
-    </div>
-  );
 
   return (
     <span className="inline-flex">
@@ -112,17 +117,42 @@ function InfoTip({ content }: { content: React.ReactNode }) {
         type="button"
         className="flex h-4 w-4 items-center justify-center rounded-full border border-white/20 text-[10px] text-foreground/50 hover:border-white/40 hover:text-foreground/80 transition-colors"
         aria-label="More info"
-        aria-expanded={open}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
         onClick={(e) => {
+          e.preventDefault();
           e.stopPropagation();
-          setOpen((v) => !v);
+          toggle();
         }}
-        onPointerDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => {
+          // mobile: tap toggles; prevent “hover sticky”
+          e.stopPropagation();
+          toggle();
+        }}
       >
         i
       </button>
 
-      {mounted && open ? createPortal(Tip, document.body) : null}
+      {mounted && open
+        ? createPortal(
+            <div
+              ref={tipRef}
+              className="fixed z-[9999] w-72 rounded-xl border border-white/15 bg-[#111] p-3 text-xs text-foreground/75 shadow-xl"
+              style={{
+                left: pos.left,
+                top: pos.top,
+                transform: pos.placement === "top" ? "translateY(-100%)" : "translateY(0)",
+              }}
+              onMouseEnter={() => setOpen(true)}
+              onMouseLeave={() => setOpen(false)}
+            >
+              {content}
+            </div>,
+            document.body
+          )
+        : null}
     </span>
   );
 }
@@ -397,15 +427,9 @@ function OrenEdgeBar({ v }: { v: number | null }) {
     <div className="relative h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
       <div className="absolute inset-y-0 left-1/2 w-px bg-white/25" />
       {x >= 0 ? (
-        <div
-          className="absolute inset-y-0 bg-[color:var(--accent)]/65"
-          style={{ left: "50%", width: `${rightPct - 50}%` }}
-        />
+        <div className="absolute inset-y-0 bg-[color:var(--accent)]/65" style={{ left: "50%", width: `${rightPct - 50}%` }} />
       ) : (
-        <div
-          className="absolute inset-y-0 bg-amber-400/60"
-          style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }}
-        />
+        <div className="absolute inset-y-0 bg-amber-400/60" style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }} />
       )}
     </div>
   );
@@ -455,36 +479,16 @@ function ScoreMarkBadge({ mark }: { mark: ScoreMark }) {
 
 // ─── Score line ──────────────────────────────────────────────────────────────
 const NBA_ABBR: Record<string, string> = {
-  "atlanta hawks": "ATL",
-  "boston celtics": "BOS",
-  "brooklyn nets": "BKN",
-  "charlotte hornets": "CHA",
-  "chicago bulls": "CHI",
-  "cleveland cavaliers": "CLE",
-  "dallas mavericks": "DAL",
-  "denver nuggets": "DEN",
-  "detroit pistons": "DET",
-  "golden state warriors": "GSW",
-  "houston rockets": "HOU",
-  "indiana pacers": "IND",
-  "los angeles clippers": "LAC",
-  "los angeles lakers": "LAL",
-  "memphis grizzlies": "MEM",
-  "miami heat": "MIA",
-  "milwaukee bucks": "MIL",
-  "minnesota timberwolves": "MIN",
-  "new orleans pelicans": "NOP",
-  "new york knicks": "NYK",
-  "oklahoma city thunder": "OKC",
-  "orlando magic": "ORL",
-  "philadelphia 76ers": "PHI",
-  "phoenix suns": "PHX",
-  "portland trail blazers": "POR",
-  "sacramento kings": "SAC",
-  "san antonio spurs": "SAS",
-  "toronto raptors": "TOR",
-  "utah jazz": "UTA",
-  "washington wizards": "WAS",
+  "atlanta hawks": "ATL", "boston celtics": "BOS", "brooklyn nets": "BKN",
+  "charlotte hornets": "CHA", "chicago bulls": "CHI", "cleveland cavaliers": "CLE",
+  "dallas mavericks": "DAL", "denver nuggets": "DEN", "detroit pistons": "DET",
+  "golden state warriors": "GSW", "houston rockets": "HOU", "indiana pacers": "IND",
+  "los angeles clippers": "LAC", "los angeles lakers": "LAL", "memphis grizzlies": "MEM",
+  "miami heat": "MIA", "milwaukee bucks": "MIL", "minnesota timberwolves": "MIN",
+  "new orleans pelicans": "NOP", "new york knicks": "NYK", "oklahoma city thunder": "OKC",
+  "orlando magic": "ORL", "philadelphia 76ers": "PHI", "phoenix suns": "PHX",
+  "portland trail blazers": "POR", "sacramento kings": "SAC", "san antonio spurs": "SAS",
+  "toronto raptors": "TOR", "utah jazz": "UTA", "washington wizards": "WAS",
 };
 
 function teamAbbr(name: string): string {
@@ -504,15 +508,9 @@ function teamDisplayName(name: string): string {
 }
 
 function ScoreLine({
-  awayTeam,
-  homeTeam,
-  awayScore,
-  homeScore,
+  awayTeam, homeTeam, awayScore, homeScore,
 }: {
-  awayTeam: string;
-  homeTeam: string;
-  awayScore: number | null;
-  homeScore: number | null;
+  awayTeam: string; homeTeam: string; awayScore: number | null; homeScore: number | null;
 }) {
   const hasScore = typeof awayScore === "number" && typeof homeScore === "number";
   if (!hasScore) return <div className="mt-2 text-xs text-foreground/40">Score unavailable</div>;
@@ -525,8 +523,8 @@ function ScoreLine({
     const fullName = teamDisplayName(name);
     const logo = teamLogoUrl(name);
     return (
-      <div className={cn("flex items-center justify-between gap-2", isWinner ? "text-foreground" : "text-foreground/60")}>
-        <div className="flex min-w-0 items-center gap-2">
+      <div className={cn("flex items-center justify-between gap-3", isWinner ? "text-foreground" : "text-foreground/60")}>
+        <div className="flex min-w-0 items-center gap-2.5">
           {logo ? (
             <img src={logo} alt={`${abbr} logo`} className="h-5 w-5 flex-none rounded object-contain" loading="lazy" />
           ) : (
@@ -609,10 +607,8 @@ function computeAtsMarginHome(finalHome: number, finalAway: number, closingHomeS
 
 function computeOrenAtsScoreMark(args: {
   phase: "pregame" | "live" | "final" | "unknown";
-  awayScore: number | null;
-  homeScore: number | null;
-  closingHomeSpread: number | null;
-  orenEdgePts: number | null;
+  awayScore: number | null; homeScore: number | null;
+  closingHomeSpread: number | null; orenEdgePts: number | null;
 }): ScoreMark {
   const { phase, awayScore, homeScore, closingHomeSpread, orenEdgePts } = args;
   if (phase !== "final") return "na";
@@ -627,28 +623,17 @@ function computeOrenAtsScoreMark(args: {
 
 // ─── Row type ────────────────────────────────────────────────────────────────
 type Row = {
-  key: string;
-  gameId: string;
-  awayTeam: string;
-  homeTeam: string;
-  awayScore: number | null;
-  homeScore: number | null;
-  matchup: string;
-  clock: string;
-  current: string;
-  close: string;
-  phase: "pregame" | "live" | "final" | "unknown";
-  isLive: boolean;
-  period: number | null;
-  secondsRemaining: number | null;
-  moveGapPts: number | null;
-  moveGapText: string;
-  moveGapMode: "model" | "raw" | "none";
-  absZ: number | null;
-  orenEdgePts: number | null;
-  orenEdgeText: string;
-  confluence: number | null;
-  confirmed: boolean;
+  key: string; gameId: string;
+  awayTeam: string; homeTeam: string;
+  awayScore: number | null; homeScore: number | null;
+  matchup: string; clock: string;
+  current: string; close: string;
+  phase: "pregame" | "live" | "final" | "unknown"; isLive: boolean;
+  period: number | null; secondsRemaining: number | null;
+  moveGapPts: number | null; moveGapText: string;
+  moveGapMode: "model" | "raw" | "none"; absZ: number | null;
+  orenEdgePts: number | null; orenEdgeText: string;
+  confluence: number | null; confirmed: boolean;
   scoreMark: ScoreMark;
 };
 
@@ -678,9 +663,7 @@ export default function NbaClient() {
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => {
-    setScoreboard(safeReadScoreboard());
-  }, []);
+  useEffect(() => { setScoreboard(safeReadScoreboard()); }, []);
 
   const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
@@ -709,10 +692,7 @@ export default function NbaClient() {
     (async () => {
       try {
         const res = await fetch("/api/labs/nba/oren-score?season=2025-2026", { cache: "no-store" });
-        if (!res.headers.get("content-type")?.includes("application/json")) {
-          setOrenStatus("missing");
-          return;
-        }
+        if (!res.headers.get("content-type")?.includes("application/json")) { setOrenStatus("missing"); return; }
         const json = await res.json().catch(() => null);
         if (json?.ok && json?.map) {
           setOrenMap(json.map);
@@ -724,9 +704,7 @@ export default function NbaClient() {
         } else {
           setOrenStatus("missing");
         }
-      } catch {
-        setOrenStatus("missing");
-      }
+      } catch { setOrenStatus("missing"); }
     })();
   }, []);
 
@@ -735,44 +713,25 @@ export default function NbaClient() {
     try {
       const res = await fetch("/api/labs/nba/live-games", { cache: "no-store" });
       if (!res.headers.get("content-type")?.includes("application/json")) {
-        setGames([]);
-        setMeta(undefined);
-        setLoadError("Unable to load games right now.");
-        setLoading(false);
-        return;
+        setGames([]); setMeta(undefined); setLoadError("Unable to load games right now."); setLoading(false); return;
       }
       const json = await res.json().catch(() => null);
       if (json?.ok && Array.isArray(json.items)) {
-        setGames(json.items);
-        setMeta(json.meta as LiveMeta);
-        setLoading(false);
+        setGames(json.items); setMeta(json.meta as LiveMeta); setLoading(false);
       } else {
-        setMeta(undefined);
-        setLoadError("Live feed is offline right now.");
-        setLoading(false);
+        setMeta(undefined); setLoadError("Live feed is offline right now."); setLoading(false);
       }
-    } catch {
-      setMeta(undefined);
-      setLoadError("Unable to load games right now.");
-      setLoading(false);
-    }
+    } catch { setMeta(undefined); setLoadError("Unable to load games right now."); setLoading(false); }
   }
 
   async function loadGlobalTotals() {
     try {
       setGlobalStatus((s) => (s === "ok" ? "ok" : "loading"));
-      const res = await fetch(
-        `/api/labs/nba/scoreboard/global?season=2025-2026&league=nba&sport=basketball&_t=${Date.now()}`,
-        { cache: "no-store" }
-      );
+      const res = await fetch(`/api/labs/nba/scoreboard/global?season=2025-2026&league=nba&sport=basketball&_t=${Date.now()}`, { cache: "no-store" });
       const json = res.headers.get("content-type")?.includes("application/json") ? await res.json().catch(() => null) : null;
-      if (json?.ok && json?.totals) {
-        setGlobalTotals(json.totals);
-        setGlobalStatus("ok");
-      } else setGlobalStatus("missing");
-    } catch {
-      setGlobalStatus("missing");
-    }
+      if (json?.ok && json?.totals) { setGlobalTotals(json.totals); setGlobalStatus("ok"); }
+      else setGlobalStatus("missing");
+    } catch { setGlobalStatus("missing"); }
   }
 
   async function syncGlobalScoreboard() {
@@ -782,24 +741,13 @@ export default function NbaClient() {
         if (Number.isFinite(last) && Date.now() - last < 6 * 60 * 60 * 1000) return;
         window.localStorage.setItem(SCOREBOARD_SYNC_LAST_KEY, String(Date.now()));
       }
-      await fetch(
-        `/api/labs/nba/scoreboard/sync?season=2025-2026&league=nba&sport=basketball&_t=${Date.now()}`,
-        { method: "POST", cache: "no-store" }
-      ).catch(() => null);
+      await fetch(`/api/labs/nba/scoreboard/sync?season=2025-2026&league=nba&sport=basketball&_t=${Date.now()}`, { method: "POST", cache: "no-store" }).catch(() => null);
       await loadGlobalTotals();
     } catch {}
   }
 
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 90_000);
-    return () => clearInterval(t);
-  }, []);
-  useEffect(() => {
-    loadGlobalTotals();
-    const t = setInterval(loadGlobalTotals, 3 * 60_000);
-    return () => clearInterval(t);
-  }, []);
+  useEffect(() => { load(); const t = setInterval(load, 90_000); return () => clearInterval(t); }, []);
+  useEffect(() => { loadGlobalTotals(); const t = setInterval(loadGlobalTotals, 3 * 60_000); return () => clearInterval(t); }, []);
 
   const updatedAtLabel = useMemo(() => formatUpdatedAtPT(meta?.updatedAt), [meta?.updatedAt]);
   const isStale = Boolean(meta?.stale);
@@ -815,13 +763,10 @@ export default function NbaClient() {
       const secondsRemaining = safeInt(g?.secondsRemaining);
 
       const clock =
-        phase === "final"
-          ? "Final"
-          : phase === "pregame" || period == null || period === 0
-          ? "Pregame"
-          : secondsRemaining == null
-          ? `P${period} • —`
-          : `P${period} • ${Math.floor(secondsRemaining / 60)}:${String(secondsRemaining % 60).padStart(2, "0")}`;
+        phase === "final" ? "Final"
+        : phase === "pregame" || period == null || period === 0 ? "Pregame"
+        : secondsRemaining == null ? `P${period} • —`
+        : `P${period} • ${Math.floor(secondsRemaining / 60)}:${String(secondsRemaining % 60).padStart(2, "0")}`;
 
       const currentRounded = roundToHalf(g?.liveSpreadHome);
       const closeRounded = roundToHalf(g?.closingSpreadHome);
@@ -841,39 +786,16 @@ export default function NbaClient() {
         const result = computeDeviation(g, { spreadIndex });
         const modelGap = result && Number.isFinite(result.dislocationPts) ? result.dislocationPts : null;
         absZ = result && Number.isFinite(result.absZ) ? result.absZ : null;
-        if (modelGap != null) {
-          moveGapPts = modelGap;
-          moveGapMode = "model";
-        } else if (rawMove != null) {
-          moveGapPts = rawMove;
-          moveGapMode = "raw";
-        }
+        if (modelGap != null) { moveGapPts = modelGap; moveGapMode = "model"; }
+        else if (rawMove != null) { moveGapPts = rawMove; moveGapMode = "raw"; }
       }
 
-      const orenEdgePts = computeOrenEdgePts({
-        homeTeam,
-        awayTeam,
-        closingSpreadHome: closeNum,
-        rankMap: orenMap,
-        params: orenParams,
-      });
+      const orenEdgePts = computeOrenEdgePts({ homeTeam, awayTeam, closingSpreadHome: closeNum, rankMap: orenMap, params: orenParams });
       const confluence = computeConfluenceScore({ orenEdgePts, moveGapPts, isLive });
 
       let confirmed = false;
-      if (
-        isLive &&
-        moveGapMode === "model" &&
-        moveGapPts != null &&
-        absZ != null &&
-        absZ >= 1.0 &&
-        inSignalWindow(period, secondsRemaining) &&
-        orenEdgePts != null &&
-        Number.isFinite(orenEdgePts) &&
-        rawMove != null
-      ) {
-        const so = sign(orenEdgePts),
-          sm = sign(moveGapPts),
-          sr = sign(rawMove);
+      if (isLive && moveGapMode === "model" && moveGapPts != null && absZ != null && absZ >= 1.0 && inSignalWindow(period, secondsRemaining) && orenEdgePts != null && Number.isFinite(orenEdgePts) && rawMove != null) {
+        const so = sign(orenEdgePts), sm = sign(moveGapPts), sr = sign(rawMove);
         const aligned = so !== 0 && so === sm && so === sr;
         const stillRoom = Math.abs(rawMove) < Math.abs(orenEdgePts) * 1.2;
         const history = readingsRef.current.get(String(g.gameId ?? `${awayTeam}-${homeTeam}`)) ?? [];
@@ -885,33 +807,15 @@ export default function NbaClient() {
       return {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
         gameId: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
-        awayTeam,
-        homeTeam,
-        awayScore: s.away,
-        homeScore: s.home,
-        matchup: `${awayTeam} @ ${homeTeam}`,
-        clock,
-        current: currentLabel,
-        close: closeLabel,
-        phase,
-        isLive,
-        period,
-        secondsRemaining,
-        moveGapPts,
-        moveGapText: moveGapPts == null ? "—" : formatSigned(moveGapPts, 1),
-        moveGapMode,
-        absZ,
-        orenEdgePts,
-        orenEdgeText: orenEdgePts == null ? "—" : formatSigned(orenEdgePts, 1),
-        confluence,
-        confirmed,
-        scoreMark: computeOrenAtsScoreMark({
-          phase,
-          awayScore: s.away,
-          homeScore: s.home,
-          closingHomeSpread: closeNum,
-          orenEdgePts,
-        }),
+        awayTeam, homeTeam, awayScore: s.away, homeScore: s.home,
+        matchup: `${awayTeam} @ ${homeTeam}`, clock,
+        current: currentLabel, close: closeLabel,
+        phase, isLive, period, secondsRemaining,
+        moveGapPts, moveGapText: moveGapPts == null ? "—" : formatSigned(moveGapPts, 1),
+        moveGapMode, absZ,
+        orenEdgePts, orenEdgeText: orenEdgePts == null ? "—" : formatSigned(orenEdgePts, 1),
+        confluence, confirmed,
+        scoreMark: computeOrenAtsScoreMark({ phase, awayScore: s.away, homeScore: s.home, closingHomeSpread: closeNum, orenEdgePts }),
       };
     });
 
@@ -975,9 +879,7 @@ export default function NbaClient() {
     for (const r of recs) {
       const k = r.dateKeyPT || "—";
       const cur = byDay.get(k) ?? { hit: 0, miss: 0, push: 0 };
-      if (r.mark === "hit") cur.hit++;
-      else if (r.mark === "miss") cur.miss++;
-      else cur.push++;
+      if (r.mark === "hit") cur.hit++; else if (r.mark === "miss") cur.miss++; else cur.push++;
       byDay.set(k, cur);
     }
     const days = Array.from(byDay.entries()).sort((a, b) => a[0].localeCompare(b[0])).slice(-7).reverse();
@@ -1053,10 +955,7 @@ export default function NbaClient() {
           {/* Global totals */}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-3">
             <div className="text-xs text-foreground/45">
-              Global ·{" "}
-              <span className="text-foreground/30">
-                {globalStatus === "loading" ? "Loading…" : globalStatus === "missing" ? "Unavailable" : "Synced"}
-              </span>
+              Global · <span className="text-foreground/30">{globalStatus === "loading" ? "Loading…" : globalStatus === "missing" ? "Unavailable" : "Synced"}</span>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               {[
@@ -1106,7 +1005,9 @@ export default function NbaClient() {
               })}
             </div>
           ) : (
-            <div className="text-xs text-foreground/40 border-t border-white/8 pt-3">No graded finals saved yet on this device.</div>
+            <div className="text-xs text-foreground/40 border-t border-white/8 pt-3">
+              No graded finals saved yet on this device.
+            </div>
           )}
         </div>
 
@@ -1142,13 +1043,10 @@ export default function NbaClient() {
                 {rows.map((r) => {
                   const cTone = confluenceTone(r.confluence);
                   const ring =
-                    r.confirmed
-                      ? "ring-1 ring-[color:var(--accent)]/35"
-                      : cTone === "high"
-                      ? "ring-1 ring-[color:var(--accent)]/20"
-                      : cTone === "mid"
-                      ? "ring-1 ring-amber-400/15"
-                      : "";
+                    r.confirmed ? "ring-1 ring-[color:var(--accent)]/35"
+                    : cTone === "high" ? "ring-1 ring-[color:var(--accent)]/20"
+                    : cTone === "mid" ? "ring-1 ring-amber-400/15"
+                    : "";
 
                   return (
                     <div
@@ -1238,7 +1136,9 @@ export default function NbaClient() {
                         </div>
                       </div>
 
-                      <div className="mt-2.5 text-[10px] text-foreground/35 tracking-wide">Watchlist only · Not a bet signal</div>
+                      <div className="mt-2.5 text-[10px] text-foreground/35 tracking-wide">
+                        Watchlist only · Not a bet signal
+                      </div>
                     </div>
                   );
                 })}
