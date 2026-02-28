@@ -6,6 +6,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import JournalPanel from "@/components/JournalPanel";
 import JournalQuickAdd from "@/components/journal/JournalQuickAdd";
+import { useRiskCap } from "@/lib/risk/useRiskCap";
+import { RiskCapBanner } from "@/components/risk/RiskCapBanner";
 
 type SizingMode = "constant-fraction" | "fixed-dollar";
 type Side = "long" | "short";
@@ -225,8 +227,8 @@ function Card({
     tone === "good"
       ? "border-emerald-800/60"
       : tone === "warn"
-      ? "border-amber-800/60"
-      : "border-[color:var(--border)]";
+        ? "border-amber-800/60"
+        : "border-[color:var(--border)]";
 
   return (
     <div className={`oc-glass rounded-xl p-5 sm:p-6 ${toneClass}`}>
@@ -307,6 +309,9 @@ function writeLocalPortfolios(items: LocalPortfolio[]) {
    Page
 ========================================================= */
 export default function RiskEnginePage() {
+  // Risk governance (ARC/CPM)
+  const { settings: riskSettings, effectiveCapBps } = useRiskCap();
+
   // Pro status (server truth)
   const [isPro, setIsPro] = useState(false);
   const [proStatus, setProStatus] = useState("");
@@ -351,13 +356,29 @@ export default function RiskEnginePage() {
     })();
   }, []);
 
+  // If we are in constant-fraction sizing and a cap exists, auto-clamp stored riskPct
+  useEffect(() => {
+    if (sizingMode !== "constant-fraction") return;
+    if (effectiveCapBps == null) return;
+    const capPct = effectiveCapBps / 100; // bps -> %
+    const cur = Math.max(0, toNumber(riskPct));
+    if (cur > capPct) setRiskPct(String(capPct));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveCapBps, sizingMode]);
+
   const account = Math.max(0, toNumber(accountSize));
 
   const perTradeRiskDollars = useMemo(() => {
     if (sizingMode === "fixed-dollar") return Math.max(0, toNumber(fixedRisk));
-    const rp = Math.max(0, toNumber(riskPct)) / 100;
+
+    // Enforce cap at the math boundary (cannot exceed, even if UI bypassed)
+    const rawRiskPct = Math.max(0, toNumber(riskPct));
+    const capPct = effectiveCapBps != null ? effectiveCapBps / 100 : null; // bps -> %
+    const clampedRiskPct = capPct != null ? Math.min(rawRiskPct, capPct) : rawRiskPct;
+
+    const rp = clampedRiskPct / 100;
     return account * rp;
-  }, [account, sizingMode, fixedRisk, riskPct]);
+  }, [account, sizingMode, fixedRisk, riskPct, effectiveCapBps]);
 
   const totals = useMemo(() => {
     const rows = positions.map((p) => ({
@@ -512,7 +533,9 @@ export default function RiskEnginePage() {
         const found = locals.find((p) => p.id === selectedPortfolioId) ?? null;
         data = found?.data ?? null;
       } else {
-        const res = await fetch(`/api/portfolios/get?id=${encodeURIComponent(selectedPortfolioId)}`, { cache: "no-store" });
+        const res = await fetch(`/api/portfolios/get?id=${encodeURIComponent(selectedPortfolioId)}`, {
+          cache: "no-store",
+        });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) {
           setMsg(json?.error || "Load failed.");
@@ -535,7 +558,7 @@ export default function RiskEnginePage() {
       setFixedRisk(String(data.fixedRisk ?? "100"));
       setPositions(Array.isArray(data.positions) ? data.positions : []);
 
-      setMsg(isPro ? "Portfolio loaded ✅" : "Portfolio loaded ✅");
+      setMsg("Portfolio loaded ✅");
       setBusy(null);
     } catch (e: any) {
       setBusy(null);
@@ -570,14 +593,8 @@ export default function RiskEnginePage() {
           <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
             <span className="relative inline-block">
               <span className="relative z-10 text-[color:var(--accent)]">Position Risk</span>
-              <span
-                aria-hidden
-                className="absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-90"
-              />
-              <span
-                aria-hidden
-                className="absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-10"
-              />
+              <span aria-hidden className="absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-90" />
+              <span aria-hidden className="absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-10" />
             </span>
           </h1>
 
@@ -614,6 +631,25 @@ export default function RiskEnginePage() {
           </div>
         </header>
 
+        {/* Risk enforcement banner (ARC/CPM) */}
+        {riskSettings?.capital_protection_active && (
+          <RiskCapBanner
+            mode="CPM"
+            capBps={25}
+            expiresAt={riskSettings.cpm_expires_at}
+            profile={riskSettings.survivability_profile}
+          />
+        )}
+
+        {!riskSettings?.capital_protection_active && riskSettings?.risk_cap_active && (
+          <RiskCapBanner
+            mode="ARC"
+            capBps={riskSettings.risk_cap_max_risk_bps ?? 0}
+            expiresAt={riskSettings.risk_cap_expires_at}
+            profile={riskSettings.survivability_profile}
+          />
+        )}
+
         {/* Controls */}
         <section className="grid gap-4 sm:grid-cols-3">
           <Input
@@ -648,7 +684,18 @@ export default function RiskEnginePage() {
             <Input
               label="Risk % per trade"
               value={riskPct}
-              onChange={setRiskPct}
+              onChange={(v) => {
+                // allow intermediate typing, but clamp numeric values above cap
+                const n = Number(v);
+                if (Number.isFinite(n) && effectiveCapBps != null) {
+                  const capPct = effectiveCapBps / 100; // bps -> %
+                  if (n > capPct) {
+                    setRiskPct(String(capPct));
+                    return;
+                  }
+                }
+                setRiskPct(v);
+              }}
               type="number"
               tip="Target risk per trade as a % of your account. Example: 1% of $10,000 = $100."
             />
