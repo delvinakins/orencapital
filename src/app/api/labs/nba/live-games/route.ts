@@ -136,7 +136,7 @@ function classifyPhase(
   const sr = hasNumber(it.secondsRemaining) ? it.secondsRemaining : null;
   const hasScore = hasNumber(it.awayScore) && hasNumber(it.homeScore);
 
-  // Key fix: Q4 + scores + no clock => FINAL (prevents “P4 • —” hanging forever)
+  // Q4 + scores + no clock => FINAL
   if (p != null && p >= 4 && hasScore && (sr === 0 || sr === null)) return "final";
 
   if (p != null && p >= 1 && hasScore) return "live";
@@ -155,12 +155,12 @@ function allowedDateKeys(now: Date) {
   const yday = addDaysUTC(today, -1);
 
   const mins = minutesPT(now);
-  const NOON_PT = 12 * 60;
+  const SWITCH_PT = 8 * 60; // ✅ 8:00 AM PT
 
-  // Until noon PT, keep showing yesterday's finals as the primary slate day.
-  const primary = mins < NOON_PT ? yday : today;
+  // Until 8:00 AM PT, keep showing yesterday as the primary slate day.
+  const primary = mins < SWITCH_PT ? yday : today;
 
-  // Allow both days so late updates / early odds don't vanish, but we display primary.
+  // Allow both days for continuity, but UI displays primary.
   const keys = new Set<string>();
   keys.add(primary);
   keys.add(primary === today ? yday : today);
@@ -203,7 +203,6 @@ async function getClosingMap(keys: string[]) {
   return map;
 }
 
-// pull live moneylines from odds provider + attach by game key
 async function getMoneylineMap(
   odds: any[],
   allowed: Set<string>
@@ -220,7 +219,6 @@ async function getMoneylineMap(
 
     const gameKey = makeMatchKey(awayTeam, homeTeam, dk);
 
-    // Try common shapes from provider objects:
     const home =
       toNum((o as any)?.liveMoneylineHome) ??
       toNum((o as any)?.moneylineHome) ??
@@ -287,10 +285,6 @@ async function seedClosingFromOdds(candidates: Array<{ gameKey: string; closingH
   return toInsert.length;
 }
 
-/**
- * Slate-aware polling window:
- * Active if now is within (firstTip - PRE) .. (lastTip + POST).
- */
 function computeSlateActive(
   odds: Array<{ laDateKey: string | null; commenceTimeIso: string | null }>,
   now: Date,
@@ -326,12 +320,7 @@ function computeSlateActive(
 async function pollProviders(now: Date, requestedDateKeyPT: string | null): Promise<LiveOk> {
   const { primary, keys } = allowedDateKeys(now);
 
-  // DEFAULT: yesterday/today logic
-  // OVERRIDE: if request specifies dateKeyPT, ONLY show that date and do NOT fall back
   const effectivePrimary = requestedDateKeyPT || primary;
-
-  // This affects provider filtering (odds/scores) to only pull the day you requested.
-  // (If you pass a future day, providers may return nothing yet.)
   const allowedSetForProviders = new Set<string>(requestedDateKeyPT ? [requestedDateKeyPT] : keys);
 
   const odds = await fetchTheOddsApiSpreads();
@@ -341,10 +330,8 @@ async function pollProviders(now: Date, requestedDateKeyPT: string | null): Prom
     allowedSetForProviders
   );
 
-  // moneyline attachment map (if provider includes it)
   const moneylineMap = await getMoneylineMap(odds as any[], allowedSetForProviders);
 
-  // Seed closing from odds (first seen consensus)
   const closingCandidates = odds
     .filter((o) => (o.laDateKey ? allowedSetForProviders.has(o.laDateKey) : true))
     .map((o) => ({
@@ -359,7 +346,6 @@ async function pollProviders(now: Date, requestedDateKeyPT: string | null): Prom
 
   const scores = await fetchApiSportsScores();
 
-  // odds maps for live spread attach
   const oddsByKey = new Map<string, number | null>();
   const oddsByMatch = new Map<string, number | null>();
 
@@ -414,7 +400,6 @@ async function pollProviders(now: Date, requestedDateKeyPT: string | null): Prom
     });
   }
 
-  // Fallback to odds slate if scores missing
   if (items.length === 0 && odds.length > 0) {
     for (const o of odds) {
       const dk = o.laDateKey ?? "";
@@ -425,7 +410,6 @@ async function pollProviders(now: Date, requestedDateKeyPT: string | null): Prom
       if (!awayTeam || !homeTeam) continue;
 
       const gameKey = makeMatchKey(awayTeam, homeTeam, dk);
-
       const ml = moneylineMap.get(gameKey) ?? null;
 
       items.push({
@@ -445,14 +429,9 @@ async function pollProviders(now: Date, requestedDateKeyPT: string | null): Prom
     }
   }
 
-  // DISPLAY DAY:
-  // - normal mode: primary (yesterday until noon PT, then today)
-  // - requested mode: requestedDateKeyPT
   const primarySet = new Set<string>([effectivePrimary]);
   const filtered = filterItemsByAllowedDates(items, primarySet);
 
-  // IMPORTANT: if requestedDateKeyPT was provided and nothing exists yet, DO NOT FALL BACK
-  // Return empty items for that requested day.
   if (requestedDateKeyPT && filtered.length === 0) {
     return {
       ok: true,
@@ -502,7 +481,6 @@ async function pollProviders(now: Date, requestedDateKeyPT: string | null): Prom
   };
 }
 
-// warm cache
 const TTL_MS = 60_000;
 let cached: { at: number; payload: LiveOk; requestedKey: string | null } | null = null;
 let inflight: Promise<LiveOk> | null = null;
@@ -512,7 +490,6 @@ function isFresh(ts: number) {
 }
 
 async function getData(requestedDateKeyPT: string | null): Promise<LiveResponse> {
-  // cache must be scoped by requested key; otherwise "tomorrow" could get cached "today"
   if (cached && cached.requestedKey === requestedDateKeyPT && isFresh(cached.at)) return cached.payload;
   if (inflight) return inflight;
 
