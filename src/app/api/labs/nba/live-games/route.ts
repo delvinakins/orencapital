@@ -44,6 +44,8 @@ type LiveOk = {
     closingSeeded?: number;
     closingAttached?: number;
     moneylineAttached?: number;
+    note?: string;
+    requestedDateKeyPT?: string | null;
   };
 };
 
@@ -321,23 +323,30 @@ function computeSlateActive(
   return nowT >= start && nowT <= end;
 }
 
-async function pollProviders(now: Date): Promise<LiveOk> {
-  const { today, primary, keys } = allowedDateKeys(now);
-  const allowed = new Set(keys);
+async function pollProviders(now: Date, requestedDateKeyPT: string | null): Promise<LiveOk> {
+  const { primary, keys } = allowedDateKeys(now);
+
+  // DEFAULT: yesterday/today logic
+  // OVERRIDE: if request specifies dateKeyPT, ONLY show that date and do NOT fall back
+  const effectivePrimary = requestedDateKeyPT || primary;
+
+  // This affects provider filtering (odds/scores) to only pull the day you requested.
+  // (If you pass a future day, providers may return nothing yet.)
+  const allowedSetForProviders = new Set<string>(requestedDateKeyPT ? [requestedDateKeyPT] : keys);
 
   const odds = await fetchTheOddsApiSpreads();
   const slateActive = computeSlateActive(
     odds.map((o) => ({ laDateKey: o.laDateKey, commenceTimeIso: o.commenceTimeIso })),
     now,
-    allowed
+    allowedSetForProviders
   );
 
   // moneyline attachment map (if provider includes it)
-  const moneylineMap = await getMoneylineMap(odds as any[], allowed);
+  const moneylineMap = await getMoneylineMap(odds as any[], allowedSetForProviders);
 
   // Seed closing from odds (first seen consensus)
   const closingCandidates = odds
-    .filter((o) => (o.laDateKey ? allowed.has(o.laDateKey) : true))
+    .filter((o) => (o.laDateKey ? allowedSetForProviders.has(o.laDateKey) : true))
     .map((o) => ({
       gameKey: makeMatchKey(o.awayTeam, o.homeTeam, o.laDateKey || ""),
       closingHomeSpread: toNum(o.liveHomeSpread) ?? NaN,
@@ -359,14 +368,14 @@ async function pollProviders(now: Date): Promise<LiveOk> {
     oddsByMatch.set(match, roundHalf(toNum(o.liveHomeSpread)) ?? null);
 
     const dk = o.laDateKey ?? "";
-    if (dk && allowed.has(dk)) oddsByKey.set(`${dk}|${match}`, roundHalf(toNum(o.liveHomeSpread)) ?? null);
+    if (dk && allowedSetForProviders.has(dk)) oddsByKey.set(`${dk}|${match}`, roundHalf(toNum(o.liveHomeSpread)) ?? null);
   }
 
   const items: LiveGameItem[] = [];
 
   for (const raw of scores as any[]) {
     const laKey = String(raw?.laDateKey ?? "").trim();
-    if (laKey && !allowed.has(laKey)) continue;
+    if (laKey && !allowedSetForProviders.has(laKey)) continue;
 
     const awayTeam = canonicalTeamName(String(raw?.awayTeam ?? "").trim());
     const homeTeam = canonicalTeamName(String(raw?.homeTeam ?? "").trim());
@@ -409,7 +418,7 @@ async function pollProviders(now: Date): Promise<LiveOk> {
   if (items.length === 0 && odds.length > 0) {
     for (const o of odds) {
       const dk = o.laDateKey ?? "";
-      if (dk && !allowed.has(dk)) continue;
+      if (dk && !allowedSetForProviders.has(dk)) continue;
 
       const awayTeam = canonicalTeamName(String(o?.awayTeam ?? "").trim());
       const homeTeam = canonicalTeamName(String(o?.homeTeam ?? "").trim());
@@ -436,9 +445,33 @@ async function pollProviders(now: Date): Promise<LiveOk> {
     }
   }
 
-  // DISPLAY PRIMARY ONLY (yesterday until noon PT, then today)
-  const primarySet = new Set<string>([primary]);
+  // DISPLAY DAY:
+  // - normal mode: primary (yesterday until noon PT, then today)
+  // - requested mode: requestedDateKeyPT
+  const primarySet = new Set<string>([effectivePrimary]);
   const filtered = filterItemsByAllowedDates(items, primarySet);
+
+  // IMPORTANT: if requestedDateKeyPT was provided and nothing exists yet, DO NOT FALL BACK
+  // Return empty items for that requested day.
+  if (requestedDateKeyPT && filtered.length === 0) {
+    return {
+      ok: true,
+      items: [],
+      meta: {
+        stale: true,
+        updatedAt: nowIso(),
+        window: "active",
+        storage: supabaseAdminOrNull() ? "supabase" : "none",
+        dateKeyPT: requestedDateKeyPT,
+        allowedDateKeysPT: keys,
+        closingSeeded: 0,
+        closingAttached: 0,
+        moneylineAttached: 0,
+        note: "Requested date not available yet; returning empty slate (no fallback).",
+        requestedDateKeyPT,
+      },
+    };
+  }
 
   const closingMap = await getClosingMap(filtered.map((it) => it.gameId));
   const attached = filtered.map((it) => ({
@@ -459,34 +492,34 @@ async function pollProviders(now: Date): Promise<LiveOk> {
       updatedAt: nowIso(),
       window: slateActive ? "active" : "offhours",
       storage: supabaseAdminOrNull() ? "supabase" : "none",
-      // dateKeyPT is what the UI should consider the "display day"
-      dateKeyPT: primary,
-      // show both allowed keys for debugging/visibility
+      dateKeyPT: effectivePrimary,
       allowedDateKeysPT: keys,
       closingSeeded,
       closingAttached: closingMap.size,
       moneylineAttached,
+      requestedDateKeyPT,
     },
   };
 }
 
 // warm cache
 const TTL_MS = 60_000;
-let cached: { at: number; payload: LiveOk } | null = null;
+let cached: { at: number; payload: LiveOk; requestedKey: string | null } | null = null;
 let inflight: Promise<LiveOk> | null = null;
 
 function isFresh(ts: number) {
   return nowMs() - ts <= TTL_MS;
 }
 
-async function getData(): Promise<LiveResponse> {
-  if (cached && isFresh(cached.at)) return cached.payload;
+async function getData(requestedDateKeyPT: string | null): Promise<LiveResponse> {
+  // cache must be scoped by requested key; otherwise "tomorrow" could get cached "today"
+  if (cached && cached.requestedKey === requestedDateKeyPT && isFresh(cached.at)) return cached.payload;
   if (inflight) return inflight;
 
   inflight = (async () => {
     try {
-      const payload = await pollProviders(new Date());
-      cached = { at: nowMs(), payload };
+      const payload = await pollProviders(new Date(), requestedDateKeyPT);
+      cached = { at: nowMs(), payload, requestedKey: requestedDateKeyPT };
       return payload;
     } catch (err: any) {
       console.error("[nba/live-games] error:", err?.message ?? err);
@@ -499,8 +532,11 @@ async function getData(): Promise<LiveResponse> {
   return inflight;
 }
 
-export async function GET() {
-  const payload = await getData();
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const requestedDateKeyPT = (searchParams.get("dateKeyPT") || "").trim() || null;
+
+  const payload = await getData(requestedDateKeyPT);
 
   return NextResponse.json(payload, {
     status: 200,
