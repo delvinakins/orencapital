@@ -26,6 +26,7 @@ export default function TopNav() {
   const acctRef = useRef<HTMLDivElement | null>(null);
   const moreRef = useRef<HTMLDivElement | null>(null);
 
+  // keep pro status for badge + other UI, but Labs link is now public
   const { isPro } = useProStatus(true);
 
   useEffect(() => {
@@ -70,11 +71,9 @@ export default function TopNav() {
   const card = "bg-[color:var(--card)]";
   const glass = "bg-[color:var(--background)]/80";
 
-  // Labs target + gating:
-  // - PRO users go to /labs/nba
-  // - FREE users go to /pricing and see "Labs (PRO)"
-  const labsHref = isPro ? "/labs/nba" : "/pricing";
-  const labsLabel = isPro ? "Labs" : "Labs (PRO)";
+  // ✅ Labs watchlist is public now
+  const labsHref = "/labs/nba";
+  const labsLabel = "Labs";
 
   return (
     <nav className={`sticky top-0 z-50 w-full border-b ${border} ${glass} backdrop-blur`}>
@@ -164,7 +163,9 @@ export default function TopNav() {
                 </button>
 
                 {acctOpen && (
-                  <div className={`absolute right-0 mt-3 w-52 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
+                  <div
+                    className={`absolute right-0 mt-3 w-52 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}
+                  >
                     <MenuItem href="/account" label="Account" onClick={() => setAcctOpen(false)} />
                     <MenuItem href="/account/billing" label="Billing" onClick={() => setAcctOpen(false)} />
                     <div className={`my-1 h-px ${border}`} />
