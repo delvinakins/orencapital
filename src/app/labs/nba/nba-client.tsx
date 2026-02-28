@@ -311,16 +311,6 @@ function dateKeyPTNow(): string {
   }).format(new Date());
 }
 
-function isAfter2pmPT(now: Date): boolean {
-  const hourStr = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
-    hour: "numeric",
-    hour12: false,
-  }).format(now);
-  const h = Number(hourStr);
-  return Number.isFinite(h) ? h >= 14 : false;
-}
-
 function normalizeTeam(s: any): string {
   return String(s ?? "").trim().toLowerCase();
 }
@@ -423,27 +413,15 @@ function OrenEdgeBar({ v }: { v: number | null }) {
     <div className="relative h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
       <div className="absolute inset-y-0 left-1/2 w-px bg-white/25" />
       {x >= 0 ? (
-        <div
-          className="absolute inset-y-0 bg-[color:var(--accent)]/65"
-          style={{ left: "50%", width: `${rightPct - 50}%` }}
-        />
+        <div className="absolute inset-y-0 bg-[color:var(--accent)]/65" style={{ left: "50%", width: `${rightPct - 50}%` }} />
       ) : (
-        <div
-          className="absolute inset-y-0 bg-amber-400/60"
-          style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }}
-        />
+        <div className="absolute inset-y-0 bg-amber-400/60" style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }} />
       )}
     </div>
   );
 }
 
-function Pill({
-  children,
-  tone = "neutral",
-}: {
-  children: React.ReactNode;
-  tone?: "neutral" | "live" | "pregame" | "final";
-}) {
+function Pill({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "live" | "pregame" | "final" }) {
   const cls =
     tone === "live"
       ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
@@ -705,7 +683,6 @@ export default function NbaClient() {
     setScoreboard(safeReadScoreboard());
   }, []);
 
-  const after2pm = useMemo(() => isAfter2pmPT(new Date(nowTick)), [nowTick]);
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
   // distributions
@@ -815,7 +792,7 @@ export default function NbaClient() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 90_000);
+    const t = setInterval(load, 60_000);
     return () => clearInterval(t);
   }, []);
 
@@ -849,8 +826,8 @@ export default function NbaClient() {
 
       const currentRounded = roundToHalf(g?.liveSpreadHome);
       const closeRounded = roundToHalf(g?.closingSpreadHome);
-      const currentLabel = after2pm ? formatSpread(currentRounded, 1) : "—";
-      const closeLabel = after2pm ? formatSpread(closeRounded, 1) : "—";
+      const currentLabel = formatSpread(currentRounded, 1);
+      const closeLabel = formatSpread(closeRounded, 1);
       const closeNum = typeof closeRounded === "number" ? closeRounded : null;
 
       const liveNum = safeNum(g?.liveSpreadHome);
@@ -955,7 +932,7 @@ export default function NbaClient() {
     });
 
     return computed;
-  }, [games, after2pm, spreadIndex, orenMap, orenParams]);
+  }, [games, spreadIndex, orenMap, orenParams]);
 
   // persist finals locally
   useEffect(() => {
@@ -1048,7 +1025,6 @@ export default function NbaClient() {
               <Pill>0 live</Pill>
             )}
 
-            {!after2pm && <Pill>Spreads unlock 2 pm PT</Pill>}
             <Pill>Index: {indexSource === "remote" ? "Market" : "Stub"}</Pill>
             <Pill>Oren: {orenStatus === "loading" ? "Loading" : orenStatus === "missing" ? "Missing" : "Ready"}</Pill>
             {updatedAtLabel && <span className="text-xs text-foreground/40">Updated {updatedAtLabel} PT</span>}
@@ -1154,9 +1130,7 @@ export default function NbaClient() {
           ) : rows.length === 0 ? (
             <div className="space-y-1 text-sm text-foreground/60">
               <div>{loadError ?? "Live feed is offline right now."}</div>
-              <div className="text-xs text-foreground/40">
-                If you checked after hours, the last snapshot will appear once it exists.
-              </div>
+              <div className="text-xs text-foreground/40">If you checked after hours, the last snapshot will appear once it exists.</div>
             </div>
           ) : (
             <div className="space-y-5">
