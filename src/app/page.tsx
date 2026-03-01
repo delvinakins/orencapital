@@ -103,10 +103,12 @@ function Tooltip({ label, children }: { label: string; children: ReactNode }) {
 ========================================================= */
 
 type Climate = {
-  score: number;
+  score: number; // 0..100
   label: "Stable" | "Elevated" | "High Risk";
   tone: "accent" | "neutral" | "warn";
   details: string;
+  asOf?: string;
+  source?: string;
 };
 
 function getToneColor(tone: Climate["tone"]) {
@@ -115,7 +117,7 @@ function getToneColor(tone: Climate["tone"]) {
   return "bg-yellow-500";
 }
 
-function MarketClimateBar({ climate }: { climate: Climate }) {
+function MarketClimateBar({ climate, live }: { climate: Climate; live: boolean }) {
   const tip = (
     <div className="space-y-2">
       <div>
@@ -127,9 +129,15 @@ function MarketClimateBar({ climate }: { climate: Climate }) {
       </div>
 
       <div className="space-y-1 text-foreground/70">
-        <div><span className="font-semibold">0–25:</span> Stable (forgiving)</div>
-        <div><span className="font-semibold">26–60:</span> Elevated (size down)</div>
-        <div><span className="font-semibold">61–100:</span> High Risk (survival mode)</div>
+        <div>
+          <span className="font-semibold">0–25:</span> Stable (forgiving)
+        </div>
+        <div>
+          <span className="font-semibold">26–60:</span> Elevated (size down)
+        </div>
+        <div>
+          <span className="font-semibold">61–100:</span> High Risk (survival mode)
+        </div>
       </div>
 
       <div className="text-foreground/70">
@@ -137,9 +145,14 @@ function MarketClimateBar({ climate }: { climate: Climate }) {
         <span className="font-semibold">higher blow-up risk at the same risk %</span>.
       </div>
 
-      <div className="text-foreground/60">
-        Live feed (VIX/trend/correlation) coming next. Right now this is a placeholder.
-      </div>
+      {live ? (
+        <div className="text-foreground/60">
+          Live via {climate.source ?? "market feed"}
+          {climate.asOf ? ` · as of ${climate.asOf}` : ""}.
+        </div>
+      ) : (
+        <div className="text-foreground/60">Live feed unavailable (showing fallback).</div>
+      )}
     </div>
   );
 
@@ -154,7 +167,7 @@ function MarketClimateBar({ climate }: { climate: Climate }) {
 
       <div className="flex items-center justify-between text-sm">
         <div className="font-semibold tracking-tight">{climate.label}</div>
-        <div className="text-xs text-foreground/55">Live signal coming next</div>
+        <div className="text-xs text-foreground/55">{live ? "Live" : "Fallback"}</div>
       </div>
 
       <div className="h-2 w-full rounded-full bg-[color:var(--border)] overflow-hidden">
@@ -170,8 +183,50 @@ function MarketClimateBar({ climate }: { climate: Climate }) {
    Page
 ========================================================= */
 
+const FETCH_URL = "/api/market/climate";
+
 export default function Home() {
   const pathname = usePathname();
+
+  const [climate, setClimate] = useState<Climate | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const res = await fetch(FETCH_URL, { cache: "no-store" });
+        const json = await res.json().catch(() => null);
+        if (!alive) return;
+
+        // expected response shape: { ok: true, climate: { score, label, tone, details, asOf?, source? } }
+        const c = json?.climate;
+        if (res.ok && c && typeof c.score === "number") {
+          setClimate({
+            score: c.score,
+            label: c.label,
+            tone: c.tone,
+            details: c.details,
+            asOf: typeof c.asOf === "string" ? c.asOf : undefined,
+            source: typeof c.source === "string" ? c.source : undefined,
+          });
+        }
+      } catch {
+        // ignore: fallback below
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const fallback: Climate = {
+    score: 12,
+    label: "Stable",
+    tone: "accent",
+    details: "Live market feed not loaded · showing fallback",
+  };
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -218,14 +273,7 @@ export default function Home() {
             </Link>
           </div>
 
-          <MarketClimateBar
-            climate={{
-              score: 12,
-              label: "Stable",
-              tone: "accent",
-              details: "Volatility low · Trend healthy · Correlation contained",
-            }}
-          />
+          <MarketClimateBar climate={climate ?? fallback} live={!!climate} />
 
           <div className="mt-10 grid gap-4 sm:grid-cols-3">
             {[
