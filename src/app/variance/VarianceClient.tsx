@@ -1,7 +1,8 @@
+// FILE: src/app/variance/VarianceClient.tsx
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Tooltip } from "@/components/Tooltip";
 
@@ -72,6 +73,25 @@ function longestLosingStreak(outcomes: boolean[]) {
   return best;
 }
 
+/**
+ * Risk governance sensor: post variance metrics to the server so ARC/CPM can activate.
+ */
+async function evaluateRiskGovernance(metrics: {
+  ruin_probability: number; // 0..1
+  drawdown_pct: number; // 0..1
+  consecutive_losses: number;
+}) {
+  try {
+    await fetch("/api/risk/cpm/evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ metrics }),
+    });
+  } catch {
+    // never block UI
+  }
+}
+
 /* ---------------- UI ---------------- */
 
 function Input({
@@ -112,7 +132,6 @@ function Card({
   sub?: string;
   tone?: "neutral" | "accent" | "warn";
 }) {
-  // Institutional feel: no big red blocks. "warn" uses amber border/text only.
   const toneClass =
     tone === "accent"
       ? "border-[color:var(--accent)]/55 shadow-[0_0_0_1px_rgba(43,203,119,0.10)]"
@@ -151,7 +170,6 @@ function toneFromDelta(delta: number): "accent" | "neutral" | "warn" {
 }
 
 function toneFromEV(evR: number): "accent" | "neutral" | "warn" {
-  // Calm institutional thresholds
   if (!Number.isFinite(evR)) return "neutral";
   if (evR < 0) return "warn";
   if (evR >= 0.05) return "accent";
@@ -171,9 +189,54 @@ function survivalMessage(psychRuin: number, zeroRuin: number) {
   return "Survival profile looks structurally reasonable—assuming your win rate and average R are realistic.";
 }
 
+/* ---------------- Persistence ---------------- */
+
+const LS_KEY = "oren:variance:v1";
+
+type Persisted = {
+  view: "simple" | "advanced";
+  accountSize: string;
+  riskPct: string;
+  winRate: string;
+  avgR: string;
+  trades: string;
+  sims: string;
+};
+
+function safeReadPersisted(): Persisted | null {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    if (!v || typeof v !== "object") return null;
+    return v as Persisted;
+  } catch {
+    return null;
+  }
+}
+
+function safeWritePersisted(v: Persisted) {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(v));
+  } catch {
+    // ignore
+  }
+}
+
+function setQuery(router: ReturnType<typeof useRouter>, pathname: string, current: URLSearchParams, patch: Record<string, string>) {
+  const next = new URLSearchParams(current.toString());
+  for (const [k, val] of Object.entries(patch)) {
+    if (val == null || val === "") next.delete(k);
+    else next.set(k, val);
+  }
+  router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+}
+
 /* ---------------- Component ---------------- */
 
 export default function VarianceClient() {
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
 
   const [view, setView] = useState<"simple" | "advanced">("simple");
@@ -186,13 +249,59 @@ export default function VarianceClient() {
   const [trades, setTrades] = useState("120");
   const [sims, setSims] = useState("300");
 
-  // Prefill from Risk Engine (optional)
+  // 1) Hydrate: URL params first; else localStorage
   useEffect(() => {
-    const acc = searchParams.get("account");
-    const risk = searchParams.get("risk");
-    if (acc) setAccountSize(acc);
-    if (risk) setRiskPct(risk);
-  }, [searchParams]);
+    const accQ = searchParams.get("account");
+    const riskQ = searchParams.get("risk");
+    const wrQ = searchParams.get("wr");
+    const viewQ = searchParams.get("view");
+    const avgRQ = searchParams.get("avgR");
+    const tradesQ = searchParams.get("trades");
+    const simsQ = searchParams.get("sims");
+
+    if (accQ || riskQ || wrQ || viewQ || avgRQ || tradesQ || simsQ) {
+      if (accQ) setAccountSize(accQ);
+      if (riskQ) setRiskPct(riskQ);
+      if (wrQ) setWinRate(wrQ);
+      if (viewQ === "advanced" || viewQ === "simple") setView(viewQ);
+      if (avgRQ) setAvgR(avgRQ);
+      if (tradesQ) setTrades(tradesQ);
+      if (simsQ) setSims(simsQ);
+      return;
+    }
+
+    const persisted = safeReadPersisted();
+    if (!persisted) return;
+
+    setView(persisted.view);
+    setAccountSize(persisted.accountSize);
+    setRiskPct(persisted.riskPct);
+    setWinRate(persisted.winRate);
+    setAvgR(persisted.avgR);
+    setTrades(persisted.trades);
+    setSims(persisted.sims);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 2) Persist to localStorage + URL (debounced) so navigation doesn't reset
+  useEffect(() => {
+    const payload: Persisted = { view, accountSize, riskPct, winRate, avgR, trades, sims };
+    safeWritePersisted(payload);
+
+    const t = setTimeout(() => {
+      setQuery(router, pathname, searchParams, {
+        view,
+        account: accountSize,
+        risk: riskPct,
+        wr: winRate,
+        avgR,
+        trades,
+        sims,
+      });
+    }, 250);
+
+    return () => clearTimeout(t);
+  }, [view, accountSize, riskPct, winRate, avgR, trades, sims, router, pathname, searchParams]);
 
   const computed = useMemo(() => {
     const acc0 = Number(accountSize);
@@ -206,7 +315,7 @@ export default function VarianceClient() {
     if (acc0 <= 0 || rPct <= 0 || w <= 0 || w >= 1) return null;
 
     const startEquity = acc0;
-    const psychologicalRuinThreshold = startEquity * 0.3; // 70% drawdown (30% remaining)
+    const psychologicalRuinThreshold = startEquity * 0.3;
 
     type SimRun = { finalEquity: number; maxDD: number; longestL: number };
 
@@ -258,23 +367,18 @@ export default function VarianceClient() {
       };
     }
 
-    // Base run (full detail)
     const base = runMonteCarlo(w);
 
-    // Confidence stress test: assume win rate is overstated by 5 percentage points
     const stressWinRate = clamp01(w - 0.05);
     const stress = runMonteCarlo(stressWinRate);
 
-    // Expected Value (R per trade): EV = p*avgR - (1-p)*1
     const evBase = w * r - (1 - w);
     const evStress = stressWinRate * r - (1 - stressWinRate);
 
     return {
-      // EV
       evBase,
       evStress,
 
-      // Base distribution metrics
       medianFinal: percentile(base.finals, 0.5),
       p10Final: percentile(base.finals, 0.1),
       p90Final: percentile(base.finals, 0.9),
@@ -291,12 +395,10 @@ export default function VarianceClient() {
       ruinZeroProb: base.ruinZeroProb,
       ruinPsychProb: base.ruinPsychProb,
 
-      // Stress test outputs (survival-only)
       stressWinRate,
       stressRuinZeroProb: stress.ruinZeroProb,
       stressRuinPsychProb: stress.ruinPsychProb,
 
-      // Meta
       sims: nSims,
       nTrades,
       startEquity,
@@ -305,6 +407,27 @@ export default function VarianceClient() {
       avgR: r,
     };
   }, [accountSize, riskPct, winRate, avgR, trades, sims]);
+
+  // Risk governance sensor: whenever the sim recomputes, evaluate CPM/ARC once (debounced)
+  useEffect(() => {
+    if (!computed) return;
+
+    const ruin = Number(computed.ruinPsychProb);
+    const dd = Number(computed.p90DD);
+    const streak = Number(computed.p90Streak);
+
+    if (!Number.isFinite(ruin) || !Number.isFinite(dd) || !Number.isFinite(streak)) return;
+
+    const t = setTimeout(() => {
+      evaluateRiskGovernance({
+        ruin_probability: clamp01(ruin),
+        drawdown_pct: clamp01(dd),
+        consecutive_losses: Math.max(0, Math.round(streak)),
+      });
+    }, 350);
+
+    return () => clearTimeout(t);
+  }, [computed]);
 
   const p90Tip = (
     <div className="space-y-2">
@@ -358,6 +481,8 @@ export default function VarianceClient() {
     </div>
   );
 
+  const riskEngineHref = `/risk-engine?account=${encodeURIComponent(accountSize)}&risk=${encodeURIComponent(riskPct)}`;
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:space-y-10 sm:px-6 sm:py-16">
@@ -366,7 +491,7 @@ export default function VarianceClient() {
           <p className="text-sm text-foreground/70">See drawdowns and losing streaks before they happen.</p>
 
           <div className="flex flex-wrap gap-3">
-            <Link href="/risk-engine" className="oc-btn oc-btn-secondary">
+            <Link href={riskEngineHref} className="oc-btn oc-btn-secondary">
               ← Risk Engine
             </Link>
           </div>
@@ -394,13 +519,7 @@ export default function VarianceClient() {
         </header>
 
         <section className="grid gap-4 sm:grid-cols-3">
-          <Input
-            label="Account Size ($)"
-            value={accountSize}
-            onChange={setAccountSize}
-            tip="Your starting account value for the simulation."
-          />
-
+          <Input label="Account Size ($)" value={accountSize} onChange={setAccountSize} tip="Your starting account value for the simulation." />
           <Input
             label="Risk % per trade"
             value={riskPct}
@@ -414,13 +533,7 @@ export default function VarianceClient() {
               </div>
             }
           />
-
-          <Input
-            label="Win Rate (%)"
-            value={winRate}
-            onChange={setWinRate}
-            tip="Estimated probability of a winning trade. If unsure, test 45–55%."
-          />
+          <Input label="Win Rate (%)" value={winRate} onChange={setWinRate} tip="Estimated probability of a winning trade. If unsure, test 45–55%." />
 
           {view === "advanced" && (
             <>
@@ -435,27 +548,14 @@ export default function VarianceClient() {
                   </div>
                 }
               />
-
-              <Input
-                label="# Trades"
-                value={trades}
-                onChange={setTrades}
-                tip="How many trades to simulate per run (e.g., 50–200)."
-              />
-
-              <Input
-                label="# Simulations"
-                value={sims}
-                onChange={setSims}
-                tip="Number of Monte Carlo runs. Higher is smoother but slower (300–1000 is solid)."
-              />
+              <Input label="# Trades" value={trades} onChange={setTrades} tip="How many trades to simulate per run (e.g., 50–200)." />
+              <Input label="# Simulations" value={sims} onChange={setSims} tip="Number of Monte Carlo runs. Higher is smoother but slower (300–1000 is solid)." />
             </>
           )}
         </section>
 
         {computed && view === "simple" && (
           <>
-            {/* SIMPLE: concise but includes Edge Read + Survival Read */}
             <section className="grid gap-4 sm:grid-cols-3">
               <Card
                 label={
@@ -470,7 +570,6 @@ export default function VarianceClient() {
                 value={`${formatCurrency(computed.p10Final)} – ${formatCurrency(computed.p90Final)}`}
                 sub={`Median: ${formatCurrency(computed.medianFinal)}`}
               />
-
               <Card
                 label={
                   <span className="inline-flex items-center gap-2">
@@ -484,7 +583,6 @@ export default function VarianceClient() {
                 tone="accent"
                 sub="Plan around this."
               />
-
               <Card
                 label="Practical Ruin (70% Drawdown)"
                 value={formatPct01(computed.ruinPsychProb, 2)}
@@ -500,14 +598,12 @@ export default function VarianceClient() {
                 tone={toneFromProbability(computed.stressRuinPsychProb)}
                 sub="Win rate reduced by 5 pts."
               />
-
               <Card
                 label="Edge Read"
                 value={computed.evBase > 0 ? "Positive expectancy" : "Negative expectancy"}
                 tone={toneFromEV(computed.evBase)}
                 sub={`EV: ${formatR(computed.evBase, 3)} per trade`}
               />
-
               <Card
                 label="Survival Read"
                 value="Position sizing drives survival."
@@ -520,7 +616,6 @@ export default function VarianceClient() {
 
         {computed && view === "advanced" && (
           <>
-            {/* ADVANCED: full dashboard */}
             <section className="grid gap-4 sm:grid-cols-3">
               <Card label="Median Final Equity" value={formatCurrency(computed.medianFinal)} />
               <Card
@@ -591,14 +686,12 @@ export default function VarianceClient() {
                   tone={toneFromEV(computed.evBase)}
                   sub="Average R per trade under the assumed win rate."
                 />
-
                 <Card
                   label={`Expected Value (Stress @ ${(computed.stressWinRate * 100).toFixed(0)}% WR)`}
                   value={formatR(computed.evStress, 3)}
                   tone={toneFromEV(computed.evStress)}
                   sub="Win rate reduced by 5 percentage points."
                 />
-
                 <Card
                   label="Edge Read"
                   value={computed.evBase > 0 ? "Positive expectancy" : "Negative expectancy"}
@@ -627,14 +720,12 @@ export default function VarianceClient() {
                   tone={toneFromProbability(computed.ruinZeroProb)}
                   sub={`${computed.blowups} / ${computed.sims} runs hit zero within ${computed.nTrades} trades.`}
                 />
-
                 <Card
                   label="Probability of Practical Ruin (70% Drawdown)"
                   value={formatPct01(computed.ruinPsychProb, 2)}
                   tone={toneFromProbability(computed.ruinPsychProb)}
                   sub={`Falls below ${formatCurrency(computed.psychologicalRuinThreshold)} within ${computed.nTrades} trades.`}
                 />
-
                 <Card
                   label="Survival Read"
                   value="Position sizing drives survival."
@@ -659,18 +750,16 @@ export default function VarianceClient() {
                   tone={toneFromProbability(computed.ruinPsychProb)}
                   sub={`Monte Carlo over ${computed.nTrades} trades.`}
                 />
-
                 <Card
                   label={`Practical Ruin (Stress @ ${(computed.stressWinRate * 100).toFixed(0)}% WR)`}
                   value={formatPct01(computed.stressRuinPsychProb, 2)}
                   tone={toneFromProbability(computed.stressRuinPsychProb)}
                   sub="Win rate reduced by 5 percentage points."
                 />
-
                 <Card
                   label="Sensitivity"
                   value={formatPctSigned01(computed.stressRuinPsychProb - computed.ruinPsychProb, 2)}
-                  tone={toneFromDelta(computed.stressRuinPsychProb - computed.ruinPsychProb)}
+                  tone={toneFromDelta(computed.stressRuinPsychProb - computed.ruinPsychProb,)}
                   sub="Increase in practical ruin probability under stress."
                 />
               </div>

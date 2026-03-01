@@ -75,6 +75,8 @@ export default function TopNav() {
   const labsHref = "/labs/nba";
   const labsLabel = "Labs";
 
+  // Primary flow order:
+  // 1) How it works → 2) Position Risk → 3) Simulator → 4) Survivability (deeper) → More: Journal/Portfolio/Labs/Blow-up/Pricing
   return (
     <nav className={`sticky top-0 z-50 w-full border-b ${border} ${glass} backdrop-blur`}>
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
@@ -93,8 +95,10 @@ export default function TopNav() {
 
             {/* DESKTOP LINKS */}
             <div className="hidden lg:flex items-center gap-5 text-sm text-slate-300">
-              <NavLink href="/risk" label="Survivability" />
+              <NavLink href="/how-it-works" label="How it works" />
               <NavLink href="/risk-engine" label="Position Risk" />
+              <NavLink href="/variance" label="Simulator" />
+              <NavLink href="/risk" label="Survivability" />
 
               <div className="relative" ref={moreRef}>
                 <button
@@ -110,16 +114,19 @@ export default function TopNav() {
                   <div
                     className={`absolute left-0 mt-3 w-56 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}
                   >
+                    {/* Track / Execute */}
+                    <MenuItem href="/journal" label="Journal" onClick={() => setMoreOpen(false)} />
+                    <MenuItem href="/portfolio" label="Portfolio" onClick={() => setMoreOpen(false)} />
+
+                    <div className={`my-1 h-px ${border}`} />
+
+                    {/* Explore */}
+                    <MenuItem href={labsHref} label={labsLabel} onClick={() => setMoreOpen(false)} />
                     <MenuItem href="/risk-death" label="Blow-Up Risk" onClick={() => setMoreOpen(false)} />
 
                     <div className={`my-1 h-px ${border}`} />
 
-                    <MenuItem href="/variance" label="Simulator" onClick={() => setMoreOpen(false)} />
-                    <MenuItem href="/portfolio" label="Portfolio" onClick={() => setMoreOpen(false)} />
-                    <MenuItem href="/journal" label="Journal" onClick={() => setMoreOpen(false)} />
-                    <MenuItem href={labsHref} label={labsLabel} onClick={() => setMoreOpen(false)} />
-
-                    <div className={`my-1 h-px ${border}`} />
+                    {/* Monetize */}
                     <MenuItem href="/pricing" label="Pricing" onClick={() => setMoreOpen(false)} />
                   </div>
                 )}
@@ -199,18 +206,27 @@ export default function TopNav() {
           <div className="fixed left-0 right-0 top-16 z-50 px-4 pb-4">
             <div className={`overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
               <div className="p-2 flex flex-col gap-1">
-                <MobileItem href="/risk" label="Survivability" onClick={() => setMobileOpen(false)} />
+                {/* Flow-first */}
+                <MobileItem href="/how-it-works" label="How it works" onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/risk-engine" label="Position Risk" onClick={() => setMobileOpen(false)} />
+                <MobileItem href="/variance" label="Simulator" onClick={() => setMobileOpen(false)} />
+                <MobileItem href="/risk" label="Survivability" onClick={() => setMobileOpen(false)} />
+
+                <div className={`my-1 h-px ${border}`} />
+
+                {/* Track / Execute */}
+                <MobileItem href="/journal" label="Journal" onClick={() => setMobileOpen(false)} />
+                <MobileItem href="/portfolio" label="Portfolio" onClick={() => setMobileOpen(false)} />
+
+                <div className={`my-1 h-px ${border}`} />
+
+                {/* Explore */}
+                <MobileItem href={labsHref} label={labsLabel} onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/risk-death" label="Blow-Up Risk" onClick={() => setMobileOpen(false)} />
 
                 <div className={`my-1 h-px ${border}`} />
 
-                <MobileItem href="/variance" label="Simulator" onClick={() => setMobileOpen(false)} />
-                <MobileItem href="/portfolio" label="Portfolio" onClick={() => setMobileOpen(false)} />
-                <MobileItem href="/journal" label="Journal" onClick={() => setMobileOpen(false)} />
-                <MobileItem href={labsHref} label={labsLabel} onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/pricing" label="Pricing" onClick={() => setMobileOpen(false)} />
-
                 {!signedIn && <MobileItem href="/login" label="Login" onClick={() => setMobileOpen(false)} />}
               </div>
             </div>

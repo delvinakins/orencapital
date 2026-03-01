@@ -49,7 +49,7 @@ function uid() {
 }
 
 /* =========================================================
-   Tooltip (local) — matches pine tokens + accent hover
+   Tooltip (local)
 ========================================================= */
 function Tooltip({ label, children }: { label: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -278,6 +278,7 @@ function downloadText(filename: string, text: string) {
    Local save/load (Free) — browser-only
 ========================================================= */
 const LOCAL_KEY = "oren_risk_engine_portfolios_v1";
+const RISK_ENGINE_STATE_KEY = "oren:risk-engine:state:v1";
 
 type LocalPortfolio = {
   id: string;
@@ -356,6 +357,42 @@ export default function RiskEnginePage() {
     })();
   }, []);
 
+  // Restore last editor state (so Risk% doesn't reset when you bounce pages)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(RISK_ENGINE_STATE_KEY);
+      if (!raw) return;
+      const s = JSON.parse(raw);
+
+      if (typeof s?.accountSize === "string") setAccountSize(s.accountSize);
+      if (s?.sizingMode === "constant-fraction" || s?.sizingMode === "fixed-dollar") setSizingMode(s.sizingMode);
+      if (typeof s?.riskPct === "string") setRiskPct(s.riskPct);
+      if (typeof s?.fixedRisk === "string") setFixedRisk(s.fixedRisk);
+      if (Array.isArray(s?.positions)) setPositions(s.positions);
+    } catch {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist editor state on change
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        RISK_ENGINE_STATE_KEY,
+        JSON.stringify({
+          accountSize,
+          sizingMode,
+          riskPct,
+          fixedRisk,
+          positions,
+        })
+      );
+    } catch {
+      // ignore
+    }
+  }, [accountSize, sizingMode, riskPct, fixedRisk, positions]);
+
   // If we are in constant-fraction sizing and a cap exists, auto-clamp stored riskPct
   useEffect(() => {
     if (sizingMode !== "constant-fraction") return;
@@ -416,9 +453,6 @@ export default function RiskEnginePage() {
     setPositions((prev) => prev.filter((p) => p.id !== id));
   }
 
-  /* =========================================================
-     Save/Load — Pro uses API, Free uses localStorage
-  ========================================================= */
   async function refreshPortfolios() {
     setMsg("");
     setBusy("list");
@@ -533,9 +567,7 @@ export default function RiskEnginePage() {
         const found = locals.find((p) => p.id === selectedPortfolioId) ?? null;
         data = found?.data ?? null;
       } else {
-        const res = await fetch(`/api/portfolios/get?id=${encodeURIComponent(selectedPortfolioId)}`, {
-          cache: "no-store",
-        });
+        const res = await fetch(`/api/portfolios/get?id=${encodeURIComponent(selectedPortfolioId)}`, { cache: "no-store" });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) {
           setMsg(json?.error || "Load failed.");
@@ -588,7 +620,7 @@ export default function RiskEnginePage() {
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-10 sm:py-16 space-y-8">
-        {/* Page Header (matches Survivability) */}
+        {/* Page Header */}
         <header className="space-y-3">
           <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
             <span className="relative inline-block">
@@ -685,7 +717,6 @@ export default function RiskEnginePage() {
               label="Risk % per trade"
               value={riskPct}
               onChange={(v) => {
-                // allow intermediate typing, but clamp numeric values above cap
                 const n = Number(v);
                 if (Number.isFinite(n) && effectiveCapBps != null) {
                   const capPct = effectiveCapBps / 100; // bps -> %
@@ -928,7 +959,6 @@ export default function RiskEnginePage() {
           }}
         />
 
-        {/* Natural-language → Journal preview/apply/save */}
         <JournalQuickAdd />
       </div>
     </main>
