@@ -1,7 +1,7 @@
-// src/app/risk-death/RiskDeathClient.tsx
 "use client";
 
 import { useMemo, useState, type ReactNode, useEffect, useRef } from "react";
+import { updateSurvivalScore } from "@/lib/risk/useSurvivalScore";
 
 /* =========================================================
    Types
@@ -308,13 +308,11 @@ function Card({
   value,
   sub,
   tone = "neutral",
-  tip,
 }: {
   label: ReactNode;
   value: string;
   sub?: string;
   tone?: "neutral" | "accent" | "warn";
-  tip?: ReactNode;
 }) {
   const toneClass =
     tone === "accent"
@@ -332,7 +330,7 @@ function Card({
 
   return (
     <div className={`rounded-xl border ${toneClass} bg-[color:var(--card)] p-5 sm:p-6`}>
-      <div className="text-xs text-foreground/60">{tip ? <Tooltip label={String(label)}>{tip}</Tooltip> : label}</div>
+      <div className="text-xs text-foreground/60">{label}</div>
       <div className={`mt-2 text-xl font-semibold ${valueClass} tabular-nums`}>{value}</div>
       {sub ? <div className="mt-2 text-xs text-foreground/60">{sub}</div> : null}
     </div>
@@ -364,9 +362,6 @@ export default function RiskDeathClient() {
   const [compareDisciplined, setCompareDisciplined] = useState(true);
 
   const payoutMultiple = useMemo(() => {
-    // Convert American odds to profit per 1 risk.
-    // -110 => profit/risk = 100/110 = 0.909
-    // +150 => profit/risk = 150/100 = 1.5
     const o = Number(odds);
     if (!Number.isFinite(o) || o === 0) return 0.909;
     if (o < 0) return 100 / Math.abs(o);
@@ -415,6 +410,23 @@ export default function RiskDeathClient() {
       riskPct: disciplined.riskPct,
     });
   }, [compareDisciplined, params, disciplined.riskPct]);
+
+  // ✅ Survival Score sync (debounced)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      updateSurvivalScore({
+        source: "blow-up-risk",
+        metrics: {
+          ruin_probability: clamp(summary.deathProb, 0, 1),
+          drawdown_pct: clamp(summary.p90MaxDD, 0, 1),
+          consecutive_losses: 0,
+          risk_pct: clamp(params.riskPct, 0, 1),
+        },
+      });
+    }, 350);
+
+    return () => clearTimeout(t);
+  }, [summary.deathProb, summary.p90MaxDD, params.riskPct]);
 
   const deathLine = params.startBankroll * (1 - params.deathDD);
 
@@ -570,25 +582,34 @@ export default function RiskDeathClient() {
 
                 <div className="grid gap-4 sm:grid-cols-3">
                   <Card
-                    label="Risk of Death"
+                    label={
+                      <Tooltip label="Risk of Death">
+                        Probability the bankroll crosses the death line before the horizon.
+                      </Tooltip>
+                    }
                     value={fmtPctFrom01(summary.deathProb, 1)}
                     sub="Your sizing"
                     tone={toneFromProb(summary.deathProb)}
-                    tip="Probability the bankroll crosses the death line before the horizon."
                   />
                   <Card
-                    label="Risk of Death"
+                    label={
+                      <Tooltip label="Risk of Death">
+                        Same assumptions, but with capped half-Kelly risk sizing.
+                      </Tooltip>
+                    }
                     value={fmtPctFrom01(disciplinedSummary.deathProb, 1)}
                     sub="Disciplined sizing"
                     tone={toneFromProb(disciplinedSummary.deathProb)}
-                    tip="Same assumptions, but with capped half-Kelly risk sizing."
                   />
                   <Card
-                    label="Delta"
+                    label={
+                      <Tooltip label="Delta">
+                        Disciplined minus your sizing (negative means disciplined reduces death probability).
+                      </Tooltip>
+                    }
                     value={fmtPctFrom01(disciplinedSummary.deathProb - summary.deathProb, 1)}
                     sub="Disciplined minus you"
                     tone={disciplinedSummary.deathProb - summary.deathProb <= -0.05 ? "accent" : "neutral"}
-                    tip="How much death probability changes under disciplined sizing."
                   />
                 </div>
 

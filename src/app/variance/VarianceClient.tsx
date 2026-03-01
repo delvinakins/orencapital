@@ -1,10 +1,10 @@
-// FILE: src/app/variance/VarianceClient.tsx
 "use client";
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Tooltip } from "@/components/Tooltip";
+import { updateSurvivalScore } from "@/lib/risk/useSurvivalScore";
 
 /* ---------------- Helpers ---------------- */
 
@@ -223,7 +223,12 @@ function safeWritePersisted(v: Persisted) {
   }
 }
 
-function setQuery(router: ReturnType<typeof useRouter>, pathname: string, current: URLSearchParams, patch: Record<string, string>) {
+function setQuery(
+  router: ReturnType<typeof useRouter>,
+  pathname: string,
+  current: URLSearchParams,
+  patch: Record<string, string>
+) {
   const next = new URLSearchParams(current.toString());
   for (const [k, val] of Object.entries(patch)) {
     if (val == null || val === "") next.delete(k);
@@ -408,7 +413,7 @@ export default function VarianceClient() {
     };
   }, [accountSize, riskPct, winRate, avgR, trades, sims]);
 
-  // Risk governance sensor: whenever the sim recomputes, evaluate CPM/ARC once (debounced)
+  // Risk governance sensor + Survival Score: whenever the sim recomputes, evaluate CPM/ARC + update local score (debounced)
   useEffect(() => {
     if (!computed) return;
 
@@ -418,16 +423,32 @@ export default function VarianceClient() {
 
     if (!Number.isFinite(ruin) || !Number.isFinite(dd) || !Number.isFinite(streak)) return;
 
+    const rp01 = clamp01(Number(riskPct) / 100);
+    const evR = Number(computed.evBase);
+
     const t = setTimeout(() => {
+      // server governance (CPM/ARC)
       evaluateRiskGovernance({
         ruin_probability: clamp01(ruin),
         drawdown_pct: clamp01(dd),
         consecutive_losses: Math.max(0, Math.round(streak)),
       });
+
+      // client survival badge score
+      updateSurvivalScore({
+        source: "variance",
+        metrics: {
+          ruin_probability: clamp01(ruin),
+          drawdown_pct: clamp01(dd),
+          consecutive_losses: Math.max(0, Math.round(streak)),
+          ev_r: Number.isFinite(evR) ? evR : undefined,
+          risk_pct: rp01,
+        },
+      });
     }, 350);
 
     return () => clearTimeout(t);
-  }, [computed]);
+  }, [computed, riskPct]);
 
   const p90Tip = (
     <div className="space-y-2">
@@ -759,7 +780,7 @@ export default function VarianceClient() {
                 <Card
                   label="Sensitivity"
                   value={formatPctSigned01(computed.stressRuinPsychProb - computed.ruinPsychProb, 2)}
-                  tone={toneFromDelta(computed.stressRuinPsychProb - computed.ruinPsychProb,)}
+                  tone={toneFromDelta(computed.stressRuinPsychProb - computed.ruinPsychProb)}
                   sub="Increase in practical ruin probability under stress."
                 />
               </div>

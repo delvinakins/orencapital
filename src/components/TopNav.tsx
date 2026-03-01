@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import BrandMark from "@/components/BrandMark";
 import { useProStatus } from "@/hooks/useProStatus";
+import { useSurvivalScore } from "@/lib/risk/useSurvivalScore";
 
 function initialsFromEmail(email: string) {
   const local = email.split("@")[0] || "";
@@ -28,6 +29,9 @@ export default function TopNav() {
 
   // keep pro status for badge + other UI, but Labs link is public
   const { isPro } = useProStatus(true);
+
+  // Survival score (from localStorage, updated by tools)
+  const survival = useSurvivalScore();
 
   useEffect(() => {
     async function loadUser() {
@@ -73,6 +77,13 @@ export default function TopNav() {
 
   const labsHref = "/labs/nba";
   const labsLabel = "Labs";
+
+  const survivalBadgeClass =
+    survival?.tone === "accent"
+      ? "hidden sm:inline-flex items-center rounded-full border border-emerald-700/40 bg-emerald-600/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-emerald-200"
+      : survival?.tone === "warn"
+        ? "hidden sm:inline-flex items-center rounded-full border border-amber-700/40 bg-amber-600/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-amber-200"
+        : "hidden sm:inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-slate-200";
 
   // Pathway order (mirrors How It Works):
   // How it works → Survivability → Position Risk → Journal
@@ -140,6 +151,16 @@ export default function TopNav() {
 
           {/* RIGHT */}
           <div className="flex items-center gap-2">
+            {/* Survival score badge */}
+            {survival && (
+              <span
+                title={survival.message ?? ""}
+                className={survivalBadgeClass}
+              >
+                Survival {survival.score}
+              </span>
+            )}
+
             {signedIn && (
               <span
                 className={
