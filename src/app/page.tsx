@@ -99,16 +99,18 @@ function Tooltip({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /* =========================================================
-   Macro Climate Component
+   Macro Climate Component (live feed)
 ========================================================= */
 
 type Climate = {
-  score: number; // 0..100
+  score: number;
   label: "Stable" | "Elevated" | "High Risk";
   tone: "accent" | "neutral" | "warn";
   details: string;
-  asOf?: string;
-  source?: string;
+  vix?: number | null;
+  spx?: number | null;
+  spx200?: number | null;
+  cap_bps?: number | null;
 };
 
 function getToneColor(tone: Climate["tone"]) {
@@ -117,13 +119,71 @@ function getToneColor(tone: Climate["tone"]) {
   return "bg-yellow-500";
 }
 
-function MarketClimateBar({ climate, live }: { climate: Climate; live: boolean }) {
+function fmtNum(x?: number | null, digits = 2) {
+  if (x == null || !Number.isFinite(x)) return "—";
+  return x.toLocaleString(undefined, { maximumFractionDigits: digits });
+}
+
+function fmtPct01(x01?: number | null, digits = 1) {
+  if (x01 == null || !Number.isFinite(x01)) return "—";
+  return `${(x01 * 100).toFixed(digits)}%`;
+}
+
+function MarketClimateBar() {
+  const [climate, setClimate] = useState<Climate | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function load() {
+      try {
+        setLoading(true);
+        const res = await fetch("/api/market/climate", { cache: "no-store" });
+        const json = await res.json().catch(() => null);
+        if (!alive) return;
+
+        if (json?.ok && json?.climate) {
+          setClimate(json.climate as Climate);
+        } else {
+          setClimate(null);
+        }
+      } catch {
+        if (!alive) return;
+        setClimate(null);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const c: Climate =
+    climate ?? {
+      score: 0,
+      label: "Stable",
+      tone: "neutral",
+      details: "Market climate unavailable",
+      vix: null,
+      spx: null,
+      spx200: null,
+      cap_bps: null,
+    };
+
+  const spxTrend01 =
+    c.spx != null && c.spx200 != null && c.spx200 > 0 ? (c.spx - c.spx200) / c.spx200 : null;
+
   const tip = (
     <div className="space-y-2">
       <div>
-        <span className="font-semibold">{climate.score} / 100</span> is a <span className="font-semibold">market stress score</span>{" "}
-        (0 = calm, 100 = crisis).
+        <span className="font-semibold">{c.score} / 100</span> is a{" "}
+        <span className="font-semibold">market stress score</span> (0 = calm, 100 = crisis).
       </div>
+
       <div className="text-foreground/70">
         It answers: <span className="font-semibold">“Is the environment forgiving or punishing for sizing?”</span>
       </div>
@@ -140,19 +200,29 @@ function MarketClimateBar({ climate, live }: { climate: Climate; live: boolean }
         </div>
       </div>
 
-      <div className="text-foreground/70">
-        Higher stress typically means higher volatility, choppier trends, rising correlation — and{" "}
-        <span className="font-semibold">higher blow-up risk at the same risk %</span>.
+      <div className="pt-2 mt-2 border-t border-[color:var(--border)] space-y-1 text-foreground/70">
+        <div className="text-[11px] uppercase tracking-wide text-foreground/50">Live inputs</div>
+        <div className="flex items-center justify-between gap-3">
+          <span>VIX</span>
+          <span className="tabular-nums font-semibold text-foreground">{fmtNum(c.vix, 2)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span>SPX</span>
+          <span className="tabular-nums font-semibold text-foreground">{fmtNum(c.spx, 2)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span>SPX vs 200d</span>
+          <span className="tabular-nums font-semibold text-foreground">{fmtPct01(spxTrend01, 2)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span>Risk cap (if active)</span>
+          <span className="tabular-nums font-semibold text-foreground">{c.cap_bps == null ? "—" : `${c.cap_bps} bps`}</span>
+        </div>
       </div>
 
-      {live ? (
-        <div className="text-foreground/60">
-          Live via {climate.source ?? "market feed"}
-          {climate.asOf ? ` · as of ${climate.asOf}` : ""}.
-        </div>
-      ) : (
-        <div className="text-foreground/60">Live feed unavailable (showing fallback).</div>
-      )}
+      <div className="text-foreground/60">
+        Higher stress typically means higher volatility and more regime risk — which increases blow-up risk at the same risk %.
+      </div>
     </div>
   );
 
@@ -162,19 +232,26 @@ function MarketClimateBar({ climate, live }: { climate: Climate; live: boolean }
         <div className="text-xs uppercase tracking-wide text-foreground/60">
           <Tooltip label="Macro Risk Climate">{tip}</Tooltip>
         </div>
-        <div className="text-xs text-foreground/60 tabular-nums">{climate.score} / 100</div>
+        <div className="text-xs text-foreground/60 tabular-nums">
+          {loading ? "…" : `${c.score} / 100`}
+        </div>
       </div>
 
       <div className="flex items-center justify-between text-sm">
-        <div className="font-semibold tracking-tight">{climate.label}</div>
-        <div className="text-xs text-foreground/55">{live ? "Live" : "Fallback"}</div>
+        <div className="font-semibold tracking-tight">{loading ? "Loading…" : c.label}</div>
+        <div className="text-xs text-foreground/55">
+          {loading ? "Fetching live signal" : `VIX ${fmtNum(c.vix, 2)} · SPX ${fmtNum(c.spx, 0)}`}
+        </div>
       </div>
 
       <div className="h-2 w-full rounded-full bg-[color:var(--border)] overflow-hidden">
-        <div className={`h-full transition-all duration-500 ${getToneColor(climate.tone)}`} style={{ width: `${climate.score}%` }} />
+        <div
+          className={`h-full transition-all duration-500 ${getToneColor(c.tone)}`}
+          style={{ width: `${Math.max(0, Math.min(100, c.score))}%` }}
+        />
       </div>
 
-      <div className="text-xs text-foreground/60">{climate.details}</div>
+      <div className="text-xs text-foreground/60">{loading ? "Updating…" : c.details}</div>
     </div>
   );
 }
@@ -183,50 +260,8 @@ function MarketClimateBar({ climate, live }: { climate: Climate; live: boolean }
    Page
 ========================================================= */
 
-const FETCH_URL = "/api/market/climate";
-
 export default function Home() {
   const pathname = usePathname();
-
-  const [climate, setClimate] = useState<Climate | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-
-    (async () => {
-      try {
-        const res = await fetch(FETCH_URL, { cache: "no-store" });
-        const json = await res.json().catch(() => null);
-        if (!alive) return;
-
-        // expected response shape: { ok: true, climate: { score, label, tone, details, asOf?, source? } }
-        const c = json?.climate;
-        if (res.ok && c && typeof c.score === "number") {
-          setClimate({
-            score: c.score,
-            label: c.label,
-            tone: c.tone,
-            details: c.details,
-            asOf: typeof c.asOf === "string" ? c.asOf : undefined,
-            source: typeof c.source === "string" ? c.source : undefined,
-          });
-        }
-      } catch {
-        // ignore: fallback below
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const fallback: Climate = {
-    score: 12,
-    label: "Stable",
-    tone: "accent",
-    details: "Live market feed not loaded · showing fallback",
-  };
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -273,7 +308,8 @@ export default function Home() {
             </Link>
           </div>
 
-          <MarketClimateBar climate={climate ?? fallback} live={!!climate} />
+          {/* Live climate bar */}
+          <MarketClimateBar />
 
           <div className="mt-10 grid gap-4 sm:grid-cols-3">
             {[
