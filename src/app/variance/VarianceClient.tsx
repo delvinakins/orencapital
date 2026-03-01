@@ -223,12 +223,7 @@ function safeWritePersisted(v: Persisted) {
   }
 }
 
-function setQuery(
-  router: ReturnType<typeof useRouter>,
-  pathname: string,
-  current: URLSearchParams,
-  patch: Record<string, string>
-) {
+function setQuery(router: ReturnType<typeof useRouter>, pathname: string, current: URLSearchParams, patch: Record<string, string>) {
   const next = new URLSearchParams(current.toString());
   for (const [k, val] of Object.entries(patch)) {
     if (val == null || val === "") next.delete(k);
@@ -310,14 +305,14 @@ export default function VarianceClient() {
 
   const computed = useMemo(() => {
     const acc0 = Number(accountSize);
-    const rPct = Number(riskPct) / 100;
-    const w = Number(winRate) / 100;
+    const rPct01 = Number(riskPct) / 100;
+    const w01 = Number(winRate) / 100;
 
     const r = Number(avgR) > 0 ? Number(avgR) : 1.2;
     const nTrades = Number(trades) > 0 ? Number(trades) : 120;
     const nSims = Number(sims) > 0 ? Number(sims) : 300;
 
-    if (acc0 <= 0 || rPct <= 0 || w <= 0 || w >= 1) return null;
+    if (acc0 <= 0 || rPct01 <= 0 || w01 <= 0 || w01 >= 1) return null;
 
     const startEquity = acc0;
     const psychologicalRuinThreshold = startEquity * 0.3;
@@ -337,7 +332,7 @@ export default function VarianceClient() {
           const isWin = Math.random() < wp;
           outcomes.push(isWin);
 
-          const riskDollars = equity * rPct;
+          const riskDollars = equity * rPct01;
           if (isWin) equity += riskDollars * r;
           else equity -= riskDollars;
 
@@ -372,12 +367,12 @@ export default function VarianceClient() {
       };
     }
 
-    const base = runMonteCarlo(w);
+    const base = runMonteCarlo(w01);
 
-    const stressWinRate = clamp01(w - 0.05);
+    const stressWinRate = clamp01(w01 - 0.05);
     const stress = runMonteCarlo(stressWinRate);
 
-    const evBase = w * r - (1 - w);
+    const evBase = w01 * r - (1 - w01);
     const evStress = stressWinRate * r - (1 - stressWinRate);
 
     return {
@@ -408,12 +403,32 @@ export default function VarianceClient() {
       nTrades,
       startEquity,
       psychologicalRuinThreshold,
-      baseWinRate: w,
+      baseWinRate: w01,
       avgR: r,
+      riskPct01: rPct01,
     };
   }, [accountSize, riskPct, winRate, avgR, trades, sims]);
 
-  // Risk governance sensor + Survival Score: whenever the sim recomputes, evaluate CPM/ARC + update local score (debounced)
+  // ✅ Update Survival Score (debounced)
+  useEffect(() => {
+    if (!computed) return;
+
+    const t = setTimeout(() => {
+      updateSurvivalScore({
+        source: "variance",
+        metrics: {
+          ruin_probability: clamp01(computed.ruinPsychProb),
+          drawdown_pct: clamp01(computed.p90DD),
+          consecutive_losses: Math.max(0, Math.round(computed.p90Streak)),
+          risk_pct: clamp01(computed.riskPct01),
+        },
+      });
+    }, 350);
+
+    return () => clearTimeout(t);
+  }, [computed]);
+
+  // Risk governance sensor: whenever the sim recomputes, evaluate CPM/ARC once (debounced)
   useEffect(() => {
     if (!computed) return;
 
@@ -423,32 +438,16 @@ export default function VarianceClient() {
 
     if (!Number.isFinite(ruin) || !Number.isFinite(dd) || !Number.isFinite(streak)) return;
 
-    const rp01 = clamp01(Number(riskPct) / 100);
-    const evR = Number(computed.evBase);
-
     const t = setTimeout(() => {
-      // server governance (CPM/ARC)
       evaluateRiskGovernance({
         ruin_probability: clamp01(ruin),
         drawdown_pct: clamp01(dd),
         consecutive_losses: Math.max(0, Math.round(streak)),
       });
-
-      // client survival badge score
-      updateSurvivalScore({
-        source: "variance",
-        metrics: {
-          ruin_probability: clamp01(ruin),
-          drawdown_pct: clamp01(dd),
-          consecutive_losses: Math.max(0, Math.round(streak)),
-          ev_r: Number.isFinite(evR) ? evR : undefined,
-          risk_pct: rp01,
-        },
-      });
     }, 350);
 
     return () => clearTimeout(t);
-  }, [computed, riskPct]);
+  }, [computed]);
 
   const p90Tip = (
     <div className="space-y-2">

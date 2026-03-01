@@ -266,7 +266,7 @@ function Tooltip({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /* =========================================================
-   UI Atoms (match rest of site)
+   UI Atoms
 ========================================================= */
 
 function Input({
@@ -308,11 +308,13 @@ function Card({
   value,
   sub,
   tone = "neutral",
+  tip,
 }: {
   label: ReactNode;
   value: string;
   sub?: string;
   tone?: "neutral" | "accent" | "warn";
+  tip?: ReactNode;
 }) {
   const toneClass =
     tone === "accent"
@@ -330,7 +332,7 @@ function Card({
 
   return (
     <div className={`rounded-xl border ${toneClass} bg-[color:var(--card)] p-5 sm:p-6`}>
-      <div className="text-xs text-foreground/60">{label}</div>
+      <div className="text-xs text-foreground/60">{tip ? <Tooltip label={String(label)}>{tip}</Tooltip> : label}</div>
       <div className={`mt-2 text-xl font-semibold ${valueClass} tabular-nums`}>{value}</div>
       {sub ? <div className="mt-2 text-xs text-foreground/60">{sub}</div> : null}
     </div>
@@ -411,29 +413,28 @@ export default function RiskDeathClient() {
     });
   }, [compareDisciplined, params, disciplined.riskPct]);
 
-  // ✅ Survival Score sync (debounced)
+  // ✅ UPDATE SURVIVAL SCORE (debounced)
   useEffect(() => {
     const t = setTimeout(() => {
       updateSurvivalScore({
-        source: "blow-up-risk",
+        source: "risk-death",
         metrics: {
           ruin_probability: clamp(summary.deathProb, 0, 1),
           drawdown_pct: clamp(summary.p90MaxDD, 0, 1),
-          consecutive_losses: 0,
+          consecutive_losses: Math.max(0, Math.round(params.betsPerDay * params.horizonDays)),
           risk_pct: clamp(params.riskPct, 0, 1),
         },
       });
     }, 350);
 
     return () => clearTimeout(t);
-  }, [summary.deathProb, summary.p90MaxDD, params.riskPct]);
+  }, [summary.deathProb, summary.p90MaxDD, params.betsPerDay, params.horizonDays, params.riskPct]);
 
   const deathLine = params.startBankroll * (1 - params.deathDD);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-10 sm:py-16 space-y-8">
-        {/* Header (match other pages) */}
         <header className="space-y-3">
           <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-2 text-sm text-foreground/80">
             Risk • Calculator
@@ -470,12 +471,7 @@ export default function RiskDeathClient() {
             </div>
 
             <div className="grid gap-4">
-              <Input
-                label="Starting bankroll"
-                value={startBankroll}
-                onChange={setStartBankroll}
-                tip="Starting account value for the simulation horizon."
-              />
+              <Input label="Starting bankroll" value={startBankroll} onChange={setStartBankroll} tip="Starting account value for the simulation horizon." />
 
               <Input
                 label="Death line drawdown"
@@ -501,24 +497,14 @@ export default function RiskDeathClient() {
                 tip="Estimated probability of a win. If unsure, test a band like 50–55%."
               />
 
-              <Input
-                label="Price (American odds)"
-                value={odds}
-                onChange={setOdds}
-                tip="Used to compute win payout multiple (profit per 1 unit risk)."
-              />
+              <Input label="Price (American odds)" value={odds} onChange={setOdds} tip="Used to compute win payout multiple (profit per 1 unit risk)." />
 
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
                 <Input label="Bets per day" value={betsPerDay} onChange={setBetsPerDay} tip="How many attempts per day." />
                 <Input label="Horizon (days)" value={horizonDays} onChange={setHorizonDays} tip="How long to simulate." />
               </div>
 
-              <Input
-                label="Simulations"
-                value={nSims}
-                onChange={setNSims}
-                tip="Higher is smoother but slower. 6,000–15,000 is plenty."
-              />
+              <Input label="Simulations" value={nSims} onChange={setNSims} tip="Higher is smoother but slower. 6,000–15,000 is plenty." />
             </div>
 
             <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]/55 backdrop-blur-[2px] p-4 text-xs text-foreground/70 space-y-2">
@@ -582,34 +568,25 @@ export default function RiskDeathClient() {
 
                 <div className="grid gap-4 sm:grid-cols-3">
                   <Card
-                    label={
-                      <Tooltip label="Risk of Death">
-                        Probability the bankroll crosses the death line before the horizon.
-                      </Tooltip>
-                    }
+                    label="Risk of Death"
                     value={fmtPctFrom01(summary.deathProb, 1)}
                     sub="Your sizing"
                     tone={toneFromProb(summary.deathProb)}
+                    tip="Probability the bankroll crosses the death line before the horizon."
                   />
                   <Card
-                    label={
-                      <Tooltip label="Risk of Death">
-                        Same assumptions, but with capped half-Kelly risk sizing.
-                      </Tooltip>
-                    }
+                    label="Risk of Death"
                     value={fmtPctFrom01(disciplinedSummary.deathProb, 1)}
                     sub="Disciplined sizing"
                     tone={toneFromProb(disciplinedSummary.deathProb)}
+                    tip="Same assumptions, but with capped half-Kelly risk sizing."
                   />
                   <Card
-                    label={
-                      <Tooltip label="Delta">
-                        Disciplined minus your sizing (negative means disciplined reduces death probability).
-                      </Tooltip>
-                    }
+                    label="Delta"
                     value={fmtPctFrom01(disciplinedSummary.deathProb - summary.deathProb, 1)}
                     sub="Disciplined minus you"
                     tone={disciplinedSummary.deathProb - summary.deathProb <= -0.05 ? "accent" : "neutral"}
+                    tip="How much death probability changes under disciplined sizing."
                   />
                 </div>
 
