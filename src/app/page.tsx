@@ -1,12 +1,105 @@
 // src/app/page.tsx
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /* =========================================================
-   Macro Climate (live via /api/market/climate, with fallback)
+   Local Tooltip (matches your style)
+========================================================= */
+
+function Tooltip({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const tipRef = useRef<HTMLSpanElement | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      if (!open) return;
+      const el = tipRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && !el.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const box = boxRef.current;
+    if (!box) return;
+
+    box.style.transform = "translateX(-50%)";
+    requestAnimationFrame(() => {
+      const r = box.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const pad = 12;
+
+      let dx = 0;
+      if (r.left < pad) dx = pad - r.left;
+      if (r.right > vw - pad) dx = vw - pad - r.right;
+
+      if (dx !== 0) box.style.transform = `translateX(calc(-50% + ${dx}px))`;
+    });
+  }, [open]);
+
+  return (
+    <span className="inline-flex items-center gap-2" ref={tipRef}>
+      <span>{label}</span>
+
+      <span className="relative inline-flex">
+        <button
+          type="button"
+          aria-label={`Help: ${label}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen((v) => !v);
+          }}
+          className="
+            inline-flex h-5 w-5 items-center justify-center
+            rounded-full
+            border border-[color:var(--border)]
+            bg-[color:var(--card)]
+            text-[11px] text-foreground/80
+            hover:border-[color:var(--accent)]
+            hover:text-[color:var(--accent)]
+            active:scale-[0.98]
+            transition-colors
+          "
+        >
+          i
+        </button>
+
+        {open && (
+          <div
+            ref={boxRef}
+            role="dialog"
+            aria-label={`${label} help`}
+            onClick={(e) => e.stopPropagation()}
+            className="
+              absolute left-1/2 top-[140%] z-50
+              w-[min(420px,85vw)]
+              -translate-x-1/2
+              rounded-xl
+              border border-[color:var(--border)]
+              bg-[color:var(--background)]
+              px-3 py-2
+              text-xs text-foreground/90
+              shadow-2xl shadow-black/40
+            "
+          >
+            {children}
+            <div className="mt-2 text-[11px] text-foreground/60">Tap outside to close</div>
+          </div>
+        )}
+      </span>
+    </span>
+  );
+}
+
+/* =========================================================
+   Macro Climate Component
 ========================================================= */
 
 type Climate = {
@@ -14,10 +107,6 @@ type Climate = {
   label: "Stable" | "Elevated" | "High Risk";
   tone: "accent" | "neutral" | "warn";
   details: string;
-  // optional extras if your API returns them
-  cap_bps?: number | null;
-  vix?: number;
-  spx?: number;
 };
 
 function getToneColor(tone: Climate["tone"]) {
@@ -26,47 +115,53 @@ function getToneColor(tone: Climate["tone"]) {
   return "bg-yellow-500";
 }
 
-function MarketClimateBar({ climate, live }: { climate: Climate; live: boolean }) {
+function MarketClimateBar({ climate }: { climate: Climate }) {
+  const tip = (
+    <div className="space-y-2">
+      <div>
+        <span className="font-semibold">{climate.score} / 100</span> is a <span className="font-semibold">market stress score</span>{" "}
+        (0 = calm, 100 = crisis).
+      </div>
+      <div className="text-foreground/70">
+        It answers: <span className="font-semibold">“Is the environment forgiving or punishing for sizing?”</span>
+      </div>
+
+      <div className="space-y-1 text-foreground/70">
+        <div><span className="font-semibold">0–25:</span> Stable (forgiving)</div>
+        <div><span className="font-semibold">26–60:</span> Elevated (size down)</div>
+        <div><span className="font-semibold">61–100:</span> High Risk (survival mode)</div>
+      </div>
+
+      <div className="text-foreground/70">
+        Higher stress typically means higher volatility, choppier trends, rising correlation — and{" "}
+        <span className="font-semibold">higher blow-up risk at the same risk %</span>.
+      </div>
+
+      <div className="text-foreground/60">
+        Live feed (VIX/trend/correlation) coming next. Right now this is a placeholder.
+      </div>
+    </div>
+  );
+
   return (
     <div className="mt-12 space-y-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
       <div className="flex items-center justify-between">
-        <div className="text-xs uppercase tracking-wide text-foreground/60">Macro Risk Climate</div>
+        <div className="text-xs uppercase tracking-wide text-foreground/60">
+          <Tooltip label="Macro Risk Climate">{tip}</Tooltip>
+        </div>
         <div className="text-xs text-foreground/60 tabular-nums">{climate.score} / 100</div>
       </div>
 
       <div className="flex items-center justify-between text-sm">
         <div className="font-semibold tracking-tight">{climate.label}</div>
-        <div className="text-xs text-foreground/55">
-          {live ? "Live" : "Live signal coming next"}
-        </div>
+        <div className="text-xs text-foreground/55">Live signal coming next</div>
       </div>
 
-      <div className="h-2 w-full overflow-hidden rounded-full bg-[color:var(--border)]">
-        <div
-          className={`h-full transition-all duration-500 ${getToneColor(climate.tone)}`}
-          style={{ width: `${climate.score}%` }}
-        />
+      <div className="h-2 w-full rounded-full bg-[color:var(--border)] overflow-hidden">
+        <div className={`h-full transition-all duration-500 ${getToneColor(climate.tone)}`} style={{ width: `${climate.score}%` }} />
       </div>
 
       <div className="text-xs text-foreground/60">{climate.details}</div>
-
-      {live && climate.cap_bps != null ? (
-        <div className="pt-2 text-xs text-foreground/60">
-          ARC sizing cap:{" "}
-          <span className="font-semibold tabular-nums text-foreground">
-            {(climate.cap_bps / 100).toFixed(2)}%
-          </span>{" "}
-          / trade
-        </div>
-      ) : null}
-
-      {live && (Number.isFinite(climate.vix) || Number.isFinite(climate.spx)) ? (
-        <div className="text-[11px] text-foreground/45 tabular-nums">
-          {Number.isFinite(climate.vix) ? `VIX ${Number(climate.vix).toFixed(2)}` : ""}
-          {Number.isFinite(climate.vix) && Number.isFinite(climate.spx) ? " · " : ""}
-          {Number.isFinite(climate.spx) ? `SPX ${Math.round(Number(climate.spx)).toLocaleString()}` : ""}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -75,54 +170,13 @@ function MarketClimateBar({ climate, live }: { climate: Climate; live: boolean }
    Page
 ========================================================= */
 
-const FALLBACK: Climate = {
-  score: 62,
-  label: "Elevated",
-  tone: "neutral",
-  details: "Volatility elevated · Trend mixed · Cross-asset correlation rising",
-};
-
 export default function Home() {
   const pathname = usePathname();
-
-  const [climate, setClimate] = useState<Climate>(FALLBACK);
-  const [live, setLive] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-
-    async function load() {
-      try {
-        const res = await fetch("/api/market/climate", { cache: "no-store" });
-        const json = await res.json().catch(() => null);
-        if (!alive) return;
-
-        if (json?.ok && json?.climate && typeof json.climate.score === "number") {
-          setClimate(json.climate as Climate);
-          setLive(true);
-        } else {
-          setLive(false);
-        }
-      } catch {
-        if (!alive) return;
-        setLive(false);
-      }
-    }
-
-    load();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // keep underline animation stable by forcing re-render key off pathname
-  const underlineKey = useMemo(() => `underline-${pathname}`, [pathname]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-4xl px-6 py-16">
         <div className="space-y-6">
-          {/* Intro Section */}
           <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-2 text-sm text-foreground/80">
             Oren Capital • Risk discipline across markets
           </div>
@@ -130,13 +184,11 @@ export default function Home() {
           <h1 className="text-4xl font-semibold tracking-tight sm:text-6xl">
             <span className="oren-accent relative inline-block align-baseline">
               <span className="relative z-10 text-[color:var(--accent)]">Discipline</span>
-
               <span
-                key={underlineKey}
+                key={`underline-${pathname}`}
                 aria-hidden
                 className="oren-underline pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.9]"
               />
-
               <span
                 aria-hidden
                 className="pointer-events-none absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-[0.10]"
@@ -146,11 +198,10 @@ export default function Home() {
           </h1>
 
           <p className="max-w-2xl text-lg leading-relaxed text-foreground/75">
-            Institutional risk systems for disciplined market participants: position sizing, bankroll management, drawdown tracking, expectancy
-            modeling, and exposure heat — across stocks, options, and sports.
+            Institutional risk systems for disciplined market participants: position sizing, bankroll management, drawdown tracking,
+            expectancy modeling, and exposure heat — across stocks, options, and sports.
           </p>
 
-          {/* CTA Buttons */}
           <div className="flex flex-col gap-3 sm:flex-row">
             <Link
               href="/risk-engine"
@@ -167,10 +218,15 @@ export default function Home() {
             </Link>
           </div>
 
-          {/* Macro Risk Climate (live if API exists) */}
-          <MarketClimateBar climate={climate} live={live} />
+          <MarketClimateBar
+            climate={{
+              score: 12,
+              label: "Stable",
+              tone: "accent",
+              details: "Volatility low · Trend healthy · Correlation contained",
+            }}
+          />
 
-          {/* Features */}
           <div className="mt-10 grid gap-4 sm:grid-cols-3">
             {[
               { title: "Position Sizing", desc: "Size decisions with discipline. Risk first, entry second." },
@@ -186,7 +242,6 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Styles */}
       <style>{`
         .oc-home-primary {
           background: #ffffff;
