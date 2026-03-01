@@ -8,6 +8,7 @@ import JournalPanel from "@/components/JournalPanel";
 import JournalQuickAdd from "@/components/journal/JournalQuickAdd";
 import { useRiskCap } from "@/lib/risk/useRiskCap";
 import { RiskCapBanner } from "@/components/risk/RiskCapBanner";
+import { updateSurvivalScore } from "@/lib/risk/useSurvivalScore";
 
 type SizingMode = "constant-fraction" | "fixed-dollar";
 type Side = "long" | "short";
@@ -30,8 +31,12 @@ type PortfolioRow = {
   data?: any;
 };
 
+/* =========================================================
+   Format
+========================================================= */
+
 function money(n: number) {
-  if (!isFinite(n)) return "$0";
+  if (!Number.isFinite(n)) return "$0";
   return n.toLocaleString(undefined, {
     style: "currency",
     currency: "USD",
@@ -39,18 +44,37 @@ function money(n: number) {
   });
 }
 
-function pct(n: number) {
-  if (!isFinite(n)) return "0%";
-  return `${(n * 100).toFixed(2)}%`;
+function pct01(n01: number) {
+  if (!Number.isFinite(n01)) return "0%";
+  return `${(n01 * 100).toFixed(2)}%`;
 }
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+function clamp01(x: number) {
+  if (!Number.isFinite(x)) return 0;
+  return Math.min(1, Math.max(0, x));
+}
+
+/**
+ * survivability_profile is a string union:
+ * "conservative" | "tactical" | "aggressive"
+ *
+ * Map it to a drawdown cap % used as a soft “risk tolerance” signal.
+ */
+function profileDrawdownCapPct(profile: unknown): number | undefined {
+  if (profile === "conservative") return 30;
+  if (profile === "tactical") return 50;
+  if (profile === "aggressive") return 70;
+  return undefined;
+}
+
 /* =========================================================
    Tooltip (local)
 ========================================================= */
+
 function Tooltip({ label, children }: { label: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const tipRef = useRef<HTMLSpanElement | null>(null);
@@ -121,7 +145,7 @@ function Tooltip({ label, children }: { label: string; children: React.ReactNode
             onClick={(e) => e.stopPropagation()}
             className="
               absolute left-1/2 top-[140%] z-50
-              w-[min(360px,85vw)]
+              w-[min(380px,85vw)]
               -translate-x-1/2
               rounded-xl
               border border-[color:var(--border)]
@@ -143,6 +167,7 @@ function Tooltip({ label, children }: { label: string; children: React.ReactNode
 /* =========================================================
    UI Atoms
 ========================================================= */
+
 function Input({
   label,
   value,
@@ -162,9 +187,7 @@ function Input({
 
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-foreground/70">
-        {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
-      </label>
+      <label className="text-sm text-foreground/70">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</label>
       <input
         type={type}
         inputMode={inputMode}
@@ -192,9 +215,7 @@ function Select({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-sm text-foreground/70">
-        {tip ? <Tooltip label={label}>{tip}</Tooltip> : label}
-      </label>
+      <label className="text-sm text-foreground/70">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -225,15 +246,17 @@ function Card({
 }) {
   const toneClass =
     tone === "good"
-      ? "border-emerald-800/60"
+      ? "border-[color:var(--accent)]/35"
       : tone === "warn"
         ? "border-amber-800/60"
         : "border-[color:var(--border)]";
 
+  const valueClass = tone === "warn" ? "text-amber-200" : tone === "good" ? "text-[color:var(--accent)]" : "text-foreground";
+
   return (
-    <div className={`oc-glass rounded-xl p-5 sm:p-6 ${toneClass}`}>
+    <div className={`rounded-xl border ${toneClass} bg-[color:var(--card)] p-5 sm:p-6`}>
       <div className="text-xs text-foreground/60">{tip ? <Tooltip label={label}>{tip}</Tooltip> : label}</div>
-      <div className="mt-2 text-xl font-semibold text-foreground">{value}</div>
+      <div className={`mt-2 text-xl font-semibold tabular-nums ${valueClass}`}>{value}</div>
       {sub && <div className="mt-2 text-xs text-foreground/60">{sub}</div>}
     </div>
   );
@@ -242,6 +265,7 @@ function Card({
 /* =========================================================
    Math
 ========================================================= */
+
 function toNumber(s: string) {
   const n = Number(s);
   return Number.isFinite(n) ? n : 0;
@@ -257,7 +281,7 @@ function calcDollarRisk(p: Position) {
   return perUnit * qty * mult;
 }
 
-function calcStopDistancePct(p: Position) {
+function calcStopDistancePct01(p: Position) {
   const entry = toNumber(p.entry);
   const stop = toNumber(p.stop);
   if (entry <= 0) return 0;
@@ -277,6 +301,7 @@ function downloadText(filename: string, text: string) {
 /* =========================================================
    Local save/load (Free) — browser-only
 ========================================================= */
+
 const LOCAL_KEY = "oren_risk_engine_portfolios_v1";
 const RISK_ENGINE_STATE_KEY = "oren:risk-engine:state:v1";
 
@@ -309,6 +334,7 @@ function writeLocalPortfolios(items: LocalPortfolio[]) {
 /* =========================================================
    Page
 ========================================================= */
+
 export default function RiskEnginePage() {
   // Risk governance (ARC/CPM)
   const { settings: riskSettings, effectiveCapBps } = useRiskCap();
@@ -325,15 +351,7 @@ export default function RiskEnginePage() {
 
   // Positions
   const [positions, setPositions] = useState<Position[]>([
-    {
-      id: uid(),
-      label: "AAPL",
-      side: "long",
-      entry: "190",
-      stop: "185",
-      qty: "10",
-      multiplier: "1",
-    },
+    { id: uid(), label: "AAPL", side: "long", entry: "190", stop: "185", qty: "10", multiplier: "1" },
   ]);
 
   // Save/load UI state
@@ -357,7 +375,7 @@ export default function RiskEnginePage() {
     })();
   }, []);
 
-  // Restore last editor state (so Risk% doesn't reset when you bounce pages)
+  // Restore last editor state
   useEffect(() => {
     try {
       const raw = localStorage.getItem(RISK_ENGINE_STATE_KEY);
@@ -372,49 +390,38 @@ export default function RiskEnginePage() {
     } catch {
       // ignore
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Persist editor state on change
   useEffect(() => {
     try {
-      localStorage.setItem(
-        RISK_ENGINE_STATE_KEY,
-        JSON.stringify({
-          accountSize,
-          sizingMode,
-          riskPct,
-          fixedRisk,
-          positions,
-        })
-      );
+      localStorage.setItem(RISK_ENGINE_STATE_KEY, JSON.stringify({ accountSize, sizingMode, riskPct, fixedRisk, positions }));
     } catch {
       // ignore
     }
   }, [accountSize, sizingMode, riskPct, fixedRisk, positions]);
 
-  // If we are in constant-fraction sizing and a cap exists, auto-clamp stored riskPct
+  // If constant-fraction sizing and cap exists, auto-clamp stored riskPct
   useEffect(() => {
     if (sizingMode !== "constant-fraction") return;
     if (effectiveCapBps == null) return;
     const capPct = effectiveCapBps / 100; // bps -> %
     const cur = Math.max(0, toNumber(riskPct));
     if (cur > capPct) setRiskPct(String(capPct));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveCapBps, sizingMode]);
+  }, [effectiveCapBps, sizingMode, riskPct]);
 
   const account = Math.max(0, toNumber(accountSize));
 
   const perTradeRiskDollars = useMemo(() => {
     if (sizingMode === "fixed-dollar") return Math.max(0, toNumber(fixedRisk));
 
-    // Enforce cap at the math boundary (cannot exceed, even if UI bypassed)
+    // Enforce cap at the math boundary
     const rawRiskPct = Math.max(0, toNumber(riskPct));
     const capPct = effectiveCapBps != null ? effectiveCapBps / 100 : null; // bps -> %
     const clampedRiskPct = capPct != null ? Math.min(rawRiskPct, capPct) : rawRiskPct;
 
-    const rp = clampedRiskPct / 100;
-    return account * rp;
+    const rp01 = clampedRiskPct / 100;
+    return account * rp01;
   }, [account, sizingMode, fixedRisk, riskPct, effectiveCapBps]);
 
   const totals = useMemo(() => {
@@ -422,13 +429,13 @@ export default function RiskEnginePage() {
       id: p.id,
       label: p.label,
       riskDollars: calcDollarRisk(p),
-      stopDistPct: calcStopDistancePct(p),
+      stopDistPct01: calcStopDistancePct01(p),
     }));
 
     const totalRisk = rows.reduce((sum, r) => sum + r.riskDollars, 0);
-    const totalRiskPct = account > 0 ? totalRisk / account : 0;
+    const totalRiskPct01 = account > 0 ? totalRisk / account : 0;
 
-    return { rows, totalRisk, totalRiskPct };
+    return { rows, totalRisk, totalRiskPct01 };
   }, [positions, account]);
 
   const targetDollarRisk = perTradeRiskDollars;
@@ -438,11 +445,35 @@ export default function RiskEnginePage() {
     return totals.totalRisk <= targetDollarRisk * 1.05;
   }, [totals.totalRisk, targetDollarRisk]);
 
+  // ✅ Wire survival score from Risk Engine too (debounced)
+  useEffect(() => {
+    if (!account || account <= 0) return;
+
+    const riskPct01 =
+      sizingMode === "constant-fraction"
+        ? Math.max(0, toNumber(riskPct)) / 100
+        : targetDollarRisk > 0
+          ? clamp01(targetDollarRisk / account)
+          : 0;
+
+    const ddCapPct = profileDrawdownCapPct(riskSettings?.survivability_profile);
+    const drawdownPct01 = ddCapPct != null ? clamp01(ddCapPct / 100) : undefined;
+
+    const t = setTimeout(() => {
+      updateSurvivalScore({
+        source: "risk-engine",
+        metrics: {
+          risk_pct: clamp01(riskPct01),
+          drawdown_pct: drawdownPct01,
+        },
+      });
+    }, 400);
+
+    return () => clearTimeout(t);
+  }, [account, sizingMode, riskPct, targetDollarRisk, riskSettings?.survivability_profile]);
+
   function addPosition() {
-    setPositions((prev) => [
-      ...prev,
-      { id: uid(), label: "", side: "long", entry: "", stop: "", qty: "", multiplier: "1" },
-    ]);
+    setPositions((prev) => [...prev, { id: uid(), label: "", side: "long", entry: "", stop: "", qty: "", multiplier: "1" }]);
   }
 
   function updatePos(id: string, patch: Partial<Position>) {
@@ -460,14 +491,7 @@ export default function RiskEnginePage() {
     try {
       if (!isPro) {
         const locals = readLocalPortfolios();
-        setPortfolios(
-          locals.map((x) => ({
-            id: x.id,
-            name: x.name,
-            updated_at: x.updated_at,
-            data: x.data,
-          }))
-        );
+        setPortfolios(locals.map((x) => ({ id: x.id, name: x.name, updated_at: x.updated_at, data: x.data })));
         setBusy(null);
         return;
       }
@@ -600,7 +624,6 @@ export default function RiskEnginePage() {
 
   useEffect(() => {
     refreshPortfolios().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPro]);
 
   function exportCsv() {
@@ -617,11 +640,19 @@ export default function RiskEnginePage() {
     setMsg("CSV exported ✅");
   }
 
+  const varianceHref = `/variance?account=${encodeURIComponent(accountSize)}&risk=${encodeURIComponent(
+    sizingMode === "constant-fraction" ? riskPct : "1"
+  )}`;
+
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-10 sm:py-16 space-y-8">
-        {/* Page Header */}
+      <div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-6 sm:py-16 space-y-8">
+        {/* Header */}
         <header className="space-y-3">
+          <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-2 text-sm text-foreground/80">
+            Risk • Position sizing
+          </div>
+
           <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
             <span className="relative inline-block">
               <span className="relative z-10 text-[color:var(--accent)]">Position Risk</span>
@@ -630,21 +661,14 @@ export default function RiskEnginePage() {
             </span>
           </h1>
 
-          <p className="text-[15px] text-foreground/70 max-w-2xl">
-            Build positions with intention. Quantify risk first, then decide if the trade is worth taking.
-          </p>
+          <p className="text-[15px] text-foreground/70 max-w-2xl">Build positions with intention. Quantify risk first, then decide if the trade is worth taking.</p>
 
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 pt-2">
+          <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:gap-3">
             <Link href="/variance" className="oc-btn oc-btn-secondary">
               Simulator →
             </Link>
 
-            <Link
-              href={`/variance?account=${encodeURIComponent(accountSize)}&risk=${encodeURIComponent(
-                sizingMode === "constant-fraction" ? riskPct : "1"
-              )}`}
-              className="oc-btn oc-btn-accent"
-            >
+            <Link href={varianceHref} className="oc-btn oc-btn-accent">
               Run simulator with these settings
             </Link>
 
@@ -665,12 +689,7 @@ export default function RiskEnginePage() {
 
         {/* Risk enforcement banner (ARC/CPM) */}
         {riskSettings?.capital_protection_active && (
-          <RiskCapBanner
-            mode="CPM"
-            capBps={25}
-            expiresAt={riskSettings.cpm_expires_at}
-            profile={riskSettings.survivability_profile}
-          />
+          <RiskCapBanner mode="CPM" capBps={25} expiresAt={riskSettings.cpm_expires_at} profile={riskSettings.survivability_profile} />
         )}
 
         {!riskSettings?.capital_protection_active && riskSettings?.risk_cap_active && (
@@ -743,15 +762,11 @@ export default function RiskEnginePage() {
 
         {/* Summary */}
         <section className="grid gap-4 sm:grid-cols-3">
-          <Card
-            label="Target Dollar Risk"
-            value={money(targetDollarRisk)}
-            tip="How much you intend to risk on this trade idea (based on sizing mode)."
-          />
+          <Card label="Target Dollar Risk" value={money(targetDollarRisk)} tip="How much you intend to risk on this trade idea (based on sizing mode)." />
           <Card
             label="Current Total Risk"
             value={money(totals.totalRisk)}
-            sub={`= ${pct(totals.totalRiskPct)} of account`}
+            sub={`= ${pct01(totals.totalRiskPct01)} of account`}
             tip="Sum of all position risks (|entry - stop| × qty × multiplier)."
           />
           <Card
@@ -780,7 +795,7 @@ export default function RiskEnginePage() {
           <div className="space-y-3">
             {positions.map((p) => {
               const dr = calcDollarRisk(p);
-              const distPct = calcStopDistancePct(p);
+              const distPct01 = calcStopDistancePct01(p);
 
               return (
                 <div
@@ -788,14 +803,7 @@ export default function RiskEnginePage() {
                   className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)]/55 backdrop-blur-[2px] p-4 space-y-3 overflow-visible"
                 >
                   <div className="grid gap-3 md:grid-cols-6">
-                    <Input
-                      label="Label"
-                      value={p.label}
-                      onChange={(v) => updatePos(p.id, { label: v })}
-                      placeholder="AAPL"
-                      type="text"
-                      tip='Ticker or nickname (e.g., "AAPL", "SPY-1").'
-                    />
+                    <Input label="Label" value={p.label} onChange={(v) => updatePos(p.id, { label: v })} placeholder="AAPL" type="text" tip='Ticker or nickname (e.g., "AAPL", "SPY-1").' />
 
                     <Select
                       label="Side"
@@ -805,49 +813,18 @@ export default function RiskEnginePage() {
                         { value: "long", label: "Long" },
                         { value: "short", label: "Short" },
                       ]}
-                      tip="Side affects P/L direction, but the risk math is still entry-to-stop distance."
+                      tip="Side affects P/L direction, but risk math is still entry-to-stop distance."
                     />
 
-                    <Input
-                      label="Entry Price"
-                      value={p.entry}
-                      onChange={(v) => updatePos(p.id, { entry: v })}
-                      type="number"
-                      placeholder="190"
-                      tip="Your planned entry. Risk is measured from entry to stop."
-                    />
-
-                    <Input
-                      label="Stop Price"
-                      value={p.stop}
-                      onChange={(v) => updatePos(p.id, { stop: v })}
-                      type="number"
-                      placeholder="185"
-                      tip="Your invalidation level. If the stop is vague, the risk math is fiction."
-                    />
-
-                    <Input
-                      label="Qty"
-                      value={p.qty}
-                      onChange={(v) => updatePos(p.id, { qty: v })}
-                      type="number"
-                      placeholder="10"
-                      tip="Shares or contracts. Risk scales linearly with size."
-                    />
-
-                    <Input
-                      label="Multiplier"
-                      value={p.multiplier}
-                      onChange={(v) => updatePos(p.id, { multiplier: v })}
-                      type="number"
-                      placeholder="1"
-                      tip="Stocks: 1. Options: typically 100."
-                    />
+                    <Input label="Entry Price" value={p.entry} onChange={(v) => updatePos(p.id, { entry: v })} type="number" placeholder="190" tip="Your planned entry. Risk is measured from entry to stop." />
+                    <Input label="Stop Price" value={p.stop} onChange={(v) => updatePos(p.id, { stop: v })} type="number" placeholder="185" tip="Your invalidation level. If the stop is vague, the risk math is fiction." />
+                    <Input label="Qty" value={p.qty} onChange={(v) => updatePos(p.id, { qty: v })} type="number" placeholder="10" tip="Shares or contracts. Risk scales linearly with size." />
+                    <Input label="Multiplier" value={p.multiplier} onChange={(v) => updatePos(p.id, { multiplier: v })} type="number" placeholder="1" tip="Stocks: 1. Options: typically 100." />
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-3">
                     <Card label="Position Dollar Risk" value={money(dr)} tip="Computed as |entry - stop| × qty × multiplier." />
-                    <Card label="Stop Distance" value={pct(distPct)} tip="Distance from entry to stop as a % of entry." />
+                    <Card label="Stop Distance" value={pct01(distPct01)} tip="Distance from entry to stop as a % of entry." />
                     <Card
                       label="Target Alignment"
                       value={targetDollarRisk > 0 ? `${Math.round((dr / targetDollarRisk) * 100)}% of target` : "—"}
@@ -855,12 +832,9 @@ export default function RiskEnginePage() {
                     />
                   </div>
 
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-xs text-foreground/60">Tip: Over target? Reduce size first (fastest fix).</div>
-                    <button
-                      onClick={() => removePos(p.id)}
-                      className="text-sm text-foreground/70 hover:text-foreground self-start sm:self-auto"
-                    >
+                    <button onClick={() => removePos(p.id)} className="text-sm text-foreground/70 hover:text-foreground self-start sm:self-auto">
                       Remove
                     </button>
                   </div>
@@ -875,9 +849,7 @@ export default function RiskEnginePage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-lg font-semibold">Save / Load</div>
-              <div className="mt-1 text-sm text-foreground/70">
-                {isPro ? "Cloud save/load: sync across devices." : "Local save/load: stored in this browser."}
-              </div>
+              <div className="mt-1 text-sm text-foreground/70">{isPro ? "Cloud save/load: sync across devices." : "Local save/load: stored in this browser."}</div>
             </div>
 
             <button onClick={refreshPortfolios} disabled={busy === "list"} className="oc-btn oc-btn-secondary disabled:opacity-60">
@@ -902,20 +874,14 @@ export default function RiskEnginePage() {
           )}
 
           <div className="grid gap-4 md:grid-cols-3">
-            <Input
-              label="Portfolio name"
-              value={portfolioName}
-              onChange={setPortfolioName}
-              placeholder="My swing watchlist"
-              tip="Name to save this current state (account + sizing + positions)."
-            />
+            <Input label="Portfolio name" value={portfolioName} onChange={setPortfolioName} placeholder="My swing watchlist" tip="Name to save this current state (account + sizing + positions)." />
 
             <div className="flex flex-col gap-2 md:col-span-2">
               <label className="text-sm text-foreground/70">
                 <Tooltip label="Saved portfolios">Loading replaces the current editor state.</Tooltip>
               </label>
 
-              <div className="flex flex-col sm:flex-row gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <select
                   value={selectedPortfolioId}
                   onChange={(e) => setSelectedPortfolioId(e.target.value)}
@@ -941,7 +907,7 @@ export default function RiskEnginePage() {
           </div>
         </section>
 
-        {/* Journal panel */}
+        {/* Journal */}
         <JournalPanel
           isPro={isPro}
           snapshot={{
@@ -953,7 +919,7 @@ export default function RiskEnginePage() {
             totals: {
               targetDollarRisk,
               totalRisk: totals.totalRisk,
-              totalRiskPct: totals.totalRiskPct,
+              totalRiskPct: totals.totalRiskPct01,
             },
             savedFrom: "risk-engine",
           }}
