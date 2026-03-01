@@ -1,15 +1,16 @@
 // src/app/icon.tsx
 import { ImageResponse } from "next/og";
-import fs from "node:fs";
-import path from "node:path";
+import fs from "fs";
+import path from "path";
 
 export const runtime = "nodejs";
 export const size = { width: 512, height: 512 };
 export const contentType = "image/png";
 
 export default async function Icon() {
-  const filePath = path.join(process.cwd(), "public", "brandmark.png");
-  const png = fs.readFileSync(filePath);
+  const logoPath = path.join(process.cwd(), "public", "oren-logo.png");
+  const logo = fs.readFileSync(logoPath);
+  const logoBase64 = logo.toString("base64");
 
   return new ImageResponse(
     (
@@ -20,15 +21,13 @@ export default async function Icon() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: "#ffffff",
+          background: "#0b0f0d", // dark brand background
         }}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={`data:image/png;base64,${png.toString("base64")}`}
-          width={512}
-          height={512}
-          style={{ width: "100%", height: "100%", objectFit: "contain" }}
+          src={`data:image/png;base64,${logoBase64}`}
+          width="360"
+          height="360"
           alt="Oren Capital"
         />
       </div>
