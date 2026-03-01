@@ -1,11 +1,12 @@
 // src/app/page.tsx
 "use client";
 
-import { usePathname } from "next/navigation";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 /* =========================================================
-   Macro Climate Component (lightweight, no fetch yet)
+   Macro Climate (live via /api/market/climate, with fallback)
 ========================================================= */
 
 type Climate = {
@@ -13,6 +14,10 @@ type Climate = {
   label: "Stable" | "Elevated" | "High Risk";
   tone: "accent" | "neutral" | "warn";
   details: string;
+  // optional extras if your API returns them
+  cap_bps?: number | null;
+  vix?: number;
+  spx?: number;
 };
 
 function getToneColor(tone: Climate["tone"]) {
@@ -21,7 +26,7 @@ function getToneColor(tone: Climate["tone"]) {
   return "bg-yellow-500";
 }
 
-function MarketClimateBar({ climate }: { climate: Climate }) {
+function MarketClimateBar({ climate, live }: { climate: Climate; live: boolean }) {
   return (
     <div className="mt-12 space-y-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
       <div className="flex items-center justify-between">
@@ -31,14 +36,37 @@ function MarketClimateBar({ climate }: { climate: Climate }) {
 
       <div className="flex items-center justify-between text-sm">
         <div className="font-semibold tracking-tight">{climate.label}</div>
-        <div className="text-xs text-foreground/55">Live signal coming next</div>
+        <div className="text-xs text-foreground/55">
+          {live ? "Live" : "Live signal coming next"}
+        </div>
       </div>
 
-      <div className="h-2 w-full rounded-full bg-[color:var(--border)] overflow-hidden">
-        <div className={`h-full transition-all duration-500 ${getToneColor(climate.tone)}`} style={{ width: `${climate.score}%` }} />
+      <div className="h-2 w-full overflow-hidden rounded-full bg-[color:var(--border)]">
+        <div
+          className={`h-full transition-all duration-500 ${getToneColor(climate.tone)}`}
+          style={{ width: `${climate.score}%` }}
+        />
       </div>
 
       <div className="text-xs text-foreground/60">{climate.details}</div>
+
+      {live && climate.cap_bps != null ? (
+        <div className="pt-2 text-xs text-foreground/60">
+          ARC sizing cap:{" "}
+          <span className="font-semibold tabular-nums text-foreground">
+            {(climate.cap_bps / 100).toFixed(2)}%
+          </span>{" "}
+          / trade
+        </div>
+      ) : null}
+
+      {live && (Number.isFinite(climate.vix) || Number.isFinite(climate.spx)) ? (
+        <div className="text-[11px] text-foreground/45 tabular-nums">
+          {Number.isFinite(climate.vix) ? `VIX ${Number(climate.vix).toFixed(2)}` : ""}
+          {Number.isFinite(climate.vix) && Number.isFinite(climate.spx) ? " · " : ""}
+          {Number.isFinite(climate.spx) ? `SPX ${Math.round(Number(climate.spx)).toLocaleString()}` : ""}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -47,8 +75,48 @@ function MarketClimateBar({ climate }: { climate: Climate }) {
    Page
 ========================================================= */
 
+const FALLBACK: Climate = {
+  score: 62,
+  label: "Elevated",
+  tone: "neutral",
+  details: "Volatility elevated · Trend mixed · Cross-asset correlation rising",
+};
+
 export default function Home() {
   const pathname = usePathname();
+
+  const [climate, setClimate] = useState<Climate>(FALLBACK);
+  const [live, setLive] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function load() {
+      try {
+        const res = await fetch("/api/market/climate", { cache: "no-store" });
+        const json = await res.json().catch(() => null);
+        if (!alive) return;
+
+        if (json?.ok && json?.climate && typeof json.climate.score === "number") {
+          setClimate(json.climate as Climate);
+          setLive(true);
+        } else {
+          setLive(false);
+        }
+      } catch {
+        if (!alive) return;
+        setLive(false);
+      }
+    }
+
+    load();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // keep underline animation stable by forcing re-render key off pathname
+  const underlineKey = useMemo(() => `underline-${pathname}`, [pathname]);
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -64,7 +132,7 @@ export default function Home() {
               <span className="relative z-10 text-[color:var(--accent)]">Discipline</span>
 
               <span
-                key={`underline-${pathname}`}
+                key={underlineKey}
                 aria-hidden
                 className="oren-underline pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.9]"
               />
@@ -78,8 +146,8 @@ export default function Home() {
           </h1>
 
           <p className="max-w-2xl text-lg leading-relaxed text-foreground/75">
-            Institutional risk systems for disciplined market participants: position sizing, bankroll management, drawdown tracking,
-            expectancy modeling, and exposure heat — across stocks, options, and sports.
+            Institutional risk systems for disciplined market participants: position sizing, bankroll management, drawdown tracking, expectancy
+            modeling, and exposure heat — across stocks, options, and sports.
           </p>
 
           {/* CTA Buttons */}
@@ -99,15 +167,8 @@ export default function Home() {
             </Link>
           </div>
 
-          {/* 🔥 NEW: Macro Risk Climate */}
-          <MarketClimateBar
-            climate={{
-              score: 62,
-              label: "Elevated",
-              tone: "neutral",
-              details: "Volatility elevated · Trend mixed · Cross-asset correlation rising",
-            }}
-          />
+          {/* Macro Risk Climate (live if API exists) */}
+          <MarketClimateBar climate={climate} live={live} />
 
           {/* Features */}
           <div className="mt-10 grid gap-4 sm:grid-cols-3">
