@@ -1,8 +1,51 @@
+// src/app/page.tsx
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
+
+/* =========================================================
+   Macro Climate Component (lightweight, no fetch yet)
+========================================================= */
+
+type Climate = {
+  score: number;
+  label: "Stable" | "Elevated" | "High Risk";
+  tone: "accent" | "neutral" | "warn";
+  details: string;
+};
+
+function getToneColor(tone: Climate["tone"]) {
+  if (tone === "accent") return "bg-[color:var(--accent)]";
+  if (tone === "warn") return "bg-amber-500";
+  return "bg-yellow-500";
+}
+
+function MarketClimateBar({ climate }: { climate: Climate }) {
+  return (
+    <div className="mt-12 space-y-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
+      <div className="flex items-center justify-between">
+        <div className="text-xs uppercase tracking-wide text-foreground/60">Macro Risk Climate</div>
+        <div className="text-xs text-foreground/60 tabular-nums">{climate.score} / 100</div>
+      </div>
+
+      <div className="flex items-center justify-between text-sm">
+        <div className="font-semibold tracking-tight">{climate.label}</div>
+        <div className="text-xs text-foreground/55">Live signal coming next</div>
+      </div>
+
+      <div className="h-2 w-full rounded-full bg-[color:var(--border)] overflow-hidden">
+        <div className={`h-full transition-all duration-500 ${getToneColor(climate.tone)}`} style={{ width: `${climate.score}%` }} />
+      </div>
+
+      <div className="text-xs text-foreground/60">{climate.details}</div>
+    </div>
+  );
+}
+
+/* =========================================================
+   Page
+========================================================= */
 
 export default function Home() {
   const pathname = usePathname();
@@ -20,7 +63,6 @@ export default function Home() {
             <span className="oren-accent relative inline-block align-baseline">
               <span className="relative z-10 text-[color:var(--accent)]">Discipline</span>
 
-              {/* Underline Animation */}
               <span
                 key={`underline-${pathname}`}
                 aria-hidden
@@ -36,38 +78,45 @@ export default function Home() {
           </h1>
 
           <p className="max-w-2xl text-lg leading-relaxed text-foreground/75">
-            Institutional risk systems for disciplined market participants: position sizing, bankroll management,
-            drawdown tracking, expectancy modeling, and exposure heat — across stocks, options, and sports.
+            Institutional risk systems for disciplined market participants: position sizing, bankroll management, drawdown tracking,
+            expectancy modeling, and exposure heat — across stocks, options, and sports.
           </p>
 
-          {/* Primary Call-to-Action Buttons */}
+          {/* CTA Buttons */}
           <div className="flex flex-col gap-3 sm:flex-row">
-            <a
+            <Link
               href="/risk-engine"
               className="oc-home-primary inline-flex items-center justify-center rounded-lg bg-white px-5 py-3 text-sm font-medium text-black active:scale-[0.98]"
             >
               Open the Risk Engine
-            </a>
+            </Link>
 
-            <a
+            <Link
               href="/pricing"
               className="inline-flex items-center justify-center rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-5 py-3 text-sm font-medium text-foreground/90 hover:bg-white/5 active:scale-[0.98]"
             >
               View Pricing
-            </a>
+            </Link>
           </div>
 
-          {/* Features Cards */}
+          {/* 🔥 NEW: Macro Risk Climate */}
+          <MarketClimateBar
+            climate={{
+              score: 62,
+              label: "Elevated",
+              tone: "neutral",
+              details: "Volatility elevated · Trend mixed · Cross-asset correlation rising",
+            }}
+          />
+
+          {/* Features */}
           <div className="mt-10 grid gap-4 sm:grid-cols-3">
             {[
               { title: "Position Sizing", desc: "Size decisions with discipline. Risk first, entry second." },
               { title: "Variance Simulator", desc: "See realistic drawdowns and losing streaks before they happen." },
               { title: "Exposure Heat", desc: "Avoid correlated stacking and hidden concentration." },
             ].map((f) => (
-              <div
-                key={f.title}
-                className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-5"
-              >
+              <div key={f.title} className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-5">
                 <div className="text-base font-medium">{f.title}</div>
                 <div className="mt-2 text-sm text-foreground/70">{f.desc}</div>
               </div>
@@ -76,9 +125,8 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Custom Styles */}
+      {/* Styles */}
       <style>{`
-        /* Call to Action Button Hover States */
         .oc-home-primary {
           background: #ffffff;
           transition: opacity 150ms ease, transform 150ms ease;
@@ -96,7 +144,6 @@ export default function Home() {
           }
         }
 
-        /* Keyframes for underline animation */
         @keyframes oren_underline {
           from { transform: scaleX(0); }
           to { transform: scaleX(1); }
