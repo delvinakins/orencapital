@@ -26,7 +26,7 @@ export default function TopNav() {
   const acctRef = useRef<HTMLDivElement | null>(null);
   const moreRef = useRef<HTMLDivElement | null>(null);
 
-  // keep pro status for badge + other UI, but Labs link is now public
+  // keep pro status for badge + other UI, but Labs link is public
   const { isPro } = useProStatus(true);
 
   useEffect(() => {
@@ -71,12 +71,11 @@ export default function TopNav() {
   const card = "bg-[color:var(--card)]";
   const glass = "bg-[color:var(--background)]/80";
 
-  // ✅ Labs watchlist is public now
   const labsHref = "/labs/nba";
   const labsLabel = "Labs";
 
-  // Primary flow order:
-  // 1) How it works → 2) Position Risk → 3) Simulator → 4) Survivability (deeper) → More: Journal/Portfolio/Labs/Blow-up/Pricing
+  // Pathway order (mirrors How It Works):
+  // How it works → Survivability → Position Risk → Journal
   return (
     <nav className={`sticky top-0 z-50 w-full border-b ${border} ${glass} backdrop-blur`}>
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
@@ -96,9 +95,9 @@ export default function TopNav() {
             {/* DESKTOP LINKS */}
             <div className="hidden lg:flex items-center gap-5 text-sm text-slate-300">
               <NavLink href="/how-it-works" label="How it works" />
-              <NavLink href="/risk-engine" label="Position Risk" />
-              <NavLink href="/variance" label="Simulator" />
               <NavLink href="/risk" label="Survivability" />
+              <NavLink href="/risk-engine" label="Position Risk" />
+              <NavLink href="/journal" label="Journal" />
 
               <div className="relative" ref={moreRef}>
                 <button
@@ -114,8 +113,8 @@ export default function TopNav() {
                   <div
                     className={`absolute left-0 mt-3 w-56 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}
                   >
-                    {/* Track / Execute */}
-                    <MenuItem href="/journal" label="Journal" onClick={() => setMoreOpen(false)} />
+                    {/* Tools */}
+                    <MenuItem href="/variance" label="Simulator" onClick={() => setMoreOpen(false)} />
                     <MenuItem href="/portfolio" label="Portfolio" onClick={() => setMoreOpen(false)} />
 
                     <div className={`my-1 h-px ${border}`} />
@@ -186,7 +185,10 @@ export default function TopNav() {
                 )}
               </div>
             ) : (
-              <Link href="/login" className={`rounded-xl border ${border} bg-white/5 px-4 py-2 text-sm text-white hover:bg-white/10`}>
+              <Link
+                href="/login"
+                className={`rounded-xl border ${border} bg-white/5 px-4 py-2 text-sm text-white hover:bg-white/10`}
+              >
                 Login
               </Link>
             )}
@@ -208,14 +210,14 @@ export default function TopNav() {
               <div className="p-2 flex flex-col gap-1">
                 {/* Flow-first */}
                 <MobileItem href="/how-it-works" label="How it works" onClick={() => setMobileOpen(false)} />
-                <MobileItem href="/risk-engine" label="Position Risk" onClick={() => setMobileOpen(false)} />
-                <MobileItem href="/variance" label="Simulator" onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/risk" label="Survivability" onClick={() => setMobileOpen(false)} />
+                <MobileItem href="/risk-engine" label="Position Risk" onClick={() => setMobileOpen(false)} />
+                <MobileItem href="/journal" label="Journal" onClick={() => setMobileOpen(false)} />
 
                 <div className={`my-1 h-px ${border}`} />
 
-                {/* Track / Execute */}
-                <MobileItem href="/journal" label="Journal" onClick={() => setMobileOpen(false)} />
+                {/* Tools */}
+                <MobileItem href="/variance" label="Simulator" onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/portfolio" label="Portfolio" onClick={() => setMobileOpen(false)} />
 
                 <div className={`my-1 h-px ${border}`} />
@@ -247,7 +249,11 @@ function NavLink({ href, label }: { href: string; label: string }) {
 
 function MenuItem({ href, label, onClick }: { href: string; label: string; onClick?: () => void }) {
   return (
-    <Link href={href} onClick={onClick} className="block px-4 py-2.5 text-sm text-slate-300 hover:bg-white/5 hover:text-white">
+    <Link
+      href={href}
+      onClick={onClick}
+      className="block px-4 py-2.5 text-sm text-slate-300 hover:bg-white/5 hover:text-white"
+    >
       {label}
     </Link>
   );
