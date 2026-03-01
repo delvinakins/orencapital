@@ -79,21 +79,26 @@ export default function TopNav() {
   return (
     <nav className={`sticky top-0 z-50 w-full border-b ${border} ${glass} backdrop-blur`}>
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
-        <div className="flex h-16 items-center justify-between">
+        {/* slightly taller for “institutional” spacing */}
+        <div className="flex h-[68px] items-center justify-between">
           {/* LEFT */}
-          <div className="flex items-center gap-6">
-            <Link href="/" className="group inline-flex items-center gap-3">
+          <div className="flex items-center gap-8">
+            <Link href="/" className="group inline-flex items-center gap-4">
               <span className="relative grid place-items-center">
-                <BrandMark className="h-8 w-8" />
+                {/* control mark size here (BrandMark takes no props) */}
+                <span className="grid h-9 w-9 place-items-center">
+                  <BrandMark />
+                </span>
                 <span className="pointer-events-none absolute -inset-2 rounded-full bg-emerald-600/10 blur-xl opacity-0 transition-opacity group-hover:opacity-100" />
               </span>
-              <span className="text-base font-semibold tracking-tight text-white">
+
+              <span className="text-lg font-semibold tracking-tight text-white">
                 Oren <span className="text-slate-300">Capital</span>
               </span>
             </Link>
 
             {/* DESKTOP LINKS */}
-            <div className="hidden lg:flex items-center gap-5 text-sm text-slate-300">
+            <div className="hidden lg:flex items-center gap-6 text-sm text-slate-300">
               <NavLink href="/how-it-works" label="How it works" />
               <NavLink href="/risk" label="Survivability" />
               <NavLink href="/risk-engine" label="Position Risk" />
@@ -205,7 +210,7 @@ export default function TopNav() {
             onClick={() => setMobileOpen(false)}
           />
 
-          <div className="fixed left-0 right-0 top-16 z-50 px-4 pb-4">
+          <div className="fixed left-0 right-0 top-[68px] z-50 px-4 pb-4">
             <div className={`overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
               <div className="p-2 flex flex-col gap-1">
                 {/* Flow-first */}

@@ -1,15 +1,19 @@
 // src/components/BrandMark.tsx
 "use client";
 
-import type React from "react";
+import Image from "next/image";
 
-export default function BrandMark({ className = "h-8 w-8" }: { className?: string }) {
+export default function BrandMark() {
   return (
-    <img
-      src="/brandmark.png"
-      alt="Oren Capital"
-      className={className}
-      draggable={false}
-    />
+    <div className="relative h-9 w-9 shrink-0">
+      <Image
+        src="/brandmark.png"
+        alt="Oren Capital"
+        fill
+        priority
+        sizes="36px"
+        className="object-contain"
+      />
+    </div>
   );
 }
