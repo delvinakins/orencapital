@@ -22,33 +22,46 @@ export default async function OpenGraphImage() {
           flexDirection: "column",
           justifyContent: "center",
           alignItems: "center",
-          background: "#0b0f0d",
+          background:
+            "radial-gradient(circle at 50% 40%, rgba(43,203,119,0.08), transparent 55%), #0b0f0d",
           color: "white",
           fontFamily: "Inter, sans-serif",
         }}
       >
-        <img
-          src={`data:image/png;base64,${logoBase64}`}
-          width="220"
-          height="220"
-          alt="Oren Capital"
-        />
-
+        {/* Logo */}
         <div
           style={{
-            marginTop: 40,
-            fontSize: 64,
+            padding: 40,
+            borderRadius: 200,
+            background: "rgba(43,203,119,0.08)",
+            boxShadow: "0 0 80px rgba(43,203,119,0.15)",
+          }}
+        >
+          <img
+            src={`data:image/png;base64,${logoBase64}`}
+            width="220"
+            height="220"
+            alt="Oren Capital"
+          />
+        </div>
+
+        {/* Brand */}
+        <div
+          style={{
+            marginTop: 48,
+            fontSize: 72,
             fontWeight: 700,
-            letterSpacing: "-0.02em",
+            letterSpacing: "-0.03em",
           }}
         >
           Oren Capital
         </div>
 
+        {/* Positioning */}
         <div
           style={{
             marginTop: 20,
-            fontSize: 28,
+            fontSize: 30,
             color: "#9ca3af",
             textAlign: "center",
             maxWidth: 900,
