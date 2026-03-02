@@ -1,5 +1,6 @@
 // src/app/movers/page.tsx
 import Link from "next/link";
+import TradingViewMini from "@/components/TradingViewMini";
 
 type Row = {
   symbol: string;
@@ -78,13 +79,19 @@ export default async function MoversPage() {
     <main className="mx-auto max-w-6xl px-4 py-10">
       <div className="flex items-end justify-between gap-6">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-white">S&P 500 Volatility Radar</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">
+            S&P 500 Volatility Radar
+          </h1>
           <p className="mt-2 text-sm text-slate-300">
-            Today’s biggest intraday movers, filtered to the S&P 500 and tagged by structural risk.
+            Today’s biggest intraday movers, filtered to the S&P 500 and tagged
+            by structural risk.
           </p>
         </div>
 
-        <Link href="/risk" className="text-sm text-slate-300 hover:text-white hover:underline">
+        <Link
+          href="/risk"
+          className="text-sm text-slate-300 hover:text-white hover:underline"
+        >
           Go to Survivability →
         </Link>
       </div>
@@ -100,14 +107,18 @@ export default async function MoversPage() {
         </div>
 
         {rows.length === 0 ? (
-          <div className="px-4 py-6 text-sm text-slate-300">No data right now.</div>
+          <div className="px-4 py-6 text-sm text-slate-300">
+            No data right now.
+          </div>
         ) : (
           rows.map((r) => (
             <div
               key={r.symbol}
-              className="grid grid-cols-12 gap-3 px-4 py-4 text-sm text-slate-200 border-b border-white/10 last:border-b-0"
+              className="grid grid-cols-12 gap-3 border-b border-white/10 px-4 py-4 text-sm text-slate-200 last:border-b-0"
             >
-              <div className="col-span-2 font-semibold text-white">{r.symbol}</div>
+              <div className="col-span-2 font-semibold text-white">
+                {r.symbol}
+              </div>
               <div className="col-span-2">{pct(r.changePct)}</div>
               <div className="col-span-2">{pct(r.rangePct)}</div>
               <div className="col-span-2">
@@ -117,43 +128,10 @@ export default async function MoversPage() {
                 <Tag v={r.structuralRiskTag} />
               </div>
 
-              {/* TradingView Mini Chart widget */}
+              {/* TradingView Mini Chart widget (client component) */}
               <div className="col-span-2 flex justify-end">
                 <div className="w-[180px]">
-                  <div className="tradingview-widget-container">
-                    <div id={`tv-mini-${r.symbol}`} />
-                    <script
-                      dangerouslySetInnerHTML={{
-                        __html: `
-(function() {
-  var containerId = "tv-mini-${r.symbol}";
-  var el = document.getElementById(containerId);
-  if (!el) return;
-
-  // prevent duplicate loads
-  if (el.getAttribute("data-tv-loaded") === "1") return;
-  el.setAttribute("data-tv-loaded", "1");
-
-  var script = document.createElement("script");
-  script.type = "text/javascript";
-  script.async = true;
-  script.src = "https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js";
-  script.innerHTML = JSON.stringify({
-    "symbol": "NYSE:${r.symbol}",
-    "width": "100%",
-    "height": 100,
-    "locale": "en",
-    "dateRange": "1D",
-    "colorTheme": "dark",
-    "isTransparent": true,
-    "autosize": true,
-    "largeChartUrl": ""
-  });
-  el.appendChild(script);
-})();`,
-                      }}
-                    />
-                  </div>
+                  <TradingViewMini symbol={r.symbol} />
                 </div>
               </div>
             </div>
@@ -161,7 +139,9 @@ export default async function MoversPage() {
         )}
       </div>
 
-      <p className="mt-4 text-xs text-slate-400">Charts powered by TradingView embeds.</p>
+      <p className="mt-4 text-xs text-slate-400">
+        Charts powered by TradingView embeds.
+      </p>
     </main>
   );
 }
