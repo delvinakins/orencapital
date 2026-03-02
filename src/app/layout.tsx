@@ -1,8 +1,10 @@
+// src/app/layout.tsx
 import "./globals.css";
 import type { Metadata } from "next";
 import TopNav from "@/components/TopNav";
 import { Inter_Tight } from "next/font/google";
 import Link from "next/link";
+import LegalGate from "@/components/LegalGate";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -30,6 +32,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${interTight.variable} antialiased`}>
       <body className="min-h-screen font-sans bg-background text-foreground">
+        {/* Client-side gate: signed-in users must accept latest terms */}
+        <LegalGate />
+
         <div className="min-h-screen bg-background text-foreground flex flex-col">
           <TopNav />
           <div className="mx-auto w-full flex-1">{children}</div>
@@ -41,9 +46,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
 
               <div className="flex flex-wrap gap-4">
-                <Link className="hover:underline" href="/terms">Terms</Link>
-                <Link className="hover:underline" href="/privacy">Privacy</Link>
-                <Link className="hover:underline" href="/risk-disclosure">Risk Disclosure</Link>
+                <Link className="hover:underline" href="/terms">
+                  Terms
+                </Link>
+                <Link className="hover:underline" href="/privacy">
+                  Privacy
+                </Link>
+                <Link className="hover:underline" href="/risk-disclosure">
+                  Risk Disclosure
+                </Link>
               </div>
             </div>
           </footer>
