@@ -85,18 +85,22 @@ export default function TopNav() {
         ? "hidden sm:inline-flex items-center rounded-full border border-amber-700/40 bg-amber-600/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-amber-200"
         : "hidden sm:inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-slate-200";
 
+  const closeAll = () => {
+    setMoreOpen(false);
+    setAcctOpen(false);
+    setMobileOpen(false);
+  };
+
   // Pathway order (mirrors How It Works):
   // How it works → Survivability → Position Risk → Journal
   return (
     <nav className={`sticky top-0 z-50 w-full border-b ${border} ${glass} backdrop-blur`}>
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
-        {/* slightly taller for “institutional” spacing */}
         <div className="flex h-[68px] items-center justify-between">
           {/* LEFT */}
           <div className="flex items-center gap-8">
-            <Link href="/" className="group inline-flex items-center gap-4">
+            <Link href="/" className="group inline-flex items-center gap-4" onClick={closeAll}>
               <span className="relative grid place-items-center">
-                {/* control mark size here (BrandMark takes no props) */}
                 <span className="grid h-9 w-9 place-items-center">
                   <BrandMark />
                 </span>
@@ -158,7 +162,6 @@ export default function TopNav() {
 
           {/* RIGHT */}
           <div className="flex items-center gap-2">
-            {/* Survival score badge */}
             {survival && (
               <span title={survival.message ?? ""} className={survivalBadgeClass}>
                 Survival {survival.score}
@@ -200,14 +203,14 @@ export default function TopNav() {
 
                 {acctOpen && (
                   <div
-                    className={`absolute right-0 mt-3 w-52 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}
+                    className={`absolute right-0 mt-3 w-56 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}
                   >
                     <MenuItem href="/account" label="Account" onClick={() => setAcctOpen(false)} />
                     <MenuItem href="/account/billing" label="Billing" onClick={() => setAcctOpen(false)} />
 
                     <div className={`my-1 h-px ${border}`} />
 
-                    {/* Legal (easy to find even when signed in) */}
+                    {/* Legal (easy to find when signed in) */}
                     <MenuItem href="/terms" label="Terms" onClick={() => setAcctOpen(false)} />
                     <MenuItem href="/privacy" label="Privacy" onClick={() => setAcctOpen(false)} />
                     <MenuItem href="/risk-disclosure" label="Risk Disclosure" onClick={() => setAcctOpen(false)} />
