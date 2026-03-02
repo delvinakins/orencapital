@@ -13,11 +13,19 @@ type SavePayload = {
 export async function POST(req: Request) {
   try {
     const supabase = await createSupabaseServerClient();
-    const { data: auth } = await supabase.auth.getUser();
+    const { data: auth, error: authErr } = await supabase.auth.getUser();
     const user = auth.user;
 
-    if (!user?.id) {
+    if (authErr || !user?.id) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    // If your DB requires email NOT NULL, enforce it here too.
+    if (!user.email) {
+      return NextResponse.json(
+        { ok: false, error: "User email is required but missing." },
+        { status: 400 }
+      );
     }
 
     const body = (await req.json().catch(() => ({}))) as SavePayload;
@@ -28,10 +36,10 @@ export async function POST(req: Request) {
 
     const now = new Date().toISOString();
 
-    // Always enforce ownership server-side
     const row = {
       id: body.id,
-      user_id: user.id,
+      user_id: user.id,     // requires portfolios.user_id
+      email: user.email,    // requires portfolios.email NOT NULL
       name: body.name,
       data: body.data,
       updated_at: now,
