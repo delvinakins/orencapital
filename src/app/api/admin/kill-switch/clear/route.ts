@@ -20,16 +20,25 @@ export async function POST(req: Request) {
       );
     }
 
+    // Default: clear the currently signed-in admin (self)
+    const {
+      data: { user },
+      error: userErr,
+    } = await gate.supabase.auth.getUser();
+
+    if (userErr || !user?.id) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = (await req.json().catch(() => ({}))) as Body;
-    const targetUserId = body?.userId?.trim();
+    const targetUserId = (body?.userId ?? user.id)?.trim();
 
     if (!targetUserId) {
       return NextResponse.json({ ok: false, error: "Missing userId" }, { status: 400 });
     }
 
-    // 🔧 CHANGE THIS TABLE NAME IF YOURS IS DIFFERENT:
+    // 🔧 change if your table is named differently
     const TABLE = "account_kill_switch";
-
     const now = new Date().toISOString();
 
     const { error } = await supabaseAdmin
@@ -39,6 +48,7 @@ export async function POST(req: Request) {
           user_id: targetUserId,
           active: false,
           reason: null,
+          triggered_at: null,
           cleared_at: now,
           updated_at: now,
         },
