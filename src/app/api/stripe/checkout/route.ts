@@ -38,9 +38,7 @@ function isValidRedirectUrl(u: string) {
     const parsed = new URL(u);
 
     // Allow localhost in dev
-    const isLocalhost =
-      parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
-
+    const isLocalhost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
     if (isLocalhost) return parsed.protocol === "http:" || parsed.protocol === "https:";
 
     // In production, require https
@@ -144,13 +142,23 @@ export async function POST(req: Request) {
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
+
+      // ✅ Strong linkage for the webhook: stable Supabase user UUID
+      client_reference_id: user.id,
+
       customer_email: user.email,
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: successUrl,
       cancel_url: cancelUrl,
       allow_promotion_codes: true,
+
       metadata: {
+        // ✅ New standardized key (webhook will look for this)
+        user_id: user.id,
+
+        // ✅ Keep old key for backward compatibility during rollout
         supabase_user_id: user.id,
+
         plan: body.plan ?? (priceId === monthly ? "pro_monthly" : "pro_annual"),
       },
     });

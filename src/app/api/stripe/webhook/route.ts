@@ -16,6 +16,11 @@ async function readRawBody(req: Request) {
   return Buffer.from(buf);
 }
 
+function isUuid(v: any) {
+  if (typeof v !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
+}
+
 export async function POST(req: Request) {
   const sig = req.headers.get("stripe-signature");
   if (!sig) {
@@ -33,40 +38,49 @@ export async function POST(req: Request) {
     const rawBody = await readRawBody(req);
     event = stripe.webhooks.constructEvent(rawBody, sig, secret);
   } catch (err: any) {
-    return NextResponse.json({ error: `Webhook signature verification failed: ${err?.message}` }, { status: 400 });
+    return NextResponse.json(
+      { error: `Webhook signature verification failed: ${err?.message}` },
+      { status: 400 }
+    );
   }
 
   try {
-    // Helpful log while developing
     console.log("WEBHOOK:", event.type);
 
-    // We primarily care about subscription lifecycle
     if (
       event.type === "checkout.session.completed" ||
       event.type === "customer.subscription.created" ||
       event.type === "customer.subscription.updated" ||
       event.type === "customer.subscription.deleted"
     ) {
-      // 1) Figure out customer + email + subscription id
+      // 1) Figure out customer + email + subscription id (+ optional user_id)
       let customerId: string | null = null;
       let email: string | null = null;
       let subscriptionId: string | null = null;
+      let userId: string | null = null;
 
       if (event.type === "checkout.session.completed") {
         const session = event.data.object as Stripe.Checkout.Session;
 
         customerId = typeof session.customer === "string" ? session.customer : session.customer?.id ?? null;
+
         subscriptionId =
           typeof session.subscription === "string" ? session.subscription : session.subscription?.id ?? null;
 
-        email =
-          session.customer_details?.email ??
-          session.customer_email ??
-          null;
+        email = session.customer_details?.email ?? session.customer_email ?? null;
+
+        // Best-practice: carry your Supabase auth uid through checkout
+        // (either via client_reference_id or metadata.user_id set during session creation)
+        const maybeUid =
+          (typeof session.client_reference_id === "string" ? session.client_reference_id : null) ??
+          ((session.metadata as any)?.user_id ?? null);
+
+        if (isUuid(maybeUid)) userId = maybeUid;
 
         console.log("SESSION EMAIL:", email ?? "(none)");
         console.log("CUSTOMER ID:", customerId ?? "(none)");
         console.log("SUB ID:", subscriptionId ?? "(none)");
+        console.log("USER ID:", userId ?? "(none)");
       } else {
         const subObj = event.data.object as Stripe.Subscription;
         customerId = typeof subObj.customer === "string" ? subObj.customer : subObj.customer?.id ?? null;
@@ -84,7 +98,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true, skipped: "No email found" });
       }
 
-      // If we don’t have subscription id, try to fetch active subscription
+      // If we don’t have subscription id, try to fetch latest subscription
       if (!subscriptionId && customerId) {
         const subs = await stripe.subscriptions.list({
           customer: customerId,
@@ -94,7 +108,7 @@ export async function POST(req: Request) {
         subscriptionId = subs.data[0]?.id ?? null;
       }
 
-      // 2) If we have subscription, retrieve it and normalize shape for TS
+      // 2) Retrieve subscription details (if we have an id)
       let subscription_status: string | null = null;
       let price_id: string | null = null;
       let current_period_end: string | null = null;
@@ -106,26 +120,33 @@ export async function POST(req: Request) {
         subscription_status = sub.status ?? null;
 
         const item = sub.items?.data?.[0];
-        const priceId = item?.price?.id ?? null;
-        price_id = priceId;
+        price_id = item?.price?.id ?? null;
 
         current_period_end = isoFromUnix((sub as any).current_period_end);
       }
 
-      // 3) Write to Supabase by email
-      const updates = {
+      // ✅ Hardening: don’t clobber existing subscription fields if we couldn't resolve subscription
+      // This prevents accidental downgrades due to missing subscriptionId/subscription_status.
+      const hasSubSignal = Boolean(subscriptionId || subscription_status || price_id || current_period_end);
+
+      // 3) Write to Supabase
+      // Prefer stable user id if available; otherwise fall back to email upsert.
+      const baseUpdates: any = {
         email,
         stripe_customer_id: customerId,
         stripe_subscription_id: subscriptionId,
-        subscription_status,
-        price_id,
-        current_period_end,
         updated_at: new Date().toISOString(),
       };
 
-      const { error } = await supabaseAdmin
-        .from("profiles")
-        .upsert(updates, { onConflict: "email" });
+      if (hasSubSignal) {
+        baseUpdates.subscription_status = subscription_status;
+        baseUpdates.price_id = price_id;
+        baseUpdates.current_period_end = current_period_end;
+      }
+
+      const { error } = userId
+        ? await supabaseAdmin.from("profiles").upsert({ ...baseUpdates, id: userId }, { onConflict: "id" })
+        : await supabaseAdmin.from("profiles").upsert(baseUpdates, { onConflict: "email" });
 
       if (error) {
         console.log("WEBHOOK ERROR: Supabase upsert error:", error.message);
@@ -136,7 +157,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // Ignore other events
     return NextResponse.json({ ok: true, ignored: event.type });
   } catch (err: any) {
     console.log("WEBHOOK ERROR:", err?.message ?? err);
