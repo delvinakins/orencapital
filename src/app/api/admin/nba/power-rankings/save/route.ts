@@ -1,33 +1,9 @@
 // src/app/api/admin/nba/power-rankings/save/route.ts
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServerClient } from "@supabase/ssr";
-import { isAdminEmail } from "@/lib/admin";
+import { requireAdmin } from "@/lib/admin";
 import { supabaseService } from "@/lib/supabase/service";
 
 export const dynamic = "force-dynamic";
-
-async function supabaseServer() {
-  const cookieStore = await cookies();
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anon) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
-
-  return createServerClient(url, anon, {
-    cookies: {
-      get(name) {
-        return cookieStore.get(name)?.value;
-      },
-      set(name, value, options) {
-        cookieStore.set({ name, value, ...options });
-      },
-      remove(name, options) {
-        cookieStore.set({ name, value: "", ...options, maxAge: 0 });
-      },
-    },
-  });
-}
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
@@ -40,13 +16,14 @@ function num(v: any, fallback: number) {
 
 export async function POST(req: Request) {
   try {
-    // auth gate (signed in + admin email)
-    const supa = await supabaseServer();
-    const { data } = await supa.auth.getUser();
-    const email = data.user?.email ?? null;
-
-    if (!email) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    if (!isAdminEmail(email)) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    // auth gate (signed in + is_admin in profiles)
+    const gate = await requireAdmin();
+    if (!gate.ok) {
+      return NextResponse.json(
+        { ok: false, error: gate.status === 401 ? "Unauthorized" : "Forbidden" },
+        { status: gate.status }
+      );
+    }
 
     const body = await req.json().catch(() => null);
     const season = String(body?.season ?? "2025-2026").trim() || "2025-2026";
