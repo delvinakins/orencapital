@@ -1,3 +1,4 @@
+// src/app/api/stripe/webhook/route.ts
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
@@ -70,10 +71,13 @@ export async function POST(req: Request) {
         email = session.customer_details?.email ?? session.customer_email ?? null;
 
         // Best-practice: carry your Supabase auth uid through checkout
-        // (either via client_reference_id or metadata.user_id set during session creation)
+        // Prefer: client_reference_id
+        // Fallback: metadata.user_id or metadata.supabase_user_id
+        const meta = (session.metadata ?? {}) as Record<string, any>;
         const maybeUid =
           (typeof session.client_reference_id === "string" ? session.client_reference_id : null) ??
-          ((session.metadata as any)?.user_id ?? null);
+          (typeof meta.user_id === "string" ? meta.user_id : null) ??
+          (typeof meta.supabase_user_id === "string" ? meta.supabase_user_id : null);
 
         if (isUuid(maybeUid)) userId = maybeUid;
 
@@ -126,7 +130,6 @@ export async function POST(req: Request) {
       }
 
       // ✅ Hardening: don’t clobber existing subscription fields if we couldn't resolve subscription
-      // This prevents accidental downgrades due to missing subscriptionId/subscription_status.
       const hasSubSignal = Boolean(subscriptionId || subscription_status || price_id || current_period_end);
 
       // 3) Write to Supabase
