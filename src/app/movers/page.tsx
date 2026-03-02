@@ -1,6 +1,5 @@
 // src/app/movers/page.tsx
 import Link from "next/link";
-import TradingViewMiniEmbed from "@/components/TradingViewMiniEmbed";
 
 type Row = {
   symbol: string;
@@ -11,11 +10,23 @@ type Row = {
   structuralRiskTag: "Green" | "Amber" | "Red";
 };
 
+function getBaseUrl() {
+  const env =
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
+    "https://orencapital.com";
+
+  return env.replace(/\/$/, "");
+}
+
 async function getRows(): Promise<Row[]> {
-  const base = process.env.NEXT_PUBLIC_SITE_URL ?? "";
-  const res = await fetch(`${base}/api/market/movers?limit=25`, {
-    cache: "no-store",
-  });
+  const base = getBaseUrl();
+  const url = `${base}/api/market/movers?limit=25`;
+
+  const res = await fetch(url, { cache: "no-store" });
+
+  // if API errors, don’t crash the whole page
+  if (!res.ok) return [];
 
   const j = await res.json();
   return (j?.rows ?? []) as Row[];
@@ -35,7 +46,9 @@ function Tag({ v }: { v: Row["structuralRiskTag"] }) {
         : "border-rose-700/40 bg-rose-600/10 text-rose-200";
 
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold tracking-wide ${cls}`}>
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold tracking-wide ${cls}`}
+    >
       {v}
     </span>
   );
@@ -50,7 +63,9 @@ function VolTag({ v }: { v: Row["dayVolTag"] }) {
         : "border-rose-700/40 bg-rose-600/10 text-rose-200";
 
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold tracking-wide ${cls}`}>
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold tracking-wide ${cls}`}
+    >
       {v}
     </span>
   );
@@ -63,9 +78,9 @@ export default async function MoversPage() {
     <main className="mx-auto max-w-6xl px-4 py-10">
       <div className="flex items-end justify-between gap-6">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-white">S&amp;P 500 Volatility Radar</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">S&P 500 Volatility Radar</h1>
           <p className="mt-2 text-sm text-slate-300">
-            Today’s biggest intraday movers, filtered to the S&amp;P 500 and tagged by structural risk.
+            Today’s biggest intraday movers, filtered to the S&P 500 and tagged by structural risk.
           </p>
         </div>
 
@@ -84,26 +99,66 @@ export default async function MoversPage() {
           <div className="col-span-2 text-right">Chart</div>
         </div>
 
-        {rows.map((r) => (
-          <div
-            key={r.symbol}
-            className="grid grid-cols-12 gap-3 px-4 py-4 text-sm text-slate-200 border-b border-white/10 last:border-b-0"
-          >
-            <div className="col-span-2 font-semibold text-white">{r.symbol}</div>
-            <div className="col-span-2">{pct(r.changePct)}</div>
-            <div className="col-span-2">{pct(r.rangePct)}</div>
-            <div className="col-span-2">
-              <VolTag v={r.dayVolTag} />
-            </div>
-            <div className="col-span-2">
-              <Tag v={r.structuralRiskTag} />
-            </div>
+        {rows.length === 0 ? (
+          <div className="px-4 py-6 text-sm text-slate-300">No data right now.</div>
+        ) : (
+          rows.map((r) => (
+            <div
+              key={r.symbol}
+              className="grid grid-cols-12 gap-3 px-4 py-4 text-sm text-slate-200 border-b border-white/10 last:border-b-0"
+            >
+              <div className="col-span-2 font-semibold text-white">{r.symbol}</div>
+              <div className="col-span-2">{pct(r.changePct)}</div>
+              <div className="col-span-2">{pct(r.rangePct)}</div>
+              <div className="col-span-2">
+                <VolTag v={r.dayVolTag} />
+              </div>
+              <div className="col-span-2">
+                <Tag v={r.structuralRiskTag} />
+              </div>
 
-            <div className="col-span-2 flex justify-end">
-              <TradingViewMiniEmbed symbol={r.symbol} width={180} height={100} />
+              {/* TradingView Mini Chart widget */}
+              <div className="col-span-2 flex justify-end">
+                <div className="w-[180px]">
+                  <div className="tradingview-widget-container">
+                    <div id={`tv-mini-${r.symbol}`} />
+                    <script
+                      dangerouslySetInnerHTML={{
+                        __html: `
+(function() {
+  var containerId = "tv-mini-${r.symbol}";
+  var el = document.getElementById(containerId);
+  if (!el) return;
+
+  // prevent duplicate loads
+  if (el.getAttribute("data-tv-loaded") === "1") return;
+  el.setAttribute("data-tv-loaded", "1");
+
+  var script = document.createElement("script");
+  script.type = "text/javascript";
+  script.async = true;
+  script.src = "https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js";
+  script.innerHTML = JSON.stringify({
+    "symbol": "NYSE:${r.symbol}",
+    "width": "100%",
+    "height": 100,
+    "locale": "en",
+    "dateRange": "1D",
+    "colorTheme": "dark",
+    "isTransparent": true,
+    "autosize": true,
+    "largeChartUrl": ""
+  });
+  el.appendChild(script);
+})();`,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
 
       <p className="mt-4 text-xs text-slate-400">Charts powered by TradingView embeds.</p>
