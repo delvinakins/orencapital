@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 import TopNav from "@/components/TopNav";
 import { Inter_Tight } from "next/font/google";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -25,47 +26,24 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${interTight.variable} antialiased`}>
       <body className="min-h-screen font-sans bg-background text-foreground">
-        <div className="min-h-screen flex flex-col bg-background text-foreground">
+        <div className="min-h-screen bg-background text-foreground flex flex-col">
           <TopNav />
+          <div className="mx-auto w-full flex-1">{children}</div>
 
-          {/* Main Content */}
-          <main className="flex-1 mx-auto w-full">{children}</main>
-
-          {/* Footer */}
-          <footer className="border-t border-neutral-800 text-sm text-neutral-400">
-            <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col md:flex-row justify-between items-center gap-4">
-              
-              <div>
-                © {new Date().getFullYear()} Oren Analytics LLC
+          <footer className="border-t mt-10">
+            <div className="mx-auto max-w-6xl px-4 py-6 text-sm flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="text-muted-foreground">
+                © {new Date().getFullYear()} Oren Analytics LLC. All rights reserved.
               </div>
 
-              <div className="flex gap-6">
-                <a
-                  href="/terms"
-                  className="hover:text-white transition-colors"
-                >
-                  Terms
-                </a>
-                <a
-                  href="/privacy"
-                  className="hover:text-white transition-colors"
-                >
-                  Privacy
-                </a>
-                <a
-                  href="/risk-disclosure"
-                  className="hover:text-white transition-colors"
-                >
-                  Risk Disclosure
-                </a>
+              <div className="flex flex-wrap gap-4">
+                <Link className="hover:underline" href="/terms">Terms</Link>
+                <Link className="hover:underline" href="/privacy">Privacy</Link>
+                <Link className="hover:underline" href="/risk-disclosure">Risk Disclosure</Link>
               </div>
             </div>
           </footer>

@@ -143,6 +143,13 @@ export default function TopNav() {
 
                     {/* Monetize */}
                     <MenuItem href="/pricing" label="Pricing" onClick={() => setMoreOpen(false)} />
+
+                    <div className={`my-1 h-px ${border}`} />
+
+                    {/* Legal */}
+                    <MenuItem href="/terms" label="Terms" onClick={() => setMoreOpen(false)} />
+                    <MenuItem href="/privacy" label="Privacy" onClick={() => setMoreOpen(false)} />
+                    <MenuItem href="/risk-disclosure" label="Risk Disclosure" onClick={() => setMoreOpen(false)} />
                   </div>
                 )}
               </div>
@@ -153,10 +160,7 @@ export default function TopNav() {
           <div className="flex items-center gap-2">
             {/* Survival score badge */}
             {survival && (
-              <span
-                title={survival.message ?? ""}
-                className={survivalBadgeClass}
-              >
+              <span title={survival.message ?? ""} className={survivalBadgeClass}>
                 Survival {survival.score}
               </span>
             )}
@@ -200,7 +204,16 @@ export default function TopNav() {
                   >
                     <MenuItem href="/account" label="Account" onClick={() => setAcctOpen(false)} />
                     <MenuItem href="/account/billing" label="Billing" onClick={() => setAcctOpen(false)} />
+
                     <div className={`my-1 h-px ${border}`} />
+
+                    {/* Legal (easy to find even when signed in) */}
+                    <MenuItem href="/terms" label="Terms" onClick={() => setAcctOpen(false)} />
+                    <MenuItem href="/privacy" label="Privacy" onClick={() => setAcctOpen(false)} />
+                    <MenuItem href="/risk-disclosure" label="Risk Disclosure" onClick={() => setAcctOpen(false)} />
+
+                    <div className={`my-1 h-px ${border}`} />
+
                     <button
                       onClick={logout}
                       className="w-full px-4 py-2.5 text-left text-sm text-slate-300 hover:bg-white/5 hover:text-white"
@@ -254,8 +267,16 @@ export default function TopNav() {
 
                 <div className={`my-1 h-px ${border}`} />
 
+                {/* Monetize */}
                 <MobileItem href="/pricing" label="Pricing" onClick={() => setMobileOpen(false)} />
                 {!signedIn && <MobileItem href="/login" label="Login" onClick={() => setMobileOpen(false)} />}
+
+                <div className={`my-1 h-px ${border}`} />
+
+                {/* Legal */}
+                <MobileItem href="/terms" label="Terms" onClick={() => setMobileOpen(false)} />
+                <MobileItem href="/privacy" label="Privacy" onClick={() => setMobileOpen(false)} />
+                <MobileItem href="/risk-disclosure" label="Risk Disclosure" onClick={() => setMobileOpen(false)} />
               </div>
             </div>
           </div>
