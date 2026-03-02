@@ -44,23 +44,30 @@ export default function TopNav() {
   const initials = useMemo(() => (email ? initialsFromEmail(email) : "OC"), [email]);
   const signedIn = !!email;
 
+  const closeAll = () => {
+    setMoreOpen(false);
+    setAcctOpen(false);
+    setMobileOpen(false);
+  };
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setAcctOpen(false);
-        setMoreOpen(false);
-        setMobileOpen(false);
-      }
+      if (e.key === "Escape") closeAll();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
       const t = e.target as Node;
-      if (acctRef.current && !acctRef.current.contains(t)) setAcctOpen(false);
-      if (moreRef.current && !moreRef.current.contains(t)) setMoreOpen(false);
+      // IMPORTANT: stop the “click outside” handler from fighting menu clicks
+      if (acctRef.current && acctRef.current.contains(t)) return;
+      if (moreRef.current && moreRef.current.contains(t)) return;
+
+      setAcctOpen(false);
+      setMoreOpen(false);
     }
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
@@ -78,18 +85,16 @@ export default function TopNav() {
   const labsHref = "/labs/nba";
   const labsLabel = "Labs";
 
+  // NEW shiny page
+  const moversHref = "/movers";
+  const moversLabel = "Movers";
+
   const survivalBadgeClass =
     survival?.tone === "accent"
       ? "hidden sm:inline-flex items-center rounded-full border border-emerald-700/40 bg-emerald-600/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-emerald-200"
       : survival?.tone === "warn"
         ? "hidden sm:inline-flex items-center rounded-full border border-amber-700/40 bg-amber-600/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-amber-200"
         : "hidden sm:inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-slate-200";
-
-  const closeAll = () => {
-    setMoreOpen(false);
-    setAcctOpen(false);
-    setMobileOpen(false);
-  };
 
   // Pathway order (mirrors How It Works):
   // How it works → Survivability → Position Risk → Journal
@@ -114,10 +119,10 @@ export default function TopNav() {
 
             {/* DESKTOP LINKS */}
             <div className="hidden lg:flex items-center gap-6 text-sm text-slate-300">
-              <NavLink href="/how-it-works" label="How it works" />
-              <NavLink href="/risk" label="Survivability" />
-              <NavLink href="/risk-engine" label="Position Risk" />
-              <NavLink href="/journal" label="Journal" />
+              <NavLink href="/how-it-works" label="How it works" onClick={closeAll} />
+              <NavLink href="/risk" label="Survivability" onClick={closeAll} />
+              <NavLink href="/risk-engine" label="Position Risk" onClick={closeAll} />
+              <NavLink href="/journal" label="Journal" onClick={closeAll} />
 
               <div className="relative" ref={moreRef}>
                 <button
@@ -140,6 +145,7 @@ export default function TopNav() {
                     <div className={`my-1 h-px ${border}`} />
 
                     {/* Explore */}
+                    <MenuItem href={moversHref} label={moversLabel} onClick={() => setMoreOpen(false)} />
                     <MenuItem href={labsHref} label={labsLabel} onClick={() => setMoreOpen(false)} />
                     <MenuItem href="/risk-death" label="Blow-Up Risk" onClick={() => setMoreOpen(false)} />
 
@@ -229,6 +235,7 @@ export default function TopNav() {
             ) : (
               <Link
                 href="/login"
+                onClick={closeAll}
                 className={`rounded-xl border ${border} bg-white/5 px-4 py-2 text-sm text-white hover:bg-white/10`}
               >
                 Login
@@ -265,6 +272,7 @@ export default function TopNav() {
                 <div className={`my-1 h-px ${border}`} />
 
                 {/* Explore */}
+                <MobileItem href={moversHref} label={moversLabel} onClick={() => setMobileOpen(false)} />
                 <MobileItem href={labsHref} label={labsLabel} onClick={() => setMobileOpen(false)} />
                 <MobileItem href="/risk-death" label="Blow-Up Risk" onClick={() => setMobileOpen(false)} />
 
@@ -289,9 +297,9 @@ export default function TopNav() {
   );
 }
 
-function NavLink({ href, label }: { href: string; label: string }) {
+function NavLink({ href, label, onClick }: { href: string; label: string; onClick?: () => void }) {
   return (
-    <Link href={href} className="rounded-lg px-2 py-2 hover:bg-white/5 hover:text-white">
+    <Link href={href} onClick={onClick} className="rounded-lg px-2 py-2 hover:bg-white/5 hover:text-white">
       {label}
     </Link>
   );
