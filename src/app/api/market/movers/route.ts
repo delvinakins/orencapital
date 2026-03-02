@@ -1,92 +1,126 @@
 // src/app/api/market/movers/route.ts
 import { NextResponse } from "next/server";
-import { SP500_TICKERS } from "@/lib/market/sp500";
 
 export const runtime = "nodejs";
 
-type Row = {
+type Quote = {
   symbol: string;
-  price: number | null;
-  changePct: number | null;    // 0..1
-  rangePct: number | null;     // (high-low)/open
-  dayVolTag: "Normal" | "High" | "Extreme";
-  structuralRiskTag: "Green" | "Amber" | "Red";
+  name?: string;
+  price?: number;
+  changesPercentage?: number; // percent number (e.g. 2.34)
+  change?: number;
+  marketCap?: number;
+  volume?: number;
+  avgVolume?: number;
 };
 
-function n(v: any): number | null {
-  const x = Number(v);
-  return Number.isFinite(x) ? x : null;
+function n(x: unknown) {
+  const v = Number(x);
+  return Number.isFinite(v) ? v : 0;
 }
 
 function clamp(x: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, x));
 }
 
-// Very simple “structural-risk” filter v1:
-// - rangePct is the main signal
-// - changePct adds stress if outsized
-function classifyStructuralRisk(rangePct: number | null, changePct: number | null) {
-  const r = rangePct ?? 0;
-  const c = Math.abs(changePct ?? 0);
+// Public CSV of S&P 500 constituents (no API key)
+async function fetchSP500Symbols(): Promise<Set<string>> {
+  const url = "https://datahub.io/core/s-and-p-500-companies/r/constituents.csv";
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch S&P 500 list (${res.status})`);
 
-  // Score: range dominates, then big move
-  const score = (r * 100) * 1.0 + (c * 100) * 0.35;
+  const csv = await res.text();
+  const lines = csv.split("\n").map((l) => l.trim()).filter(Boolean);
 
-  if (score >= 18) return "Red" as const;
-  if (score >= 10) return "Amber" as const;
-  return "Green" as const;
-}
-
-function classifyDayVol(rangePct: number | null) {
-  const r = rangePct ?? 0;
-  if (r >= 0.18) return "Extreme" as const;
-  if (r >= 0.10) return "High" as const;
-  return "Normal" as const;
+  const out = new Set<string>();
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    const [symbolRaw] = line.split(",");
+    const symbol = (symbolRaw ?? "").trim().replaceAll('"', "");
+    if (symbol) out.add(symbol);
+  }
+  return out;
 }
 
 /**
- * Data source:
- * This endpoint is written to support Polygon right away if you set POLYGON_API_KEY.
- * Polygon provides a “gainers” snapshot endpoint (docs show /v2/snapshot/.../gainers etc).  [oai_citation:1‡GitHub](https://github.com/polygon-io/client-php?utm_source=chatgpt.com)
- *
- * For our use, we still need per-symbol OHLC. We'll fetch per-ticker “previous close” + “last trade/quote”
- * via Polygon v3 endpoints if you want, but to keep this Step 1 shippable:
- * - We return mocked rows if POLYGON_API_KEY is missing.
+ * Movers source: Financial Modeling Prep (FMP)
+ * Env var required: FMP_API_KEY
  */
+async function fetchMoversFromFMP(kind: "gainers" | "losers"): Promise<Quote[]> {
+  const key = process.env.FMP_API_KEY;
+  if (!key) throw new Error("Missing FMP_API_KEY env var (Financial Modeling Prep).");
+
+  const url =
+    kind === "gainers"
+      ? `https://financialmodelingprep.com/api/v3/stock_market/gainers?apikey=${key}`
+      : `https://financialmodelingprep.com/api/v3/stock_market/losers?apikey=${key}`;
+
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`FMP movers fetch failed (${res.status})`);
+  const j = (await res.json()) as any[];
+
+  return (Array.isArray(j) ? j : []).map((row) => ({
+    symbol: String(row.symbol ?? ""),
+    name: row.name ? String(row.name) : undefined,
+    price: n(row.price),
+    changesPercentage: n(
+      typeof row.changesPercentage === "string"
+        ? String(row.changesPercentage).replace("%", "")
+        : row.changesPercentage
+    ),
+    change: n(row.change),
+  }));
+}
+
+/**
+ * Structural filter (v0):
+ * - keep only decent price names
+ * - rank by absolute % move (shiny + useful)
+ * Later: add realized vol, ATR proxy, whipsaw, liquidity filters.
+ */
+function structuralFilterAndScore(q: Quote) {
+  const price = n(q.price);
+  const pct = n(q.changesPercentage);
+
+  if (price <= 5) return { ok: false, score: 0 };
+
+  const score = Math.abs(pct);
+  return { ok: true, score };
+}
+
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const limit = clamp(Number(url.searchParams.get("limit") ?? 25), 5, 100);
+  try {
+    const { searchParams } = new URL(req.url);
+    const limit = clamp(Number(searchParams.get("limit") ?? "20"), 5, 60);
 
-  const polygonKey = process.env.POLYGON_API_KEY;
+    const [spSet, gainers, losers] = await Promise.all([
+      fetchSP500Symbols(),
+      fetchMoversFromFMP("gainers"),
+      fetchMoversFromFMP("losers"),
+    ]);
 
-  // ✅ Step 1: shipable stub (looks real in UI, no provider setup required)
-  if (!polygonKey) {
-    const demo = SP500_TICKERS.slice(0, limit).map((symbol, i) => {
-      const rangePct = (0.02 + (i % 7) * 0.015); // 2%..11%
-      const changePct = ((i % 9) - 4) * 0.006;   // -2.4%..+2.4%
-      return {
-        symbol,
-        price: null,
-        changePct,
-        rangePct,
-        dayVolTag: classifyDayVol(rangePct),
-        structuralRiskTag: classifyStructuralRisk(rangePct, changePct),
-      } satisfies Row;
+    const raw = [...gainers, ...losers].filter((q) => q.symbol && spSet.has(q.symbol));
+
+    const ranked = raw
+      .map((q) => {
+        const s = structuralFilterAndScore(q);
+        return { ...q, _ok: s.ok, _score: s.score };
+      })
+      .filter((q) => q._ok)
+      .sort((a, b) => (b._score ?? 0) - (a._score ?? 0))
+      .slice(0, limit)
+      .map(({ _ok, _score, ...rest }) => rest);
+
+    return NextResponse.json({
+      ok: true,
+      asOf: new Date().toISOString(),
+      universe: "S&P 500",
+      count: ranked.length,
+      movers: ranked,
+      note:
+        "Movers ranked by absolute % move (v0). Next iteration: add intraday whipsaw + realized vol + liquidity.",
     });
-
-    // sort by rangePct desc
-    demo.sort((a, b) => (b.rangePct ?? 0) - (a.rangePct ?? 0));
-
-    return NextResponse.json({ ok: true, source: "demo", rows: demo });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message ?? "Server error" }, { status: 500 });
   }
-
-  // 🚧 Step 2 (next): replace this block with real Polygon OHLC aggregation for SP500_TICKERS.
-  // For now, keep production-safe:
-  return NextResponse.json(
-    {
-      ok: false,
-      error: "POLYGON_API_KEY detected, but real fetch not implemented yet. Remove key to use demo mode for now.",
-    },
-    { status: 501 }
-  );
 }

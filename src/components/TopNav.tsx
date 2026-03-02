@@ -62,6 +62,7 @@ export default function TopNav() {
   useEffect(() => {
     function onClick(e: MouseEvent) {
       const t = e.target as Node;
+
       // IMPORTANT: stop the “click outside” handler from fighting menu clicks
       if (acctRef.current && acctRef.current.contains(t)) return;
       if (moreRef.current && moreRef.current.contains(t)) return;
@@ -69,6 +70,7 @@ export default function TopNav() {
       setAcctOpen(false);
       setMoreOpen(false);
     }
+
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
