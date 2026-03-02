@@ -6,7 +6,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 export const runtime = "nodejs";
 
 type Body = {
-  // optional: admin can clear a specific user; if omitted, clear self
+  // If omitted, clears the currently signed-in admin (self)
   userId?: string;
 };
 
@@ -20,7 +20,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Default: clear the currently signed-in admin (self)
     const {
       data: { user },
       error: userErr,
@@ -37,12 +36,28 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Missing userId" }, { status: 400 });
     }
 
-    // 🔧 change if your table is named differently
-    const TABLE = "account_kill_switch";
     const now = new Date().toISOString();
 
-    const { error } = await supabaseAdmin
-      .from(TABLE)
+    // ✅ Source of truth used by killSwitch.ts + survival-score route:
+    // profiles.kill_switch_active / kill_switch_reason / kill_switch_triggered_at
+    const { error: profErr } = await supabaseAdmin
+      .from("profiles")
+      .update({
+        kill_switch_active: false,
+        kill_switch_reason: null,
+        kill_switch_triggered_at: null,
+        updated_at: now,
+      })
+      .eq("id", targetUserId);
+
+    if (profErr) {
+      return NextResponse.json({ ok: false, error: profErr.message }, { status: 500 });
+    }
+
+    // Optional: also clear legacy table if it exists (ignore if missing)
+    let legacyCleared = false;
+    const { error: legacyErr } = await supabaseAdmin
+      .from("account_kill_switch")
       .upsert(
         {
           user_id: targetUserId,
@@ -55,11 +70,13 @@ export async function POST(req: Request) {
         { onConflict: "user_id" }
       );
 
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    }
+    if (!legacyErr) legacyCleared = true;
 
-    return NextResponse.json({ ok: true, userId: targetUserId });
+    return NextResponse.json({
+      ok: true,
+      userId: targetUserId,
+      cleared: { profiles: true, account_kill_switch: legacyCleared },
+    });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? "Server error" }, { status: 500 });
   }
