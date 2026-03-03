@@ -1,43 +1,31 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import Script from "next/script";
 
 export default function TradingViewMini({ symbol }: { symbol: string }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const containerId = `tv-${symbol}`;
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    containerRef.current.innerHTML = "";
-
-    const wrapper = document.createElement("div");
-    wrapper.className = "tradingview-widget-container";
-
-    const widget = document.createElement("div");
-    wrapper.appendChild(widget);
-
-    const script = document.createElement("script");
-    script.type = "text/javascript";
-    script.async = true;
-    script.src =
-      "https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js";
-
-    script.innerHTML = JSON.stringify({
-      symbol: symbol, // REMOVE NYSE prefix — let TV auto-detect
-      width: "100%",
-      height: 100,
-      locale: "en",
-      dateRange: "1D",
-      colorTheme: "dark",
-      isTransparent: true,
-      autosize: true,
-      largeChartUrl: "",
-    });
-
-    wrapper.appendChild(script);
-
-    containerRef.current.appendChild(wrapper);
-  }, [symbol]);
-
-  return <div ref={containerRef} />;
+  return (
+    <div className="tradingview-widget-container">
+      <div id={containerId} />
+      <Script
+        id={`tv-script-${symbol}`}
+        strategy="afterInteractive"
+        src="https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            symbol,
+            width: "100%",
+            height: 100,
+            locale: "en",
+            dateRange: "1D",
+            colorTheme: "dark",
+            isTransparent: true,
+            autosize: true,
+            largeChartUrl: "",
+          }),
+        }}
+      />
+    </div>
+  );
 }
