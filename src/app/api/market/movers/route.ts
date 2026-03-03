@@ -16,6 +16,10 @@ function getKey() {
   return process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY || "";
 }
 
+function normalizeSymbol(sym: string): string {
+  return sym.toUpperCase().replace(".", "-").trim();
+}
+
 function pctTag(range: number | null): Row["dayVolTag"] {
   if (!range) return "Normal";
   if (range >= 0.12) return "Extreme";
@@ -43,13 +47,18 @@ async function getSp500(): Promise<Set<string>> {
     { cache: "no-store" }
   );
 
+  if (!res.ok) {
+    throw new Error("Failed to fetch S&P 500 list");
+  }
+
   const text = await res.text();
   const lines = text.split("\n").slice(1);
 
   const set = new Set<string>();
   for (const line of lines) {
-    const sym = line.split(",")[0]?.trim();
-    if (sym) set.add(sym.toUpperCase());
+    const raw = line.split(",")[0]?.trim();
+    if (!raw) continue;
+    set.add(normalizeSymbol(raw));
   }
 
   spCache = { ts: now, set };
@@ -91,13 +100,18 @@ export async function GET(req: Request) {
     const combined = [...(gainers.tickers ?? []), ...(losers.tickers ?? [])];
 
     const rows: Row[] = combined
-      .filter((t: any) => sp500.has(t.ticker))
+      .filter((t: any) => {
+        const sym = normalizeSymbol(String(t?.ticker ?? ""));
+        return sp500.has(sym);
+      })
       .map((t: any) => {
-        const day = t.day ?? {};
-        const prev = t.prevDay ?? {};
+        const day = t?.day ?? {};
+        const prev = t?.prevDay ?? {};
 
-        const price = Number(day.c ?? null);
-        const prevClose = Number(prev.c ?? null);
+        const symbol = normalizeSymbol(String(t?.ticker ?? ""));
+
+        const price = typeof day.c === "number" ? day.c : null;
+        const prevClose = typeof prev.c === "number" ? prev.c : null;
 
         const changePct =
           typeof t.todaysChangePerc === "number"
@@ -105,19 +119,23 @@ export async function GET(req: Request) {
             : null;
 
         const rangePct =
-          day.h && day.l && prevClose
-            ? (Number(day.h) - Number(day.l)) / prevClose
+          typeof day.h === "number" &&
+          typeof day.l === "number" &&
+          typeof prevClose === "number" &&
+          prevClose > 0
+            ? (day.h - day.l) / prevClose
             : null;
 
         return {
-          symbol: t.ticker,
+          symbol,
           price,
           changePct,
           rangePct,
           dayVolTag: pctTag(rangePct),
           structuralRiskTag: structuralTag(changePct, rangePct),
         };
-      });
+      })
+      .filter(r => r.symbol); // final safety
 
     rows.sort((a, b) => Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0));
 
@@ -127,6 +145,7 @@ export async function GET(req: Request) {
       source: "massive",
       universe: "sp500",
     });
+
   } catch (err: any) {
     return NextResponse.json(
       { ok: false, error: err.message },
