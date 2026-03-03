@@ -11,31 +11,60 @@ type Row = {
   structuralRiskTag: "Green" | "Amber" | "Red";
 };
 
+type SessionInfo = {
+  ok: boolean;
+  sessionDateET: string; // YYYY-MM-DD
+  resetAtET: string; // ISO string (ET)
+  label: string; // e.g. "Mon • 2026-03-02"
+};
+
 function pct(x: number | null) {
   if (x == null) return "—";
-  return `${(x * 100).toFixed(2)}%`;
+  const v = x * 100;
+  const sign = v > 0 ? "+" : "";
+  return `${sign}${v.toFixed(2)}%`;
 }
 
-function ChangeCell({ v }: { v: number | null }) {
-  if (v == null) return <span className="text-foreground/70">—</span>;
+function money(x: number | null) {
+  if (x == null) return "—";
+  return `$${x.toFixed(2)}`;
+}
 
-  const up = v >= 0;
-  const cls = up ? "text-emerald-300" : "text-rose-300";
-  const arrowPath = up
-    ? "M12 5l6 6h-4v8h-4v-8H6l6-6z"
-    : "M12 19l-6-6h4V5h4v8h4l-6 6z";
+function Arrow({ v }: { v: number | null }) {
+  if (v == null || v === 0) return null;
 
+  const up = v > 0;
+  const cls = up
+    ? "text-emerald-400"
+    : "text-rose-400";
+
+  // small, clean arrow
   return (
-    <span className="inline-flex items-center gap-1.5 tabular-nums">
-      <svg
-        aria-hidden="true"
-        viewBox="0 0 24 24"
-        className={`h-4 w-4 ${cls}`}
-        fill="currentColor"
-      >
-        <path d={arrowPath} />
-      </svg>
-      <span className="text-foreground/80">{pct(v)}</span>
+    <span className={`inline-flex items-center ${cls}`} aria-hidden="true">
+      {up ? "▲" : "▼"}
+    </span>
+  );
+}
+
+function Pill({
+  children,
+  className = "",
+  title,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <span
+      title={title}
+      className={[
+        "inline-flex items-center rounded-full border border-[color:var(--border)]",
+        "bg-foreground/5 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-foreground/80",
+        className,
+      ].join(" ")}
+    >
+      {children}
     </span>
   );
 }
@@ -48,15 +77,50 @@ function Tooltip({
   children: React.ReactNode;
 }) {
   return (
-    <span className="relative inline-flex group">
+    <span className="relative inline-flex items-center group">
       {children}
       <span
+        className={[
+          "pointer-events-none absolute z-50 hidden group-hover:block",
+          "left-1/2 top-[calc(100%+8px)] -translate-x-1/2",
+          "w-[260px] rounded-xl border border-[color:var(--border)] bg-background",
+          "px-3 py-2 text-[12px] leading-snug text-foreground/80 shadow-lg",
+        ].join(" ")}
         role="tooltip"
-        className="pointer-events-none absolute z-50 -top-2 left-1/2 hidden w-max max-w-[260px] -translate-x-1/2 -translate-y-full rounded-xl border border-[color:var(--border)] bg-background px-3 py-2 text-[11px] leading-snug text-foreground/80 shadow-lg group-hover:block group-focus-within:block"
       >
         {label}
       </span>
     </span>
+  );
+}
+
+function StructuralTag({ v }: { v: Row["structuralRiskTag"] }) {
+  const cls =
+    v === "Green"
+      ? "border-emerald-700/40 bg-emerald-600/10 text-emerald-300"
+      : v === "Amber"
+      ? "border-amber-700/40 bg-amber-600/10 text-amber-300"
+      : "border-rose-700/40 bg-rose-600/10 text-rose-300";
+
+  const help =
+    v === "Green"
+      ? "Green: lower structural stress. Still risk-manage your position sizing."
+      : v === "Amber"
+      ? "Amber: elevated structural risk. Keep sizing tight; expect wider moves and faster reversals."
+      : "Red: high structural risk. Treat as hazard—avoid oversizing, respect stops, and consider skipping.";
+
+  return (
+    <Tooltip label={help}>
+      <span
+        className={[
+          "inline-flex items-center rounded-full border px-2.5 py-1",
+          "text-[11px] font-semibold tracking-wide",
+          cls,
+        ].join(" ")}
+      >
+        {v}
+      </span>
+    </Tooltip>
   );
 }
 
@@ -65,105 +129,46 @@ function VolTag({ v }: { v: Row["dayVolTag"] }) {
     v === "Normal"
       ? "border-[color:var(--border)] bg-foreground/5 text-foreground/80"
       : v === "High"
-      ? "border-amber-700/40 bg-amber-600/10 text-amber-200"
-      : "border-rose-700/40 bg-rose-600/10 text-rose-200";
+      ? "border-amber-700/40 bg-amber-600/10 text-amber-300"
+      : "border-rose-700/40 bg-rose-600/10 text-rose-300";
 
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold tracking-wide ${cls}`}
+      className={[
+        "inline-flex items-center rounded-full border px-2.5 py-1",
+        "text-[11px] font-semibold tracking-wide",
+        cls,
+      ].join(" ")}
     >
       {v}
     </span>
   );
-}
-
-function structuralTooltip(v: Row["structuralRiskTag"]) {
-  if (v === "Green")
-    return "Lower structural risk (relative). Still volatile—size with discipline.";
-  if (v === "Amber")
-    return "Elevated structural risk. Fragile / headline-sensitive; expect sharper moves.";
-  return "High structural risk. Gap risk + violent reversals are common—treat as unstable.";
-}
-
-function StructuralTag({ v }: { v: Row["structuralRiskTag"] }) {
-  const cls =
-    v === "Green"
-      ? "border-emerald-700/40 bg-emerald-600/10 text-emerald-200"
-      : v === "Amber"
-      ? "border-amber-700/40 bg-amber-600/10 text-amber-200"
-      : "border-rose-700/40 bg-rose-600/10 text-rose-200";
-
-  const pill = (
-    <span
-      tabIndex={0}
-      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold tracking-wide outline-none focus:ring-2 focus:ring-[color:var(--accent)]/40 ${cls}`}
-    >
-      {v}
-    </span>
-  );
-
-  return <Tooltip label={structuralTooltip(v)}>{pill}</Tooltip>;
-}
-
-/**
- * Session date rule:
- * - session rolls at 4:00am ET (premarket start) on trading days
- * - if before 4am ET, treat as previous day session
- * - if weekend, roll back to last Friday
- */
-function getSessionDateET(now = new Date()) {
-  // Convert "now" to America/New_York wall clock parts
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    hour12: false,
-  }).formatToParts(now);
-
-  const y = Number(parts.find((p) => p.type === "year")?.value ?? "0");
-  const m = Number(parts.find((p) => p.type === "month")?.value ?? "1");
-  const d = Number(parts.find((p) => p.type === "day")?.value ?? "1");
-  const h = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
-
-  // Start with ET date as a UTC date object at midnight (we only use Y-M-D math)
-  // Using UTC avoids local TZ DST issues for simple day subtraction.
-  let dt = new Date(Date.UTC(y, m - 1, d));
-
-  // If before 4am ET -> previous session day
-  if (h < 4) dt = new Date(dt.getTime() - 24 * 60 * 60 * 1000);
-
-  // Roll back weekends to last Friday
-  // (dt.getUTCDay: 0 Sun, 6 Sat)
-  while (dt.getUTCDay() === 0 || dt.getUTCDay() === 6) {
-    dt = new Date(dt.getTime() - 24 * 60 * 60 * 1000);
-  }
-
-  const yyyy = dt.getUTCFullYear();
-  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getUTCDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
 }
 
 export default function MoversTableClient() {
   const [rows, setRows] = useState<Row[] | null>(null);
-
-  const sessionDate = useMemo(() => getSessionDateET(), []);
+  const [session, setSession] = useState<SessionInfo | null>(null);
 
   useEffect(() => {
     let alive = true;
 
     (async () => {
       try {
-        const res = await fetch(`/api/market/movers?limit=10`, {
-          cache: "no-store",
-        });
-        const json = await res.json();
-        const r = (json?.rows ?? []) as Row[];
-        if (alive) setRows(r);
+        const [mRes, sRes] = await Promise.all([
+          fetch(`/api/market/movers?limit=5`, { cache: "no-store" }),
+          fetch(`/api/market/session`, { cache: "no-store" }),
+        ]);
+
+        const mJson = await mRes.json().catch(() => ({}));
+        const sJson = await sRes.json().catch(() => ({}));
+
+        if (!alive) return;
+
+        setRows((mJson?.rows ?? []) as Row[]);
+        if (sJson?.ok) setSession(sJson as SessionInfo);
       } catch {
-        if (alive) setRows([]);
+        if (!alive) return;
+        setRows([]);
       }
     })();
 
@@ -175,13 +180,13 @@ export default function MoversTableClient() {
   const body = useMemo(() => {
     if (rows === null) {
       return (
-        <div className="px-5 py-6 text-sm text-foreground/70">Loading…</div>
+        <div className="px-6 py-6 text-sm text-foreground/70">Loading…</div>
       );
     }
 
     if (rows.length === 0) {
       return (
-        <div className="px-5 py-6 text-sm text-foreground/70">
+        <div className="px-6 py-6 text-sm text-foreground/70">
           No data right now.
         </div>
       );
@@ -190,40 +195,58 @@ export default function MoversTableClient() {
     return rows.map((r) => (
       <div
         key={r.symbol}
-        className="grid grid-cols-10 gap-3 border-b border-[color:var(--border)] px-5 py-4 text-sm text-foreground/80 last:border-b-0"
+        className={[
+          "grid grid-cols-12 gap-3 px-6 py-4 text-sm",
+          "border-b border-[color:var(--border)] last:border-b-0",
+        ].join(" ")}
       >
-        <div className="col-span-2 flex flex-col gap-1">
-          <span className="inline-flex w-fit items-center rounded-full border border-[color:var(--border)] bg-foreground/5 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-foreground/70">
-            {sessionDate} ET
-          </span>
-          <span className="font-semibold text-foreground">{r.symbol}</span>
+        <div className="col-span-3">
+          <div className="font-semibold tracking-tight">{r.symbol}</div>
+          <div className="mt-1 text-xs text-foreground/60">{money(r.price)}</div>
         </div>
 
-        <div className="col-span-2">
-          <ChangeCell v={r.changePct} />
+        <div className="col-span-3">
+          <div className="inline-flex items-center gap-2 font-medium">
+            <Arrow v={r.changePct} />
+            <span>{pct(r.changePct)}</span>
+          </div>
+          <div className="mt-1 text-xs text-foreground/60">
+            Range: {pct(r.rangePct)}
+          </div>
         </div>
 
-        <div className="col-span-2 tabular-nums">{pct(r.rangePct)}</div>
-
-        <div className="col-span-2">
+        <div className="col-span-3 flex items-center">
           <VolTag v={r.dayVolTag} />
         </div>
 
-        <div className="col-span-2">
+        <div className="col-span-3 flex items-center justify-end">
           <StructuralTag v={r.structuralRiskTag} />
         </div>
       </div>
     ));
-  }, [rows, sessionDate]);
+  }, [rows]);
+
+  const pillTitle =
+    session?.resetAtET
+      ? `Resets at pre-market open (4:00am ET). Next reset: ${session.resetAtET}`
+      : "Resets at pre-market open (4:00am ET) on trading days.";
 
   return (
-    <div className="mt-8 overflow-hidden rounded-2xl border border-[color:var(--border)] bg-background">
-      <div className="grid grid-cols-10 gap-3 border-b border-[color:var(--border)] px-5 py-3 text-xs font-semibold text-foreground/70">
-        <div className="col-span-2">Symbol</div>
-        <div className="col-span-2">Change</div>
-        <div className="col-span-2">Range</div>
-        <div className="col-span-2">Day Vol</div>
-        <div className="col-span-2">Structural</div>
+    <div className="mt-8 overflow-hidden rounded-2xl border border-[color:var(--border)] bg-foreground/5">
+      <div className="px-6 py-4 border-b border-[color:var(--border)]">
+        <div className="grid grid-cols-12 gap-3 text-xs font-semibold text-foreground/70">
+          <div className="col-span-3">
+            <div className="mb-2">
+              <Pill title={pillTitle}>
+                {session?.label ?? "Session • ET"}
+              </Pill>
+            </div>
+            <div>Symbol</div>
+          </div>
+          <div className="col-span-3">Change</div>
+          <div className="col-span-3">Day Vol</div>
+          <div className="col-span-3 text-right">Structural</div>
+        </div>
       </div>
 
       {body}
