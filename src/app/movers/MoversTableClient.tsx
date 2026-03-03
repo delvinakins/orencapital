@@ -59,7 +59,7 @@ export default function MoversTableClient() {
 
     (async () => {
       try {
-        const res = await fetch(`/api/market/movers?limit=25`, {
+        const res = await fetch(`/api/market/movers?limit=10`, {
           cache: "no-store",
         });
         const json = await res.json();
