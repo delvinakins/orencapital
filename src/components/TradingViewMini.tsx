@@ -1,24 +1,21 @@
-// src/components/TradingViewMini.tsx
 "use client";
 
 import { useEffect, useRef } from "react";
 
 export default function TradingViewMini({ symbol }: { symbol: string }) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
+    if (!containerRef.current) return;
 
-    // prevent duplicate loads
-    if (host.getAttribute("data-tv-loaded") === "1") return;
-    host.setAttribute("data-tv-loaded", "1");
+    // Clear previous content
+    containerRef.current.innerHTML = "";
 
     const script = document.createElement("script");
-    script.type = "text/javascript";
-    script.async = true;
     script.src =
       "https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js";
+    script.type = "text/javascript";
+    script.async = true;
 
     script.innerHTML = JSON.stringify({
       symbol: `NYSE:${symbol}`,
@@ -32,16 +29,8 @@ export default function TradingViewMini({ symbol }: { symbol: string }) {
       largeChartUrl: "",
     });
 
-    host.appendChild(script);
-
-    return () => {
-      // keep it simple: do not remove script aggressively (TV widgets can be finicky)
-    };
+    containerRef.current.appendChild(script);
   }, [symbol]);
 
-  return (
-    <div className="tradingview-widget-container">
-      <div ref={hostRef} />
-    </div>
-  );
+  return <div ref={containerRef} />;
 }
