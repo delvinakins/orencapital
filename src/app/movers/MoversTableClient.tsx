@@ -12,6 +12,13 @@ type Row = {
   structuralRiskTag: "Green" | "Amber" | "Red";
 };
 
+type SessionInfo = {
+  ok: boolean;
+  dateKeyET?: string;
+  label?: string;
+  resetsAt?: string;
+};
+
 function pct(x: number | null) {
   if (x == null) return "—";
   const v = x * 100;
@@ -74,63 +81,9 @@ function VolTag({ v }: { v: Row["dayVolTag"] }) {
   );
 }
 
-/**
- * Session date "resets" at 4:00am ET (premarket open).
- * - Before 4am ET: treat as previous session day
- * - Weekend: roll back to Friday
- */
-function getSessionDateKeyET(): string {
-  const now = new Date();
-
-  // Get ET parts without needing a lib
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    hour12: false,
-  });
-
-  const parts = dtf.formatToParts(now);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-
-  const yyyy = Number(get("year"));
-  const mm = Number(get("month"));
-  const dd = Number(get("day"));
-  const hh = Number(get("hour"));
-
-  // Construct a date in UTC for simple arithmetic
-  let d = new Date(Date.UTC(yyyy, mm - 1, dd, 12, 0, 0)); // noon UTC avoids DST edge
-
-  // If before 4am ET, use prior day
-  if (hh < 4) d = new Date(d.getTime() - 24 * 60 * 60 * 1000);
-
-  // Roll weekends back to Friday
-  const dow = d.getUTCDay(); // 0 Sun ... 6 Sat
-  if (dow === 0) d = new Date(d.getTime() - 2 * 24 * 60 * 60 * 1000); // Sun -> Fri
-  if (dow === 6) d = new Date(d.getTime() - 1 * 24 * 60 * 60 * 1000); // Sat -> Fri
-
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function formatPill(dateKey: string) {
-  // dateKey: YYYY-MM-DD
-  const [y, m, d] = dateKey.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(dt);
-}
-
 export default function MoversTableClient() {
   const [rows, setRows] = useState<Row[] | null>(null);
-  const sessionDateKey = useMemo(() => getSessionDateKeyET(), []);
+  const [session, setSession] = useState<SessionInfo | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -143,6 +96,25 @@ export default function MoversTableClient() {
         if (alive) setRows(r);
       } catch {
         if (alive) setRows([]);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/market/session`, { cache: "no-store" });
+        const json = (await res.json()) as SessionInfo;
+        if (!alive) return;
+        setSession(json?.ok ? json : { ok: false });
+      } catch {
+        if (alive) setSession({ ok: false });
       }
     })();
 
@@ -229,7 +201,7 @@ export default function MoversTableClient() {
           bg-[color:var(--background)]/30
         "
       >
-        {/* Symbol header w/ date pill above it (ONE TIME) */}
+        {/* Symbol header w/ session date pill ABOVE it (ONE TIME) */}
         <div className="col-span-3">
           <div className="mb-1">
             <span
@@ -241,9 +213,9 @@ export default function MoversTableClient() {
                 text-[11px] font-semibold
                 text-foreground/70
               "
-              title="Trading session date (resets at 4:00am ET)"
+              title="NYSE session date (resets at 4:00am ET)"
             >
-              {formatPill(sessionDateKey)} · Session
+              {session?.ok && session.label ? session.label : "Session · —"}
             </span>
           </div>
           <div className="text-sm font-semibold text-foreground/70">Symbol</div>
@@ -261,7 +233,8 @@ export default function MoversTableClient() {
           Day Vol
         </div>
 
-        <div className="col-span-2 flex items-center justify-end text-sm font-semibold text-foreground/70">
+        {/* Tooltip must hover/click on the HEADER, not the tag */}
+        <div className="col-span-2 flex items-center justify-end">
           <Tooltip label="Structural">
             <div className="space-y-2">
               <p>
