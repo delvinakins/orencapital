@@ -19,11 +19,9 @@ function normalizeBaseUrl(raw: string) {
 }
 
 function getBaseUrl(req: Request) {
-  // 1) Preferred: explicitly configured site URL
   const fromEnv = process.env.NEXT_PUBLIC_SITE_URL;
   if (fromEnv) return normalizeBaseUrl(fromEnv);
 
-  // 2) Otherwise infer from headers (works on Vercel)
   const proto = firstHeaderValue(req.headers.get("x-forwarded-proto")) ?? "https";
   const host =
     firstHeaderValue(req.headers.get("x-forwarded-host")) ??
@@ -37,14 +35,10 @@ function isValidRedirectUrl(u: string) {
   try {
     const parsed = new URL(u);
 
-    // Allow localhost in dev
     const isLocalhost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
     if (isLocalhost) return parsed.protocol === "http:" || parsed.protocol === "https:";
 
-    // In production, require https
     if (isProd()) return parsed.protocol === "https:";
-
-    // In non-prod, allow http/https
     return parsed.protocol === "http:" || parsed.protocol === "https:";
   } catch {
     return false;
@@ -52,9 +46,7 @@ function isValidRedirectUrl(u: string) {
 }
 
 type Body = {
-  // old style
   plan?: "pro_monthly" | "pro_annual";
-  // new style
   priceId?: string;
 };
 
@@ -71,10 +63,10 @@ function getAllowedPriceIds() {
 export async function POST(req: Request) {
   try {
     const supabase = await createSupabaseServerClient();
-    const { data } = await supabase.auth.getUser();
-    const user = data.user;
+    const { data: auth, error: authErr } = await supabase.auth.getUser();
+    const user = auth.user;
 
-    if (!user?.id || !user?.email) {
+    if (authErr || !user?.id || !user?.email) {
       return NextResponse.json({ error: "Please sign in first." }, { status: 401 });
     }
 
@@ -91,16 +83,10 @@ export async function POST(req: Request) {
       );
     }
 
-    // Resolve priceId from either { priceId } or { plan }
     let priceId: string | undefined;
-
-    if (body.priceId) {
-      priceId = body.priceId;
-    } else if (body.plan === "pro_monthly") {
-      priceId = monthly;
-    } else if (body.plan === "pro_annual") {
-      priceId = annual;
-    }
+    if (body.priceId) priceId = body.priceId;
+    else if (body.plan === "pro_monthly") priceId = monthly;
+    else if (body.plan === "pro_annual") priceId = annual;
 
     if (!priceId) {
       return NextResponse.json(
@@ -109,24 +95,39 @@ export async function POST(req: Request) {
       );
     }
 
-    // Prevent tampering: only allow known Pro prices
     if (!all.includes(priceId)) {
       return NextResponse.json({ error: "Invalid priceId." }, { status: 400 });
     }
 
-    // Ensure profile exists
-    const { error: profileErr } = await supabaseAdmin.from("profiles").upsert({
-      id: user.id,
-      email: user.email,
-      updated_at: new Date().toISOString(),
-    });
+    // Ensure profile exists and fetch existing stripe_customer_id (for stable customer reuse)
+    const now = new Date().toISOString();
+    const { data: prof, error: profReadErr } = await supabaseAdmin
+      .from("profiles")
+      .select("id, stripe_customer_id")
+      .eq("id", user.id)
+      .maybeSingle();
 
-    if (profileErr) {
-      return NextResponse.json({ error: profileErr.message }, { status: 500 });
+    if (profReadErr) {
+      return NextResponse.json({ error: profReadErr.message }, { status: 500 });
+    }
+
+    const { error: profileUpsertErr } = await supabaseAdmin
+      .from("profiles")
+      .upsert(
+        {
+          id: user.id,
+          email: user.email,
+          updated_at: now,
+        },
+        { onConflict: "id" }
+      );
+
+    if (profileUpsertErr) {
+      return NextResponse.json({ error: profileUpsertErr.message }, { status: 500 });
     }
 
     const baseUrl = getBaseUrl(req);
-    const successUrl = `${baseUrl}/pricing?success=1`;
+    const successUrl = `${baseUrl}/pricing?success=1&session_id={CHECKOUT_SESSION_ID}`;
     const cancelUrl = `${baseUrl}/pricing?canceled=1`;
 
     if (!isValidRedirectUrl(successUrl) || !isValidRedirectUrl(cancelUrl)) {
@@ -140,26 +141,37 @@ export async function POST(req: Request) {
       );
     }
 
+    const plan = body.plan ?? (priceId === monthly ? "pro_monthly" : "pro_annual");
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
 
-      // ✅ Strong linkage for the webhook: stable Supabase user UUID
+      // Stable linkage (best practice)
       client_reference_id: user.id,
 
-      customer_email: user.email,
+      // Reuse existing Stripe customer when available (prevents “new customer every checkout”)
+      ...(prof?.stripe_customer_id
+        ? { customer: prof.stripe_customer_id }
+        : { customer_email: user.email }),
+
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: successUrl,
       cancel_url: cancelUrl,
       allow_promotion_codes: true,
 
+      // IMPORTANT: write metadata onto the subscription itself too
+      subscription_data: {
+        metadata: {
+          user_id: user.id,
+          plan,
+        },
+      },
+
+      // Keep metadata on session as well (useful during transition/debug)
       metadata: {
-        // ✅ New standardized key (webhook will look for this)
         user_id: user.id,
-
-        // ✅ Keep old key for backward compatibility during rollout
         supabase_user_id: user.id,
-
-        plan: body.plan ?? (priceId === monthly ? "pro_monthly" : "pro_annual"),
+        plan,
       },
     });
 

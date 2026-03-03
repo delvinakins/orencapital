@@ -1,4 +1,3 @@
-// src/app/api/stripe/webhook/route.ts
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { stripe } from "@/lib/stripe";
@@ -11,7 +10,6 @@ function isoFromUnix(seconds?: number | null) {
   return new Date(seconds * 1000).toISOString();
 }
 
-// Read raw body for Stripe signature verification
 async function readRawBody(req: Request) {
   const buf = await req.arrayBuffer();
   return Buffer.from(buf);
@@ -22,16 +20,23 @@ function isUuid(v: any) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 }
 
+async function findUserIdByStripeCustomerId(customerId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("profiles")
+    .select("id")
+    .eq("stripe_customer_id", customerId)
+    .maybeSingle();
+
+  if (error) return null;
+  return data?.id ?? null;
+}
+
 export async function POST(req: Request) {
   const sig = req.headers.get("stripe-signature");
-  if (!sig) {
-    return NextResponse.json({ error: "Missing stripe-signature" }, { status: 400 });
-  }
+  if (!sig) return NextResponse.json({ error: "Missing stripe-signature" }, { status: 400 });
 
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!secret) {
-    return NextResponse.json({ error: "Missing STRIPE_WEBHOOK_SECRET" }, { status: 500 });
-  }
+  if (!secret) return NextResponse.json({ error: "Missing STRIPE_WEBHOOK_SECRET" }, { status: 500 });
 
   let event: Stripe.Event;
 
@@ -46,121 +51,133 @@ export async function POST(req: Request) {
   }
 
   try {
-    console.log("WEBHOOK:", event.type);
+    const t = event.type;
 
+    const isRelevant =
+      t === "checkout.session.completed" ||
+      t === "customer.subscription.created" ||
+      t === "customer.subscription.updated" ||
+      t === "customer.subscription.deleted";
+
+    if (!isRelevant) {
+      return NextResponse.json({ ok: true, ignored: t });
+    }
+
+    let customerId: string | null = null;
+    let email: string | null = null;
+    let subscriptionId: string | null = null;
+    let userId: string | null = null;
+
+    // -------------------------
+    // checkout.session.completed
+    // -------------------------
+    if (t === "checkout.session.completed") {
+      const session = event.data.object as Stripe.Checkout.Session;
+
+      customerId =
+        typeof session.customer === "string" ? session.customer : session.customer?.id ?? null;
+
+      subscriptionId =
+        typeof session.subscription === "string"
+          ? session.subscription
+          : session.subscription?.id ?? null;
+
+      email = session.customer_details?.email ?? session.customer_email ?? null;
+
+      const meta = (session.metadata ?? {}) as Record<string, any>;
+      const maybeUid =
+        (typeof session.client_reference_id === "string" ? session.client_reference_id : null) ??
+        (typeof meta.user_id === "string" ? meta.user_id : null) ??
+        (typeof meta.supabase_user_id === "string" ? meta.supabase_user_id : null);
+
+      if (isUuid(maybeUid)) userId = maybeUid;
+    }
+
+    // -------------------------
+    // customer.subscription.*
+    // -------------------------
     if (
-      event.type === "checkout.session.completed" ||
-      event.type === "customer.subscription.created" ||
-      event.type === "customer.subscription.updated" ||
-      event.type === "customer.subscription.deleted"
+      t === "customer.subscription.created" ||
+      t === "customer.subscription.updated" ||
+      t === "customer.subscription.deleted"
     ) {
-      // 1) Figure out customer + email + subscription id (+ optional user_id)
-      let customerId: string | null = null;
-      let email: string | null = null;
-      let subscriptionId: string | null = null;
-      let userId: string | null = null;
+      const subObj = event.data.object as Stripe.Subscription;
 
-      if (event.type === "checkout.session.completed") {
-        const session = event.data.object as Stripe.Checkout.Session;
+      customerId =
+        typeof subObj.customer === "string" ? subObj.customer : subObj.customer?.id ?? null;
 
-        customerId = typeof session.customer === "string" ? session.customer : session.customer?.id ?? null;
+      subscriptionId = subObj.id;
 
-        subscriptionId =
-          typeof session.subscription === "string" ? session.subscription : session.subscription?.id ?? null;
+      // Best case: we wrote user_id into subscription metadata in checkout route
+      const maybeUid = (subObj.metadata as any)?.user_id;
+      if (isUuid(maybeUid)) userId = maybeUid;
 
-        email = session.customer_details?.email ?? session.customer_email ?? null;
-
-        // Best-practice: carry your Supabase auth uid through checkout
-        // Prefer: client_reference_id
-        // Fallback: metadata.user_id or metadata.supabase_user_id
-        const meta = (session.metadata ?? {}) as Record<string, any>;
-        const maybeUid =
-          (typeof session.client_reference_id === "string" ? session.client_reference_id : null) ??
-          (typeof meta.user_id === "string" ? meta.user_id : null) ??
-          (typeof meta.supabase_user_id === "string" ? meta.supabase_user_id : null);
-
-        if (isUuid(maybeUid)) userId = maybeUid;
-
-        console.log("SESSION EMAIL:", email ?? "(none)");
-        console.log("CUSTOMER ID:", customerId ?? "(none)");
-        console.log("SUB ID:", subscriptionId ?? "(none)");
-        console.log("USER ID:", userId ?? "(none)");
-      } else {
-        const subObj = event.data.object as Stripe.Subscription;
-        customerId = typeof subObj.customer === "string" ? subObj.customer : subObj.customer?.id ?? null;
-        subscriptionId = subObj.id;
+      // If still missing, resolve via stripe_customer_id -> profiles.id (reliable after first checkout)
+      if (!userId && customerId) {
+        userId = await findUserIdByStripeCustomerId(customerId);
       }
+    }
 
-      // If we don’t have email yet, fetch customer
-      if (!email && customerId) {
-        const cust = await stripe.customers.retrieve(customerId);
-        const custData = (cust as any).data ?? cust; // support SDK shapes
-        email = (custData as Stripe.Customer).email ?? null;
-      }
+    // If we don’t have email yet, fetch customer (useful for display + fallback)
+    if (!email && customerId) {
+      const cust = await stripe.customers.retrieve(customerId);
+      const custData = (cust as any).data ?? cust;
+      email = (custData as Stripe.Customer).email ?? null;
+    }
 
-      if (!email) {
-        return NextResponse.json({ ok: true, skipped: "No email found" });
-      }
+    // Subscription details (status/price/period_end)
+    let subscription_status: string | null = null;
+    let price_id: string | null = null;
+    let current_period_end: string | null = null;
 
-      // If we don’t have subscription id, try to fetch latest subscription
-      if (!subscriptionId && customerId) {
-        const subs = await stripe.subscriptions.list({
-          customer: customerId,
-          status: "all",
-          limit: 1,
-        });
-        subscriptionId = subs.data[0]?.id ?? null;
-      }
+    if (subscriptionId) {
+      const subRes = await stripe.subscriptions.retrieve(subscriptionId);
+      const sub: Stripe.Subscription = (subRes as any).data ?? (subRes as any);
 
-      // 2) Retrieve subscription details (if we have an id)
-      let subscription_status: string | null = null;
-      let price_id: string | null = null;
-      let current_period_end: string | null = null;
+      subscription_status = sub.status ?? null;
+      const item = sub.items?.data?.[0];
+      price_id = item?.price?.id ?? null;
+      current_period_end = isoFromUnix((sub as any).current_period_end);
+    }
 
-      if (subscriptionId) {
-        const subRes = await stripe.subscriptions.retrieve(subscriptionId);
-        const sub: Stripe.Subscription = (subRes as any).data ?? (subRes as any);
+    // Build updates
+    const updates: any = {
+      updated_at: new Date().toISOString(),
+    };
 
-        subscription_status = sub.status ?? null;
+    if (email) updates.email = email;
+    if (customerId) updates.stripe_customer_id = customerId;
+    if (subscriptionId) updates.stripe_subscription_id = subscriptionId;
 
-        const item = sub.items?.data?.[0];
-        price_id = item?.price?.id ?? null;
+    // Only set subscription fields if we actually resolved them
+    if (subscription_status || price_id || current_period_end) {
+      updates.subscription_status = subscription_status;
+      updates.price_id = price_id;
+      updates.current_period_end = current_period_end;
+    }
 
-        current_period_end = isoFromUnix((sub as any).current_period_end);
-      }
+    // Write to Supabase:
+    // Prefer stable user id always. Only fallback to email if your DB truly supports unique email upserts.
+    if (userId) {
+      const { error } = await supabaseAdmin
+        .from("profiles")
+        .upsert({ ...updates, id: userId }, { onConflict: "id" });
 
-      // ✅ Hardening: don’t clobber existing subscription fields if we couldn't resolve subscription
-      const hasSubSignal = Boolean(subscriptionId || subscription_status || price_id || current_period_end);
-
-      // 3) Write to Supabase
-      // Prefer stable user id if available; otherwise fall back to email upsert.
-      const baseUpdates: any = {
-        email,
-        stripe_customer_id: customerId,
-        stripe_subscription_id: subscriptionId,
-        updated_at: new Date().toISOString(),
-      };
-
-      if (hasSubSignal) {
-        baseUpdates.subscription_status = subscription_status;
-        baseUpdates.price_id = price_id;
-        baseUpdates.current_period_end = current_period_end;
-      }
-
-      const { error } = userId
-        ? await supabaseAdmin.from("profiles").upsert({ ...baseUpdates, id: userId }, { onConflict: "id" })
-        : await supabaseAdmin.from("profiles").upsert(baseUpdates, { onConflict: "email" });
-
-      if (error) {
-        console.log("WEBHOOK ERROR: Supabase upsert error:", error.message);
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
-
-      console.log("Supabase update OK for customer:", customerId);
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
       return NextResponse.json({ ok: true });
     }
 
-    return NextResponse.json({ ok: true, ignored: event.type });
+    // LAST resort fallback (only safe if profiles.email is UNIQUE in DB)
+    if (email) {
+      const { error } = await supabaseAdmin
+        .from("profiles")
+        .upsert(updates, { onConflict: "email" });
+
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ ok: true, warned: "Updated by email fallback (consider unique email + better mapping)." });
+    }
+
+    return NextResponse.json({ ok: true, skipped: "No userId/email resolved" });
   } catch (err: any) {
     console.log("WEBHOOK ERROR:", err?.message ?? err);
     return NextResponse.json({ error: err?.message ?? "Webhook handler error" }, { status: 500 });
