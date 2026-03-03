@@ -3,14 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createChart,
-  LineSeries,
   type IChartApi,
   type ISeriesApi,
   type UTCTimestamp,
+  LineSeries,
 } from "lightweight-charts";
 
-type ApiPoint = { time: number; value: number }; // time from API can be ms or s
-type LinePoint = { time: UTCTimestamp; value: number };
+type Point = { time: number; value: number }; // time = ms from your API
 
 export default function Sparkline({
   symbol,
@@ -24,6 +23,7 @@ export default function Sparkline({
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const roRef = useRef<ResizeObserver | null>(null);
 
+  const [data, setData] = useState<Point[] | null>(null);
   const [failed, setFailed] = useState(false);
 
   const url = useMemo(
@@ -31,10 +31,45 @@ export default function Sparkline({
     [symbol]
   );
 
-  // Create chart + series ONCE
+  // fetch points
   useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      try {
+        setFailed(false);
+        const res = await fetch(url, { cache: "no-store" });
+        const json = await res.json();
+
+        if (cancelled) return;
+
+        if (!res.ok || !json?.ok || !Array.isArray(json?.points)) {
+          setFailed(true);
+          setData(null);
+          return;
+        }
+
+        setData(json.points as Point[]);
+      } catch {
+        if (!cancelled) {
+          setFailed(true);
+          setData(null);
+        }
+      }
+    }
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
+
+  // init chart once
+  useEffect(() => {
+    if (!elRef.current) return;
+    if (chartRef.current) return;
+
     const el = elRef.current;
-    if (!el) return;
 
     const chart = createChart(el, {
       height: 56,
@@ -46,14 +81,8 @@ export default function Sparkline({
       rightPriceScale: { visible: false },
       leftPriceScale: { visible: false },
       timeScale: { visible: false },
-      grid: {
-        vertLines: { visible: false },
-        horzLines: { visible: false },
-      },
-      crosshair: {
-        vertLine: { visible: false },
-        horzLine: { visible: false },
-      },
+      grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+      crosshair: { vertLine: { visible: false }, horzLine: { visible: false } },
       handleScroll: false,
       handleScale: false,
     });
@@ -67,7 +96,6 @@ export default function Sparkline({
     chartRef.current = chart;
     seriesRef.current = series;
 
-    // Resize
     const ro = new ResizeObserver(() => {
       if (!elRef.current || !chartRef.current) return;
       chartRef.current.applyOptions({ width: elRef.current.clientWidth });
@@ -78,62 +106,30 @@ export default function Sparkline({
     return () => {
       ro.disconnect();
       roRef.current = null;
-
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
     };
   }, []);
 
-  // Fetch + set data
+  // set data
   useEffect(() => {
-    let cancelled = false;
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    if (!chart || !series) return;
 
-    async function run() {
-      try {
-        setFailed(false);
+    if (!data || data.length < 2) return;
 
-        const res = await fetch(url, { cache: "no-store" });
-        const json = await res.json();
+    // lightweight-charts expects seconds as UTCTimestamp
+    series.setData(
+      data.map((p) => ({
+        time: (Math.floor(p.time / 1000) as UTCTimestamp),
+        value: p.value,
+      }))
+    );
 
-        if (cancelled) return;
-
-        if (!res.ok || !json?.ok || !Array.isArray(json?.points)) {
-          setFailed(true);
-          seriesRef.current?.setData([]);
-          return;
-        }
-
-        const points = json.points as ApiPoint[];
-
-        // Normalize time:
-        // - if API returns ms (e.g. 1700000000000), convert to seconds
-        // - if it already looks like seconds, keep it
-        const normalized: LinePoint[] = points.map((p) => {
-          const t =
-            p.time > 2_000_000_000 ? Math.floor(p.time / 1000) : Math.floor(p.time);
-          return { time: t as UTCTimestamp, value: p.value };
-        });
-
-        if (normalized.length >= 2) {
-          seriesRef.current?.setData(normalized);
-          chartRef.current?.timeScale().fitContent();
-        } else {
-          seriesRef.current?.setData([]);
-        }
-      } catch {
-        if (!cancelled) {
-          setFailed(true);
-          seriesRef.current?.setData([]);
-        }
-      }
-    }
-
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [url]);
+    chart.timeScale().fitContent();
+  }, [data]);
 
   if (failed) {
     return (

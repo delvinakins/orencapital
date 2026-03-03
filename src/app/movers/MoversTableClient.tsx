@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import TradingViewMini from "@/components/TradingViewMini";
+import Sparkline from "@/components/Sparkline";
 
 type Row = {
   symbol: string;
@@ -59,7 +59,8 @@ export default function MoversTableClient() {
 
     (async () => {
       try {
-        const res = await fetch(`/api/market/movers?limit=10`, {
+        // pull a bit more than 10 so we can confidently sort to "top 10"
+        const res = await fetch(`/api/market/movers?limit=25`, {
           cache: "no-store",
         });
         const json = await res.json();
@@ -75,14 +76,24 @@ export default function MoversTableClient() {
     };
   }, []);
 
+  const top10 = useMemo(() => {
+    if (!rows) return null;
+
+    return [...rows]
+      .sort(
+        (a, b) => Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0)
+      )
+      .slice(0, 10);
+  }, [rows]);
+
   const body = useMemo(() => {
-    if (rows === null) {
+    if (top10 === null) {
       return (
         <div className="px-4 py-6 text-sm text-slate-300">Loading…</div>
       );
     }
 
-    if (rows.length === 0) {
+    if (top10.length === 0) {
       return (
         <div className="px-4 py-6 text-sm text-slate-300">
           No data right now.
@@ -90,7 +101,7 @@ export default function MoversTableClient() {
       );
     }
 
-    return rows.map((r) => (
+    return top10.map((r) => (
       <div
         key={r.symbol}
         className="grid grid-cols-12 gap-3 border-b border-white/10 px-4 py-4 text-sm text-slate-200 last:border-b-0"
@@ -107,12 +118,12 @@ export default function MoversTableClient() {
 
         <div className="col-span-2 flex justify-end">
           <div className="w-[180px]">
-            <TradingViewMini symbol={r.symbol} />
+            <Sparkline symbol={r.symbol} />
           </div>
         </div>
       </div>
     ));
-  }, [rows]);
+  }, [top10]);
 
   return (
     <div className="mt-8 overflow-hidden rounded-2xl border border-white/10 bg-white/5">
