@@ -55,16 +55,15 @@ async function getSp500(): Promise<Set<string>> {
   return set;
 }
 
-async function fetchGrouped(key: string) {
-  const today = new Date().toISOString().slice(0, 10);
-
-  const url = `https://api.polygon.io/v2/aggs/grouped/locale/us/market/stocks/${today}?adjusted=true&apiKey=${key}`;
+async function fetchSnapshots(key: string) {
+  const url =
+    `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?include_otc=false&apiKey=${key}`;
 
   const res = await fetch(url, { cache: "no-store" });
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Massive grouped fetch failed (${res.status}): ${text}`);
+    throw new Error(`Massive snapshot fetch failed (${res.status}): ${text}`);
   }
 
   return res.json();
@@ -84,15 +83,17 @@ export async function GET(req: Request) {
     const limit = Math.min(Number(url.searchParams.get("limit") ?? 25), 50);
 
     const sp500 = await getSp500();
-    const grouped = await fetchGrouped(key);
+    const snapshot = await fetchSnapshots(key);
 
-    const rows: Row[] = (grouped.results ?? [])
-      .filter((r: any) => sp500.has(r.T))
-      .map((r: any) => {
-        const open = r.o;
-        const close = r.c;
-        const high = r.h;
-        const low = r.l;
+    const rows: Row[] = (snapshot.tickers ?? [])
+      .filter((t: any) => sp500.has(t.ticker))
+      .map((t: any) => {
+        const day = t.day ?? {};
+
+        const open = day.o;
+        const close = day.c;
+        const high = day.h;
+        const low = day.l;
 
         const changePct =
           open && close ? (close - open) / open : null;
@@ -101,7 +102,7 @@ export async function GET(req: Request) {
           open && high && low ? (high - low) / open : null;
 
         return {
-          symbol: r.T,
+          symbol: t.ticker,
           price: close ?? null,
           changePct,
           rangePct,
