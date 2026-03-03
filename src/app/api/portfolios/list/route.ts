@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { getKillSwitchStateForUser } from "@/lib/risk/killSwitch";
 
 export const runtime = "nodejs";
 
@@ -15,21 +14,11 @@ export async function GET() {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    // Optional but recommended: if your table expects email NOT NULL, enforce it.
+    // Enforce NOT NULL email if your DB requires it
     if (!user.email) {
       return NextResponse.json(
         { ok: false, error: "User email is required but missing." },
         { status: 400 }
-      );
-    }
-
-    // Optional: block reads too when kill switch active (keeps system consistent)
-    // If you prefer “read-only mode” during kill switch, remove this block.
-    const ks = await getKillSwitchStateForUser(user.id);
-    if (ks.active) {
-      return NextResponse.json(
-        { ok: false, error: "Account locked.", killSwitch: ks },
-        { status: 423 }
       );
     }
 
