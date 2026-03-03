@@ -17,6 +17,13 @@ function pct(x: number | null) {
   return `${(x * 100).toFixed(2)}%`;
 }
 
+function usd(x: number | null) {
+  if (x == null) return "—";
+  // keep it simple; avoids intl overhead in client
+  const v = Math.abs(x) >= 1000 ? x.toFixed(0) : x.toFixed(2);
+  return `$${v}`;
+}
+
 function Tag({ v }: { v: Row["structuralRiskTag"] }) {
   const cls =
     v === "Green"
@@ -59,7 +66,6 @@ export default function MoversTableClient() {
 
     (async () => {
       try {
-        // pull a bit more than 10 so we can confidently sort to "top 10"
         const res = await fetch(`/api/market/movers?limit=25`, {
           cache: "no-store",
         });
@@ -76,24 +82,19 @@ export default function MoversTableClient() {
     };
   }, []);
 
-  const top10 = useMemo(() => {
+  const top5 = useMemo(() => {
     if (!rows) return null;
-
     return [...rows]
-      .sort(
-        (a, b) => Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0)
-      )
-      .slice(0, 10);
+      .sort((a, b) => Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0))
+      .slice(0, 5);
   }, [rows]);
 
   const body = useMemo(() => {
-    if (top10 === null) {
-      return (
-        <div className="px-4 py-6 text-sm text-slate-300">Loading…</div>
-      );
+    if (top5 === null) {
+      return <div className="px-4 py-6 text-sm text-slate-300">Loading…</div>;
     }
 
-    if (top10.length === 0) {
+    if (top5.length === 0) {
       return (
         <div className="px-4 py-6 text-sm text-slate-300">
           No data right now.
@@ -101,29 +102,49 @@ export default function MoversTableClient() {
       );
     }
 
-    return top10.map((r) => (
+    return top5.map((r) => (
       <div
         key={r.symbol}
-        className="grid grid-cols-12 gap-3 border-b border-white/10 px-4 py-4 text-sm text-slate-200 last:border-b-0"
+        className="grid grid-cols-12 gap-3 border-b border-white/10 px-4 py-5 text-sm text-slate-200 last:border-b-0 items-center"
       >
-        <div className="col-span-2 font-semibold text-white">{r.symbol}</div>
-        <div className="col-span-2">{pct(r.changePct)}</div>
-        <div className="col-span-2">{pct(r.rangePct)}</div>
         <div className="col-span-2">
-          <VolTag v={r.dayVolTag} />
+          <div className="font-semibold text-white">{r.symbol}</div>
+          <div className="mt-1 text-xs text-slate-400">{usd(r.price)}</div>
         </div>
+
         <div className="col-span-2">
-          <Tag v={r.structuralRiskTag} />
+          <div className="text-slate-300 text-xs">Change</div>
+          <div className="mt-1 font-medium">{pct(r.changePct)}</div>
+        </div>
+
+        <div className="col-span-2">
+          <div className="text-slate-300 text-xs">Range</div>
+          <div className="mt-1 font-medium">{pct(r.rangePct)}</div>
+        </div>
+
+        <div className="col-span-2">
+          <div className="text-slate-300 text-xs">Day Vol</div>
+          <div className="mt-2">
+            <VolTag v={r.dayVolTag} />
+          </div>
+        </div>
+
+        <div className="col-span-2">
+          <div className="text-slate-300 text-xs">Structural</div>
+          <div className="mt-2">
+            <Tag v={r.structuralRiskTag} />
+          </div>
         </div>
 
         <div className="col-span-2 flex justify-end">
-          <div className="w-[180px]">
-            <Sparkline symbol={r.symbol} />
+          {/* bigger + more readable */}
+          <div className="w-[320px] max-w-[320px]">
+            <Sparkline symbol={r.symbol} height={96} />
           </div>
         </div>
       </div>
     ));
-  }, [top10]);
+  }, [top5]);
 
   return (
     <div className="mt-8 overflow-hidden rounded-2xl border border-white/10 bg-white/5">

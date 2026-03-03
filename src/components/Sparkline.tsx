@@ -1,27 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  createChart,
-  type IChartApi,
-  type ISeriesApi,
-  type UTCTimestamp,
-  LineSeries,
-} from "lightweight-charts";
+import { createChart, LineSeries, type Time, type LineData } from "lightweight-charts";
 
-type Point = { time: number; value: number }; // time = ms from your API
+type Point = { time: number; value: number };
 
 export default function Sparkline({
   symbol,
   className = "",
+  height = 56,
 }: {
   symbol: string;
   className?: string;
+  height?: number;
 }) {
   const elRef = useRef<HTMLDivElement | null>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const roRef = useRef<ResizeObserver | null>(null);
+  const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
 
   const [data, setData] = useState<Point[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -31,49 +25,20 @@ export default function Sparkline({
     [symbol]
   );
 
-  // fetch points
-  useEffect(() => {
-    let cancelled = false;
+  // ... keep your existing fetch effect ...
 
-    async function run() {
-      try {
-        setFailed(false);
-        const res = await fetch(url, { cache: "no-store" });
-        const json = await res.json();
-
-        if (cancelled) return;
-
-        if (!res.ok || !json?.ok || !Array.isArray(json?.points)) {
-          setFailed(true);
-          setData(null);
-          return;
-        }
-
-        setData(json.points as Point[]);
-      } catch {
-        if (!cancelled) {
-          setFailed(true);
-          setData(null);
-        }
-      }
-    }
-
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [url]);
-
-  // init chart once
   useEffect(() => {
     if (!elRef.current) return;
-    if (chartRef.current) return;
 
-    const el = elRef.current;
+    // (re)create chart any time height changes so it matches layout
+    if (chartRef.current) {
+      chartRef.current.remove();
+      chartRef.current = null;
+    }
 
-    const chart = createChart(el, {
-      height: 56,
-      width: el.clientWidth || 180,
+    chartRef.current = createChart(elRef.current, {
+      height,
+      width: elRef.current.clientWidth || 180,
       layout: {
         background: { color: "transparent" },
         textColor: "rgba(148,163,184,0.8)",
@@ -87,54 +52,42 @@ export default function Sparkline({
       handleScale: false,
     });
 
-    const series = chart.addSeries(LineSeries, {
+    const ro = new ResizeObserver(() => {
+      if (!elRef.current || !chartRef.current) return;
+      chartRef.current.applyOptions({ width: elRef.current.clientWidth });
+    });
+    ro.observe(elRef.current);
+
+    return () => ro.disconnect();
+  }, [height]);
+
+  useEffect(() => {
+    if (!chartRef.current) return;
+
+    const c = chartRef.current;
+
+    const series = c.addSeries(LineSeries, {
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
     });
 
-    chartRef.current = chart;
-    seriesRef.current = series;
-
-    const ro = new ResizeObserver(() => {
-      if (!elRef.current || !chartRef.current) return;
-      chartRef.current.applyOptions({ width: elRef.current.clientWidth });
-    });
-    ro.observe(el);
-    roRef.current = ro;
-
-    return () => {
-      ro.disconnect();
-      roRef.current = null;
-      chart.remove();
-      chartRef.current = null;
-      seriesRef.current = null;
-    };
-  }, []);
-
-  // set data
-  useEffect(() => {
-    const chart = chartRef.current;
-    const series = seriesRef.current;
-    if (!chart || !series) return;
-
-    if (!data || data.length < 2) return;
-
-    // lightweight-charts expects seconds as UTCTimestamp
-    series.setData(
-      data.map((p) => ({
-        time: (Math.floor(p.time / 1000) as UTCTimestamp),
+    if (data && data.length >= 2) {
+      const mapped: LineData<Time>[] = data.map((p) => ({
+        // lightweight-charts expects UTCTimestamp (seconds) which is compatible with Time
+        time: Math.floor(p.time / 1000) as unknown as Time,
         value: p.value,
-      }))
-    );
-
-    chart.timeScale().fitContent();
+      }));
+      series.setData(mapped);
+      c.timeScale().fitContent();
+    }
   }, [data]);
 
   if (failed) {
     return (
       <div
-        className={`h-[56px] w-full rounded-lg border border-white/10 bg-white/5 text-[11px] text-slate-400 flex items-center justify-center ${className}`}
+        className={`w-full rounded-lg border border-white/10 bg-white/5 text-[11px] text-slate-400 flex items-center justify-center ${className}`}
+        style={{ height }}
       >
         No chart
       </div>
@@ -144,7 +97,8 @@ export default function Sparkline({
   return (
     <div
       ref={elRef}
-      className={`h-[56px] w-full rounded-lg border border-white/10 bg-white/5 ${className}`}
+      className={`w-full rounded-lg border border-white/10 bg-white/5 ${className}`}
+      style={{ height }}
     />
   );
 }
