@@ -8,17 +8,22 @@ export default function TradingViewMini({ symbol }: { symbol: string }) {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Clear previous content
     containerRef.current.innerHTML = "";
 
+    const wrapper = document.createElement("div");
+    wrapper.className = "tradingview-widget-container";
+
+    const widget = document.createElement("div");
+    wrapper.appendChild(widget);
+
     const script = document.createElement("script");
-    script.src =
-      "https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js";
     script.type = "text/javascript";
     script.async = true;
+    script.src =
+      "https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js";
 
     script.innerHTML = JSON.stringify({
-      symbol: `NYSE:${symbol}`,
+      symbol: symbol, // REMOVE NYSE prefix — let TV auto-detect
       width: "100%",
       height: 100,
       locale: "en",
@@ -29,7 +34,9 @@ export default function TradingViewMini({ symbol }: { symbol: string }) {
       largeChartUrl: "",
     });
 
-    containerRef.current.appendChild(script);
+    wrapper.appendChild(script);
+
+    containerRef.current.appendChild(wrapper);
   }, [symbol]);
 
   return <div ref={containerRef} />;
