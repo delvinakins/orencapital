@@ -1,6 +1,8 @@
+// src/app/api/portfolios/save/route.ts
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { requireKillSwitchOff } from "@/lib/risk/requireKillSwitchOff";
 
 export const runtime = "nodejs";
 
@@ -12,6 +14,7 @@ type SavePayload = {
 
 export async function POST(req: Request) {
   try {
+    // 1) Auth
     const supabase = await createSupabaseServerClient();
     const { data: auth, error: authErr } = await supabase.auth.getUser();
     const user = auth.user;
@@ -20,7 +23,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    // If your DB requires email NOT NULL, enforce it here too.
+    // 2) Kill Switch enforcement (server-trusted)
+    const gate = await requireKillSwitchOff();
+    if (!gate.ok) {
+      return NextResponse.json(
+        { ok: false, error: gate.error, killSwitch: gate.killSwitch ?? null },
+        { status: gate.status }
+      );
+    }
+
+    // 3) If your DB requires email NOT NULL, enforce it here too.
     if (!user.email) {
       return NextResponse.json(
         { ok: false, error: "User email is required but missing." },
@@ -28,6 +40,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // 4) Validate payload
     const body = (await req.json().catch(() => ({}))) as SavePayload;
 
     if (!body?.name) {
@@ -36,10 +49,11 @@ export async function POST(req: Request) {
 
     const now = new Date().toISOString();
 
+    // 5) Upsert
     const row = {
       id: body.id,
-      user_id: user.id,     // requires portfolios.user_id
-      email: user.email,    // requires portfolios.email NOT NULL
+      user_id: user.id, // requires portfolios.user_id
+      email: user.email, // requires portfolios.email NOT NULL
       name: body.name,
       data: body.data,
       updated_at: now,
@@ -57,6 +71,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, portfolio: data });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e?.message ?? "Unknown error" },
+      { status: 500 }
+    );
   }
 }
