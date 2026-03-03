@@ -8,11 +8,11 @@ export default function MoversPage() {
       <div className="flex items-end justify-between gap-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-white">
-            S&P 500 Volatility Radar
+            S&amp;P 500 Volatility Radar
           </h1>
           <p className="mt-2 text-sm text-slate-300">
-            Today’s biggest intraday movers, filtered to the S&P 500 and tagged
-            by structural risk.
+            Today’s biggest intraday movers, filtered to the S&amp;P 500 and
+            tagged by structural risk.
           </p>
         </div>
 
@@ -27,7 +27,7 @@ export default function MoversPage() {
       <MoversTableClient />
 
       <p className="mt-4 text-xs text-slate-400">
-        Charts powered by TradingView embeds.
+        Mini charts are computed from intraday aggregates.
       </p>
     </main>
   );

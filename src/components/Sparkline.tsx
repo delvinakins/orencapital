@@ -1,62 +1,58 @@
-// src/components/Sparkline.tsx
 "use client";
 
-import React, { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createChart,
-  ColorType,
   LineSeries,
   type IChartApi,
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
 
-type Point = {
-  // epoch seconds (recommended)
-  time: number;
-  value: number;
-};
+type ApiPoint = { time: number; value: number }; // time from API can be ms or s
+type LinePoint = { time: UTCTimestamp; value: number };
 
 export default function Sparkline({
-  data,
-  height = 46,
+  symbol,
+  className = "",
 }: {
-  data: Point[];
-  height?: number;
+  symbol: string;
+  className?: string;
 }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const elRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const roRef = useRef<ResizeObserver | null>(null);
 
-  const lineData = useMemo(() => {
-    // Lightweight-charts expects UTCTimestamp (seconds)
-    return data
-      .filter((p) => Number.isFinite(p.time) && Number.isFinite(p.value))
-      .map((p) => ({ time: p.time as UTCTimestamp, value: p.value }));
-  }, [data]);
+  const [failed, setFailed] = useState(false);
 
+  const url = useMemo(
+    () => `/api/market/sparkline?symbol=${encodeURIComponent(symbol)}`,
+    [symbol]
+  );
+
+  // Create chart + series ONCE
   useEffect(() => {
-    const el = containerRef.current;
+    const el = elRef.current;
     if (!el) return;
 
-    // create chart
     const chart = createChart(el, {
-      height,
-      width: el.clientWidth,
+      height: 56,
+      width: el.clientWidth || 180,
       layout: {
-        background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "rgba(148, 163, 184, 0.9)",
+        background: { color: "transparent" },
+        textColor: "rgba(148,163,184,0.8)",
       },
+      rightPriceScale: { visible: false },
+      leftPriceScale: { visible: false },
+      timeScale: { visible: false },
       grid: {
         vertLines: { visible: false },
         horzLines: { visible: false },
       },
-      rightPriceScale: { visible: false },
-      leftPriceScale: { visible: false },
-      timeScale: { visible: false, borderVisible: false },
       crosshair: {
-        vertLine: { visible: false, labelVisible: false },
-        horzLine: { visible: false, labelVisible: false },
+        vertLine: { visible: false },
+        horzLine: { visible: false },
       },
       handleScroll: false,
       handleScale: false,
@@ -71,30 +67,88 @@ export default function Sparkline({
     chartRef.current = chart;
     seriesRef.current = series;
 
-    // resize
+    // Resize
     const ro = new ResizeObserver(() => {
-      const w = el.clientWidth;
-      chart.applyOptions({ width: w });
-      chart.timeScale().fitContent();
+      if (!elRef.current || !chartRef.current) return;
+      chartRef.current.applyOptions({ width: elRef.current.clientWidth });
     });
     ro.observe(el);
+    roRef.current = ro;
 
     return () => {
       ro.disconnect();
+      roRef.current = null;
+
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [height]);
+  }, []);
 
+  // Fetch + set data
   useEffect(() => {
-    const series = seriesRef.current;
-    const chart = chartRef.current;
-    if (!series || !chart) return;
+    let cancelled = false;
 
-    series.setData(lineData);
-    chart.timeScale().fitContent();
-  }, [lineData]);
+    async function run() {
+      try {
+        setFailed(false);
 
-  return <div ref={containerRef} className="w-full" style={{ height }} />;
+        const res = await fetch(url, { cache: "no-store" });
+        const json = await res.json();
+
+        if (cancelled) return;
+
+        if (!res.ok || !json?.ok || !Array.isArray(json?.points)) {
+          setFailed(true);
+          seriesRef.current?.setData([]);
+          return;
+        }
+
+        const points = json.points as ApiPoint[];
+
+        // Normalize time:
+        // - if API returns ms (e.g. 1700000000000), convert to seconds
+        // - if it already looks like seconds, keep it
+        const normalized: LinePoint[] = points.map((p) => {
+          const t =
+            p.time > 2_000_000_000 ? Math.floor(p.time / 1000) : Math.floor(p.time);
+          return { time: t as UTCTimestamp, value: p.value };
+        });
+
+        if (normalized.length >= 2) {
+          seriesRef.current?.setData(normalized);
+          chartRef.current?.timeScale().fitContent();
+        } else {
+          seriesRef.current?.setData([]);
+        }
+      } catch {
+        if (!cancelled) {
+          setFailed(true);
+          seriesRef.current?.setData([]);
+        }
+      }
+    }
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
+
+  if (failed) {
+    return (
+      <div
+        className={`h-[56px] w-full rounded-lg border border-white/10 bg-white/5 text-[11px] text-slate-400 flex items-center justify-center ${className}`}
+      >
+        No chart
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={elRef}
+      className={`h-[56px] w-full rounded-lg border border-white/10 bg-white/5 ${className}`}
+    />
+  );
 }
