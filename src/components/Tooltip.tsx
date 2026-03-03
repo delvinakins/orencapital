@@ -31,7 +31,11 @@ export function Tooltip({ label, children }: TooltipProps) {
     }
 
     return () => {
-      document.removeEventListener("pointerdown", onPointerDown, { capture: true } as any);
+      document.removeEventListener(
+        "pointerdown",
+        onPointerDown,
+        { capture: true } as any
+      );
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [open]);
@@ -67,7 +71,6 @@ export function Tooltip({ label, children }: TooltipProps) {
           aria-expanded={open}
           aria-controls={id}
           onPointerDown={(e) => {
-            // Prevent the document handler (capture) from immediately closing it
             e.stopPropagation();
           }}
           onClick={(e) => {
@@ -100,7 +103,7 @@ export function Tooltip({ label, children }: TooltipProps) {
             onClick={(e) => e.stopPropagation()}
             className="
               absolute left-1/2 top-[140%] z-50
-              w-[min(360px,85vw)]
+              w-[min(380px,85vw)]
               -translate-x-1/2
               rounded-xl
               border border-[color:var(--border)]
