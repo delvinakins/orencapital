@@ -3,10 +3,14 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 type BookLevel = { price: number; quantity: number };
-type OrderbookResp = { orderbook?: { yes_bids?: BookLevel[]; no_bids?: BookLevel[] } };
+type OrderbookResp = {
+  orderbook?: {
+    yes_bids?: BookLevel[];
+    no_bids?: BookLevel[];
+  };
+};
 
 function kalshiBase() {
-  // Kalshi trade-api v2 base shown in docs (commonly used for market-data). Adjust if needed later.
   return "https://api.elections.kalshi.com/trade-api/v2";
 }
 
@@ -14,6 +18,7 @@ function bestBid(levels?: BookLevel[]) {
   if (!levels?.length) return null;
   let best = -Infinity;
   let qty = 0;
+
   for (const l of levels) {
     const p = Number(l.price);
     const q = Number(l.quantity ?? 0);
@@ -23,13 +28,15 @@ function bestBid(levels?: BookLevel[]) {
       qty = Number.isFinite(q) ? q : 0;
     }
   }
+
   return best === -Infinity ? null : { price: best, quantity: qty };
 }
 
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const ticker = (url.searchParams.get("ticker") ?? "").trim();
+    const raw = (url.searchParams.get("ticker") ?? "").trim();
+    const ticker = raw.toUpperCase();
 
     if (!ticker) {
       return NextResponse.json({ ok: false, error: "Missing ticker" }, { status: 400 });
@@ -41,7 +48,7 @@ export async function GET(req: Request) {
     if (!obRes.ok) {
       const text = await obRes.text().catch(() => "");
       return NextResponse.json(
-        { ok: false, error: `Kalshi orderbook ${obRes.status}: ${text.slice(0, 200)}` },
+        { ok: false, ticker, error: `Kalshi orderbook ${obRes.status}: ${text.slice(0, 180)}` },
         { status: 502 }
       );
     }
@@ -69,7 +76,7 @@ export async function GET(req: Request) {
       ticker,
       yesBid,
       yesAsk,
-      mid, // cents ≈ probability %
+      mid,
       spread,
       yesBidQty: yesBest?.quantity ?? 0,
       noBidQty: noBest?.quantity ?? 0,
