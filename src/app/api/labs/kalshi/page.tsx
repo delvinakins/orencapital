@@ -101,7 +101,7 @@ function Sparkline({ data, direction }: { data: Array<{ ts: number; v: number }>
         <Tooltip
           contentStyle={{ background: "#0a0a0a", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, fontSize: 10 }}
           itemStyle={{ color: "#fff" }}
-          formatter={(v: number) => [`${v.toFixed(1)}`, "norm"]}
+          formatter={(v: number | undefined) => [`${(v ?? 0).toFixed(1)}`, "norm"]}
           labelFormatter={() => ""}
         />
       </LineChart>
