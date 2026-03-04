@@ -212,7 +212,9 @@ function tagPill(tag: Row["dayVolTag"] | Row["structuralRiskTag"]) {
 
 function seriesChip(meta?: SeriesMeta) {
   if (!meta) return { text: "—", cls: "border-white/10 bg-white/5 text-white/60" };
-  if (meta.kind === "real") return { text: "REAL", cls: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" };
+  if (meta.kind === "real") {
+    return { text: "REAL", cls: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" };
+  }
   return { text: "EST", cls: "border-amber-400/30 bg-amber-500/10 text-amber-200" };
 }
 
@@ -258,7 +260,6 @@ export default async function MoversPage() {
       base.sort((a: any, b: any) => Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0));
       const top = base.slice(0, 10);
 
-      // attach real series when available, otherwise fallback
       rows = await Promise.all(
         top.map(async (r: any) => {
           const real = await fetch5mSeriesReal(key, r.symbol);
@@ -351,7 +352,8 @@ export default async function MoversPage() {
       {/* DESKTOP: table */}
       <div className="hidden lg:block">
         <div className="rounded-2xl border border-white/10 bg-black/30">
-          <div className="overflow-x-auto">
+          {/* KEY: allow tooltip to escape vertically while still allowing horizontal scroll */}
+          <div className="overflow-x-auto overflow-y-visible">
             <table className="w-full border-collapse">
               <thead>
                 <tr className="border-b border-white/10 text-left text-xs text-white/50">

@@ -45,6 +45,7 @@ export function MoverChart({
 
             <Tooltip
               cursor={{ opacity: 0.12 }}
+              wrapperStyle={{ zIndex: 50 }}
               content={(props: any) => {
                 const active: boolean | undefined = props?.active;
                 const payload: readonly any[] | undefined = props?.payload;
@@ -54,7 +55,7 @@ export function MoverChart({
                 if (!p || typeof p.ts !== "number" || typeof p.v !== "number") return null;
 
                 return (
-                  <div className="rounded-xl border border-white/10 bg-black/80 px-3 py-2 text-xs text-white">
+                  <div className="rounded-xl border border-white/10 bg-black/85 px-3 py-2 text-xs text-white shadow-lg">
                     <div className="text-white/70">{fmtTime(p.ts)}</div>
                     <div className="mt-1">
                       {label ? <span className="text-white/70">{label}: </span> : null}
