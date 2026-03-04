@@ -1,79 +1,110 @@
 import { NextResponse } from "next/server";
-import Stripe from "stripe";
-import { cookies } from "next/headers";
+import { stripe } from "@/lib/stripe";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
-  apiVersion: "2026-01-28.clover",
-});
-
-function getSiteUrl() {
-  return (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/+$/, "");
+function firstHeaderValue(v: string | null) {
+  if (!v) return null;
+  return v.split(",")[0]?.trim() ?? null;
 }
 
-async function getAccessTokenFromCookies(): Promise<string | null> {
-  const store = await cookies();
+function normalizeBaseUrl(raw: string) {
+  return raw.trim().replace(/\/$/, "");
+}
 
-  const direct = store.get("sb-access-token")?.value;
-  if (direct) return direct;
+function getBaseUrl(req: Request) {
+  const fromEnv = process.env.NEXT_PUBLIC_SITE_URL;
+  if (fromEnv) return normalizeBaseUrl(fromEnv);
 
-  const packed = store.get("supabase-auth-token")?.value;
-  if (!packed) return null;
+  const proto = firstHeaderValue(req.headers.get("x-forwarded-proto")) ?? "https";
+  const host =
+    firstHeaderValue(req.headers.get("x-forwarded-host")) ??
+    firstHeaderValue(req.headers.get("host")) ??
+    "localhost:3000";
 
+  return normalizeBaseUrl(`${proto}://${host}`);
+}
+
+function isValidRedirectUrl(u: string) {
   try {
-    const parsed = JSON.parse(packed);
-    if (Array.isArray(parsed) && typeof parsed[0] === "string") return parsed[0];
+    const parsed = new URL(u);
+
+    const isLocalhost = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+    if (isLocalhost) return parsed.protocol === "http:" || parsed.protocol === "https:";
+
+    if (process.env.NODE_ENV === "production") return parsed.protocol === "https:";
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
   } catch {
-    // ignore
+    return false;
   }
-
-  return null;
 }
 
-async function getEmailFromSupabase(token: string): Promise<string | null> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !supabaseAnon) return null;
-
-  const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      apikey: supabaseAnon,
-    },
-    cache: "no-store",
-  });
-
-  if (!res.ok) return null;
-
-  const user = (await res.json()) as { email?: string | null };
-  return user.email ?? null;
-}
-
-export async function POST() {
+export async function POST(req: Request) {
   try {
-    const token = await getAccessTokenFromCookies();
-    if (!token) return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
+    const supabase = await createSupabaseServerClient();
+    const { data: auth, error: authErr } = await supabase.auth.getUser();
+    const user = auth.user;
 
-    const email = await getEmailFromSupabase(token);
-    if (!email) return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
+    if (authErr || !user?.id || !user.email) {
+      return NextResponse.json({ error: "Please sign in first." }, { status: 401 });
+    }
 
-    const existing = await stripe.customers.list({ email, limit: 1 });
-    const customer =
-      existing.data[0] ??
-      (await stripe.customers.create({
-        email,
-        metadata: { app: "orencapital" },
-      }));
+    // Load stripe_customer_id from profiles (source of truth)
+    const { data: prof, error: profErr } = await supabaseAdmin
+      .from("profiles")
+      .select("id,email,stripe_customer_id")
+      .eq("id", user.id)
+      .single();
+
+    if (profErr) {
+      return NextResponse.json({ error: profErr.message }, { status: 500 });
+    }
+
+    let customerId = prof?.stripe_customer_id ?? null;
+
+    // If missing, create customer + persist
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: user.email,
+        metadata: { user_id: user.id, app: "orencapital" },
+      });
+
+      customerId = customer.id;
+
+      const { error: upErr } = await supabaseAdmin
+        .from("profiles")
+        .update({ stripe_customer_id: customerId, updated_at: new Date().toISOString() })
+        .eq("id", user.id);
+
+      if (upErr) {
+        return NextResponse.json({ error: upErr.message }, { status: 500 });
+      }
+    }
+
+    const baseUrl = getBaseUrl(req);
+    const returnUrl = `${baseUrl}/account`;
+
+    if (!isValidRedirectUrl(returnUrl)) {
+      return NextResponse.json(
+        { error: "Invalid return URL. Set NEXT_PUBLIC_SITE_URL to https://orencapital.com" },
+        { status: 500 }
+      );
+    }
 
     const session = await stripe.billingPortal.sessions.create({
-      customer: customer.id,
-      return_url: `${getSiteUrl()}/account`,
+      customer: customerId,
+      return_url: returnUrl,
     });
+
+    if (!session.url) {
+      return NextResponse.json({ error: "No portal URL returned." }, { status: 500 });
+    }
 
     return NextResponse.json({ url: session.url });
   } catch (err: any) {
+    console.error("Stripe portal error:", err);
     return NextResponse.json({ error: err?.message || "Stripe portal error." }, { status: 500 });
   }
 }
