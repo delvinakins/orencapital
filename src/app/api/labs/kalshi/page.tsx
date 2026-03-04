@@ -1,3 +1,4 @@
+// src/app/labs/kalshi/page.tsx
 import { MoverChart, type MoverPt } from "@/components/charts/MoverChart";
 
 export const runtime = "nodejs";
@@ -52,15 +53,18 @@ export default async function KalshiLabsPage() {
       const yesAsk = noBid != null ? 100 - noBid : null;
 
       mid =
-        yesBid != null && yesAsk != null ? (yesBid + yesAsk) / 2 :
-        yesBid != null ? yesBid :
-        yesAsk != null ? yesAsk :
-        null;
+        yesBid != null && yesAsk != null
+          ? (yesBid + yesAsk) / 2
+          : yesBid != null
+          ? yesBid
+          : yesAsk != null
+          ? yesAsk
+          : null;
 
       spread = yesBid != null && yesAsk != null ? Math.max(0, yesAsk - yesBid) : null;
     }
   } catch {
-    // ignore for UI; show —
+    // ignore for UI
   }
 
   // Candles (tape)
@@ -105,7 +109,7 @@ export default async function KalshiLabsPage() {
         </div>
 
         <div className="mt-3">
-          <MoverChart data={tape} label="Tape" yDomain={[0, 100]} />
+          <MoverChart data={tape} label="Tape" />
         </div>
       </div>
     </div>
