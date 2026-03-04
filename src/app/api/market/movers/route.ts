@@ -9,11 +9,11 @@ type Row = {
   rangePct: number | null;
   dayVolTag: "Normal" | "High" | "Extreme";
   structuralRiskTag: "Green" | "Amber" | "Red";
-  series?: Array<{ ts: number; v: number }>; // normalized 0-100
+  series?: Array<{ ts: number; v: number }>;
 };
 
 function getKey() {
-  return process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY || "";
+  return (process.env.MASSIVE_API_KEY || process.env.POLYGON_API_KEY || "").trim();
 }
 
 function pctTag(range: number | null): Row["dayVolTag"] {
@@ -23,10 +23,7 @@ function pctTag(range: number | null): Row["dayVolTag"] {
   return "Normal";
 }
 
-function structuralTag(
-  change: number | null,
-  range: number | null
-): Row["structuralRiskTag"] {
+function structuralTag(change: number | null, range: number | null): Row["structuralRiskTag"] {
   const c = Math.abs(change ?? 0);
   const r = range ?? 0;
   if (c >= 0.08 || r >= 0.14) return "Red";
@@ -45,7 +42,11 @@ async function getSp500(): Promise<Set<string>> {
     "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv",
     { cache: "no-store" }
   );
-  if (!res.ok) throw new Error(`SP500 list fetch failed (${res.status})`);
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`SP500 list fetch failed (${res.status}) ${text.slice(0, 120)}`);
+  }
 
   const text = await res.text();
   const lines = text.split("\n").slice(1);
@@ -61,12 +62,15 @@ async function getSp500(): Promise<Set<string>> {
 }
 
 async function fetchSnapshots(key: string) {
-  const url = `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?include_otc=false&apiKey=${key}`;
+  const url =
+    `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?include_otc=false&apiKey=${key}`;
+
   const res = await fetch(url, { cache: "no-store" });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Polygon snapshot fetch failed (${res.status}): ${text}`);
+    const body = await res.text().catch(() => "");
+    // Always throw with JSON-safe info
+    throw new Error(`Polygon snapshot ${res.status}: ${body.slice(0, 200)}`);
   }
 
   return res.json();
@@ -75,10 +79,7 @@ async function fetchSnapshots(key: string) {
 // ---- Intraday series (5m candles) ----
 type AggResp = { results?: Array<{ t: number; c: number }> };
 
-const seriesCache = new Map<
-  string,
-  { ts: number; series: Array<{ ts: number; v: number }> }
->();
+const seriesCache = new Map<string, { ts: number; series: Array<{ ts: number; v: number }> }>();
 
 function yyyyMmDd(d: Date) {
   const yyyy = d.getFullYear();
@@ -87,16 +88,12 @@ function yyyyMmDd(d: Date) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-async function fetch5mSeries(
-  key: string,
-  symbol: string
-): Promise<Array<{ ts: number; v: number }>> {
+async function fetch5mSeries(key: string, symbol: string) {
   const cacheKey = `${symbol}:5m:today`;
   const now = Date.now();
   const cached = seriesCache.get(cacheKey);
   if (cached && now - cached.ts < 60_000) return cached.series;
 
-  // Use YYYY-MM-DD ranges (most reliable with Polygon aggs)
   const today = new Date();
   const from = yyyyMmDd(today);
   const to = yyyyMmDd(today);
@@ -107,24 +104,23 @@ async function fetch5mSeries(
 
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    // Don’t kill whole response on series failure
     seriesCache.set(cacheKey, { ts: now, series: [] });
     return [];
   }
 
   const data = (await res.json()) as AggResp;
-
   const raw = (data.results ?? [])
     .filter((r) => typeof r.t === "number" && typeof r.c === "number")
     .map((r) => ({ ts: r.t, v: r.c }));
 
-  // Normalize to 0-100 for consistent chart yDomain
   let series: Array<{ ts: number; v: number }> = raw;
   if (raw.length >= 2) {
     const vals = raw.map((p) => p.v);
     const min = Math.min(...vals);
     const max = Math.max(...vals);
     const span = max - min;
-
     series =
       span > 0
         ? raw.map((p) => ({ ts: p.ts, v: ((p.v - min) / span) * 100 }))
@@ -136,19 +132,23 @@ async function fetch5mSeries(
 }
 
 export async function GET(req: Request) {
+  const key = getKey();
+  const url = new URL(req.url);
+  const limit = Math.min(Number(url.searchParams.get("limit") ?? 25), 50);
+  const withSeries = url.searchParams.get("series") === "1";
+
+  if (!key) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Missing MASSIVE_API_KEY or POLYGON_API_KEY",
+        debug: { hasPolygon: Boolean(process.env.POLYGON_API_KEY), hasMassive: Boolean(process.env.MASSIVE_API_KEY) },
+      },
+      { status: 500 }
+    );
+  }
+
   try {
-    const key = getKey();
-    if (!key) {
-      return NextResponse.json(
-        { ok: false, error: "Missing MASSIVE_API_KEY or POLYGON_API_KEY" },
-        { status: 500 }
-      );
-    }
-
-    const url = new URL(req.url);
-    const limit = Math.min(Number(url.searchParams.get("limit") ?? 25), 50);
-    const withSeries = url.searchParams.get("series") === "1";
-
     const sp500 = await getSp500();
     const snapshot = await fetchSnapshots(key);
 
@@ -175,15 +175,11 @@ export async function GET(req: Request) {
       });
 
     rows.sort((a, b) => Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0));
-
     const top = rows.slice(0, limit);
 
     if (withSeries) {
       const enriched = await Promise.all(
-        top.map(async (r) => {
-          const series = await fetch5mSeries(key, r.symbol);
-          return { ...r, series };
-        })
+        top.map(async (r) => ({ ...r, series: await fetch5mSeries(key, r.symbol) }))
       );
 
       return NextResponse.json({
@@ -202,6 +198,17 @@ export async function GET(req: Request) {
       universe: "sp500",
     });
   } catch (err: any) {
-    return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
+    // IMPORTANT: Always return JSON even on Polygon 401/html responses
+    return NextResponse.json(
+      {
+        ok: false,
+        error: err?.message ?? "Unknown error",
+        debug:
+          process.env.NODE_ENV !== "production"
+            ? { nodeEnv: process.env.NODE_ENV }
+            : undefined,
+      },
+      { status: 500 }
+    );
   }
 }
