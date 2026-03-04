@@ -1,6 +1,9 @@
+// src/app/api/market/movers/route.ts
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+
+type Pt = { ts: number; v: number };
 
 type Row = {
   symbol: string;
@@ -9,7 +12,8 @@ type Row = {
   rangePct: number | null;
   dayVolTag: "Normal" | "High" | "Extreme";
   structuralRiskTag: "Green" | "Amber" | "Red";
-  series?: Array<{ ts: number; v: number }>; // normalized 0-100
+  series?: Pt[];
+  seriesMeta?: { kind: "real" | "fallback"; interval?: "5m"; normalized: boolean };
 };
 
 function getKey() {
@@ -62,21 +66,15 @@ async function fetchSnapshots(key: string) {
     `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?include_otc=false&apiKey=${key}`;
 
   const res = await fetch(url, { cache: "no-store" });
-
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`Polygon snapshot ${res.status}: ${body.slice(0, 200)}`);
   }
-
   return res.json();
 }
 
-// ---------- Series: aggs + fallback ----------
-
+// ---------- Series helpers ----------
 type AggResp = { results?: Array<{ t: number; c: number }> };
-
-// cache series 60s per symbol
-const seriesCache = new Map<string, { ts: number; series: Array<{ ts: number; v: number }> }>();
 
 function yyyyMmDd(d: Date) {
   const yyyy = d.getFullYear();
@@ -91,24 +89,26 @@ function addDays(d: Date, days: number) {
   return x;
 }
 
-function normalize0to100(points: Array<{ ts: number; v: number }>) {
+function normalize0to100(points: Pt[]): Pt[] {
   if (points.length < 2) return points;
   const vals = points.map((p) => p.v);
   const min = Math.min(...vals);
   const max = Math.max(...vals);
   const span = max - min;
-
   if (span <= 0) return points.map((p) => ({ ts: p.ts, v: 50 }));
   return points.map((p) => ({ ts: p.ts, v: ((p.v - min) / span) * 100 }));
 }
 
-async function fetch5mSeriesWide(key: string, symbol: string): Promise<Array<{ ts: number; v: number }>> {
-  const cacheKey = `${symbol}:5m:wide`;
-  const now = Date.now();
-  const cached = seriesCache.get(cacheKey);
-  if (cached && now - cached.ts < 60_000) return cached.series;
+// cache series 60s per symbol
+const seriesCache = new Map<string, { ts: number; series: Pt[]; kind: "real" | "fallback" }>();
 
-  // Wide window (last 7 days → today) so we don’t get empty on weekends/holidays/early-hours
+async function fetch5mSeriesReal(key: string, symbol: string): Promise<Pt[]> {
+  const now = Date.now();
+  const cacheKey = `${symbol}:5m:last7`;
+  const cached = seriesCache.get(cacheKey);
+  if (cached && now - cached.ts < 60_000 && cached.kind === "real") return cached.series;
+
+  // last 7 days window (captures last full session reliably)
   const today = new Date();
   const from = yyyyMmDd(addDays(today, -7));
   const to = yyyyMmDd(today);
@@ -118,27 +118,24 @@ async function fetch5mSeriesWide(key: string, symbol: string): Promise<Array<{ t
     `/range/5/minute/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${key}`;
 
   const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) {
-    seriesCache.set(cacheKey, { ts: now, series: [] });
-    return [];
-  }
+  if (!res.ok) return [];
 
   const data = (await res.json()) as AggResp;
-
-  // Use closes as the series signal
   const raw = (data.results ?? [])
     .filter((r) => typeof r.t === "number" && typeof r.c === "number")
     .map((r) => ({ ts: r.t, v: r.c }));
 
-  // Keep the last ~1 trading day worth of 5m bars (78 bars ~ 6.5 hours)
-  const trimmed = raw.length > 90 ? raw.slice(-90) : raw;
+  if (raw.length < 2) return [];
 
-  const series = normalize0to100(trimmed);
-  seriesCache.set(cacheKey, { ts: now, series });
-  return series;
+  // keep last ~90 points for clean sparkline
+  const trimmed = raw.length > 90 ? raw.slice(-90) : raw;
+  const norm = normalize0to100(trimmed);
+
+  seriesCache.set(cacheKey, { ts: now, series: norm, kind: "real" });
+  return norm;
 }
 
-function fallbackSeriesFromDay(day: any): Array<{ ts: number; v: number }> {
+function fallbackTapeFromDay(day: any): Pt[] {
   const now = Date.now();
 
   const o = typeof day?.o === "number" ? day.o : null;
@@ -146,47 +143,50 @@ function fallbackSeriesFromDay(day: any): Array<{ ts: number; v: number }> {
   const h = typeof day?.h === "number" ? day.h : null;
   const l = typeof day?.l === "number" ? day.l : null;
 
-  // If we can’t build anything meaningful, return a flat midline
-  if (o == null || c == null) {
-    return [
-      { ts: now - 60 * 60 * 1000, v: 50 },
-      { ts: now, v: 50 },
-    ];
+  const base = o ?? c ?? 100;
+  const low = l ?? base * 0.985;
+  const high = h ?? base * 1.015;
+  const close = c ?? base;
+
+  const anchors = [base, low, (low + high) / 2, high, (high + close) / 2, close];
+
+  const steps = 30;
+  const start = now - 6 * 60 * 60 * 1000;
+
+  const raw: Pt[] = [];
+  for (let i = 0; i < steps; i++) {
+    const ts = start + (i * (now - start)) / (steps - 1);
+    const a = (i / (steps - 1)) * (anchors.length - 1);
+    const idx = Math.floor(a);
+    const frac = a - idx;
+
+    const v0 = anchors[idx]!;
+    const v1 = anchors[Math.min(idx + 1, anchors.length - 1)]!;
+    const v = v0 + (v1 - v0) * frac;
+
+    raw.push({ ts, v });
   }
 
-  // Synthetic “tape-like” steps using OHLC (still normalized after)
-  const pts = [
-    { ts: now - 6 * 60 * 60 * 1000, v: o },
-    { ts: now - 4 * 60 * 60 * 1000, v: l ?? Math.min(o, c) },
-    { ts: now - 2 * 60 * 60 * 1000, v: h ?? Math.max(o, c) },
-    { ts: now - 1 * 60 * 60 * 1000, v: (o + c) / 2 },
-    { ts: now, v: c },
-  ];
-
-  return normalize0to100(pts);
+  return normalize0to100(raw);
 }
 
 export async function GET(req: Request) {
-  const key = getKey();
-  const url = new URL(req.url);
-  const limit = Math.min(Number(url.searchParams.get("limit") ?? 25), 50);
-  const withSeries = url.searchParams.get("series") === "1";
-
-  if (!key) {
-    return NextResponse.json(
-      { ok: false, error: "Missing MASSIVE_API_KEY or POLYGON_API_KEY" },
-      { status: 500 }
-    );
-  }
-
   try {
+    const key = getKey();
+    if (!key) {
+      return NextResponse.json({ ok: false, error: "Missing POLYGON_API_KEY" }, { status: 500 });
+    }
+
+    const url = new URL(req.url);
+    const limit = Math.min(Number(url.searchParams.get("limit") ?? 10), 50);
+    const withSeries = url.searchParams.get("series") === "1";
+
     const sp500 = await getSp500();
     const snapshot = await fetchSnapshots(key);
 
-    // Keep a map of day data for fallback series
     const dayBySymbol = new Map<string, any>();
 
-    const rows: Row[] = (snapshot.tickers ?? [])
+    const rowsBase: Row[] = (snapshot.tickers ?? [])
       .filter((t: any) => sp500.has(t.ticker))
       .map((t: any) => {
         const day = t.day ?? {};
@@ -210,29 +210,22 @@ export async function GET(req: Request) {
         };
       });
 
-    rows.sort((a, b) => Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0));
-    const top = rows.slice(0, limit);
+    rowsBase.sort((a, b) => Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0));
+    const top = rowsBase.slice(0, limit);
 
     if (!withSeries) {
-      return NextResponse.json({
-        ok: true,
-        rows: top,
-        source: "polygon",
-        universe: "sp500",
-      });
+      return NextResponse.json({ ok: true, rows: top, source: "polygon", universe: "sp500" });
     }
 
     const enriched = await Promise.all(
       top.map(async (r) => {
-        let series = await fetch5mSeriesWide(key, r.symbol);
-
-        // If Polygon aggs still returns empty, synthesize a series from snapshot OHLC
-        if (!series || series.length < 2) {
-          const day = dayBySymbol.get(r.symbol);
-          series = fallbackSeriesFromDay(day);
+        const real = await fetch5mSeriesReal(key, r.symbol);
+        if (real.length >= 2) {
+          return { ...r, series: real, seriesMeta: { kind: "real", interval: "5m", normalized: true } };
         }
-
-        return { ...r, series };
+        const day = dayBySymbol.get(r.symbol);
+        const fb = fallbackTapeFromDay(day);
+        return { ...r, series: fb, seriesMeta: { kind: "fallback", normalized: true } };
       })
     );
 
@@ -241,12 +234,8 @@ export async function GET(req: Request) {
       rows: enriched,
       source: "polygon",
       universe: "sp500",
-      series: { interval: "5m", normalized: true, fallback: "ohlc" },
     });
   } catch (err: any) {
-    return NextResponse.json(
-      { ok: false, error: err?.message ?? "Unknown error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: err?.message ?? "Unknown error" }, { status: 500 });
   }
 }
