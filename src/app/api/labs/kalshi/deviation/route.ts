@@ -13,15 +13,13 @@ import {
 } from "@/lib/kalshi/deviationEngine";
 
 export const runtime = "nodejs";
-export const maxDuration = 30; // Vercel max for hobby plan
+export const maxDuration = 30;
 
 const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
 
-// Cache for 60s
 let cache: { ts: number; data: any } | null = null;
 const CACHE_TTL_MS = 60_000;
 
-// ── Fetch with timeout ────────────────────────────────────────────────────────
 async function fetchSafe(url: string, ms = 6000): Promise<any | null> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
@@ -36,22 +34,16 @@ async function fetchSafe(url: string, ms = 6000): Promise<any | null> {
   }
 }
 
-// ── Hardcoded curated markets ─────────────────────────────────────────────────
-// These are the most liquid/interesting S&P markets on Kalshi.
-// We hardcode them to avoid the internal HTTP call and keep response fast.
-// Update these tickers as markets expire.
+// ── Curated markets ───────────────────────────────────────────────────────────
 function getCuratedMarkets() {
-  // Get today's date to build current ticker
   const now = new Date();
   const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
   const yy = String(now.getUTCFullYear()).slice(2);
   const mm = months[now.getUTCMonth()];
   const dd = String(now.getUTCDate() + (now.getUTCHours() >= 21 ? 1 : 0)).padStart(2, "0");
-
-  const dateStr = `${yy}${mm}${dd}`; // e.g. 26MAR06
+  const dateStr = `${yy}${mm}${dd}`;
 
   return [
-    // Daily range brackets (most liquid, near ATM)
     {
       id: `kalshi:KXINX-${dateStr}H1600-T7249.9999`,
       ticker: `KXINX-${dateStr}H1600-T7249.9999`,
@@ -82,7 +74,6 @@ function getCuratedMarkets() {
       url: `https://kalshi.com/markets/kxinx`,
       source: "kalshi" as const,
     },
-    // Yearly range (slower moving, good for EWMA signal)
     {
       id: "kalshi:KXINXY-26DEC31H1600-B7300",
       ticker: "KXINXY-26DEC31H1600-B7300",
@@ -136,40 +127,23 @@ function getCuratedMarkets() {
   ];
 }
 
-// ── Kalshi: get quote ─────────────────────────────────────────────────────────
+// ── Kalshi: get quote from market endpoint (more reliable than orderbook) ─────
 async function getKalshiQuote(ticker: string): Promise<MarketQuote> {
-  const data = await fetchSafe(`${KALSHI_BASE}/markets/${encodeURIComponent(ticker)}/orderbook`);
-  if (!data?.orderbook) return { yesBid: null, yesAsk: null };
+  const data = await fetchSafe(`${KALSHI_BASE}/markets/${encodeURIComponent(ticker)}`);
+  const m = data?.market ?? data;
+  if (!m) return { yesBid: null, yesAsk: null };
 
-  const yesBids: any[] = data.orderbook.yes_bids ?? [];
-  const noBids: any[] = data.orderbook.no_bids ?? [];
+  // Kalshi returns yes_bid / yes_ask directly in cents (0–100)
+  const yesBid = m.yes_bid != null ? Number(m.yes_bid) : null;
+  const yesAsk = m.yes_ask != null ? Number(m.yes_ask) : null;
 
-  const bestYesBid = yesBids.reduce((best: any, l: any) => {
-    const p = Number(l.price);
-    return p > (best?.price ?? -Infinity) ? { price: p, quantity: Number(l.quantity ?? 0) } : best;
-  }, null);
-
-  const bestNoBid = noBids.reduce((best: any, l: any) => {
-    const p = Number(l.price);
-    return p > (best?.price ?? -Infinity) ? { price: p, quantity: Number(l.quantity ?? 0) } : best;
-  }, null);
-
-  const yesBid = bestYesBid?.price ?? null;
-  const yesAsk = bestNoBid?.price != null ? 100 - bestNoBid.price : null;
-
-  return {
-    yesBid,
-    yesAsk,
-    yesBidQty: bestYesBid?.quantity ?? undefined,
-    noBidQty: bestNoBid?.quantity ?? undefined,
-  };
+  return { yesBid, yesAsk };
 }
 
 // ── Kalshi: get candles ───────────────────────────────────────────────────────
 async function getKalshiCandles(ticker: string, seriesTicker: string): Promise<Candle[]> {
   const period = "60";
 
-  // Try live candles
   const liveData = await fetchSafe(
     `${KALSHI_BASE}/series/${encodeURIComponent(seriesTicker)}/markets/${encodeURIComponent(ticker)}/candlesticks?period_interval=${period}`
   );
@@ -180,7 +154,6 @@ async function getKalshiCandles(ticker: string, seriesTicker: string): Promise<C
       .map((c: any) => ({ ts: Number(c.start_ts), close: Number(c.close) }));
   }
 
-  // Fallback: historical
   const endTs = Math.floor(Date.now() / 1000);
   const startTs = endTs - 7 * 24 * 60 * 60;
   const histData = await fetchSafe(
@@ -196,7 +169,7 @@ async function getKalshiCandles(ticker: string, seriesTicker: string): Promise<C
   return [];
 }
 
-// ── Score a single market ─────────────────────────────────────────────────────
+// ── Scored market type ────────────────────────────────────────────────────────
 export interface ScoredMarket {
   id: string;
   source: "kalshi" | "polymarket";
@@ -236,14 +209,12 @@ async function scoreMarket(m: ReturnType<typeof getCuratedMarkets>[number]): Pro
 // ── Handler ───────────────────────────────────────────────────────────────────
 export async function GET() {
   try {
-    // Serve cache if fresh
     if (cache && Date.now() - cache.ts < CACHE_TTL_MS) {
       return NextResponse.json({ ...cache.data, cached: true });
     }
 
     const markets = getCuratedMarkets();
 
-    // Score all concurrently — curated list is small so this is safe
     const scored = (
       await Promise.allSettled(markets.map(scoreMarket))
     )
