@@ -48,7 +48,8 @@ export function MoverChart({
         </div>
       </div>
 
-      <div className="h-[220px]">
+      {/* Mobile: shorter height to prevent bunched layout */}
+      <div className="h-[160px] sm:h-[220px]">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={data} margin={{ left: 4, right: 8, top: 8, bottom: 0 }}>
             <defs>
