@@ -1,3 +1,5 @@
+// /Users/delvinakins/capitalgrid/src/app/api/stripe/checkout/route.ts
+
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -43,6 +45,13 @@ function isValidRedirectUrl(u: string) {
   } catch {
     return false;
   }
+}
+
+// Idempotency: prevent accidental duplicate sessions/subscriptions on retries/double-clicks
+function makeCheckoutIdempotencyKey(userId: string, priceId: string) {
+  // bucket by minute so a genuine later attempt can create a new session
+  const minuteBucket = Math.floor(Date.now() / 60_000);
+  return `oc:checkout:${userId}:${priceId}:${minuteBucket}`;
 }
 
 type Body = {
@@ -143,37 +152,42 @@ export async function POST(req: Request) {
 
     const plan = body.plan ?? (priceId === monthly ? "pro_monthly" : "pro_annual");
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
+    const idempotencyKey = makeCheckoutIdempotencyKey(user.id, priceId);
 
-      // Stable linkage (best practice)
-      client_reference_id: user.id,
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: "subscription",
 
-      // Reuse existing Stripe customer when available (prevents “new customer every checkout”)
-      ...(prof?.stripe_customer_id
-        ? { customer: prof.stripe_customer_id }
-        : { customer_email: user.email }),
+        // Stable linkage (best practice)
+        client_reference_id: user.id,
 
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      allow_promotion_codes: true,
+        // Reuse existing Stripe customer when available (prevents “new customer every checkout”)
+        ...(prof?.stripe_customer_id
+          ? { customer: prof.stripe_customer_id }
+          : { customer_email: user.email }),
 
-      // IMPORTANT: write metadata onto the subscription itself too
-      subscription_data: {
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        allow_promotion_codes: true,
+
+        // IMPORTANT: write metadata onto the subscription itself too
+        subscription_data: {
+          metadata: {
+            user_id: user.id,
+            plan,
+          },
+        },
+
+        // Keep metadata on session as well (useful during transition/debug)
         metadata: {
           user_id: user.id,
+          supabase_user_id: user.id,
           plan,
         },
       },
-
-      // Keep metadata on session as well (useful during transition/debug)
-      metadata: {
-        user_id: user.id,
-        supabase_user_id: user.id,
-        plan,
-      },
-    });
+      { idempotencyKey }
+    );
 
     if (!session.url || typeof session.url !== "string") {
       return NextResponse.json(
