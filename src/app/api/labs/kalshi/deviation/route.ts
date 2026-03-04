@@ -1,5 +1,5 @@
 // src/app/api/labs/kalshi/deviation/route.ts
-// Runs the Oren Deviation Engine across all S&P prediction markets
+// Runs the Oren Deviation Engine across S&P prediction markets
 // Returns markets sorted by |edgeZ| descending
 
 import { NextResponse } from "next/server";
@@ -13,16 +13,16 @@ import {
 } from "@/lib/kalshi/deviationEngine";
 
 export const runtime = "nodejs";
+export const maxDuration = 30; // Vercel max for hobby plan
 
 const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
-const POLYMARKET_GAMMA = "https://gamma-api.polymarket.com";
-const POLYMARKET_CLOB = "https://clob.polymarket.com";
 
-// Cache the full board for 60 seconds
+// Cache for 60s
 let cache: { ts: number; data: any } | null = null;
 const CACHE_TTL_MS = 60_000;
 
-async function fetchSafe(url: string, ms = 8000): Promise<any | null> {
+// ── Fetch with timeout ────────────────────────────────────────────────────────
+async function fetchSafe(url: string, ms = 6000): Promise<any | null> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
@@ -36,7 +36,107 @@ async function fetchSafe(url: string, ms = 8000): Promise<any | null> {
   }
 }
 
-// ── Kalshi: get quote (mid/spread) ───────────────────────────────────────────
+// ── Hardcoded curated markets ─────────────────────────────────────────────────
+// These are the most liquid/interesting S&P markets on Kalshi.
+// We hardcode them to avoid the internal HTTP call and keep response fast.
+// Update these tickers as markets expire.
+function getCuratedMarkets() {
+  // Get today's date to build current ticker
+  const now = new Date();
+  const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+  const yy = String(now.getUTCFullYear()).slice(2);
+  const mm = months[now.getUTCMonth()];
+  const dd = String(now.getUTCDate() + (now.getUTCHours() >= 21 ? 1 : 0)).padStart(2, "0");
+
+  const dateStr = `${yy}${mm}${dd}`; // e.g. 26MAR06
+
+  return [
+    // Daily range brackets (most liquid, near ATM)
+    {
+      id: `kalshi:KXINX-${dateStr}H1600-T7249.9999`,
+      ticker: `KXINX-${dateStr}H1600-T7249.9999`,
+      seriesTicker: "KXINX",
+      title: `S&P 500 above 7250 today`,
+      category: "sp500_level",
+      closeTime: null,
+      url: `https://kalshi.com/markets/kxinx`,
+      source: "kalshi" as const,
+    },
+    {
+      id: `kalshi:KXINX-${dateStr}H1600-B7237`,
+      ticker: `KXINX-${dateStr}H1600-B7237`,
+      seriesTicker: "KXINX",
+      title: `S&P 500 between 7225–7250 today`,
+      category: "sp500_range",
+      closeTime: null,
+      url: `https://kalshi.com/markets/kxinx`,
+      source: "kalshi" as const,
+    },
+    {
+      id: `kalshi:KXINX-${dateStr}H1600-B7212`,
+      ticker: `KXINX-${dateStr}H1600-B7212`,
+      seriesTicker: "KXINX",
+      title: `S&P 500 between 7200–7225 today`,
+      category: "sp500_range",
+      closeTime: null,
+      url: `https://kalshi.com/markets/kxinx`,
+      source: "kalshi" as const,
+    },
+    // Yearly range (slower moving, good for EWMA signal)
+    {
+      id: "kalshi:KXINXY-26DEC31H1600-B7300",
+      ticker: "KXINXY-26DEC31H1600-B7300",
+      seriesTicker: "KXINXY",
+      title: "S&P 500 between 7200–7400 EOY 2026",
+      category: "sp500_range",
+      closeTime: "2026-12-31T21:00:00Z",
+      url: "https://kalshi.com/markets/kxinxy",
+      source: "kalshi" as const,
+    },
+    {
+      id: "kalshi:KXINXY-26DEC31H1600-B7500",
+      ticker: "KXINXY-26DEC31H1600-B7500",
+      seriesTicker: "KXINXY",
+      title: "S&P 500 between 7400–7600 EOY 2026",
+      category: "sp500_range",
+      closeTime: "2026-12-31T21:00:00Z",
+      url: "https://kalshi.com/markets/kxinxy",
+      source: "kalshi" as const,
+    },
+    {
+      id: "kalshi:KXINXY-26DEC31H1600-B7100",
+      ticker: "KXINXY-26DEC31H1600-B7100",
+      seriesTicker: "KXINXY",
+      title: "S&P 500 between 7000–7200 EOY 2026",
+      category: "sp500_range",
+      closeTime: "2026-12-31T21:00:00Z",
+      url: "https://kalshi.com/markets/kxinxy",
+      source: "kalshi" as const,
+    },
+    {
+      id: "kalshi:KXINXY-26DEC31H1600-T9000",
+      ticker: "KXINXY-26DEC31H1600-T9000",
+      seriesTicker: "KXINXY",
+      title: "S&P 500 above 9000 EOY 2026",
+      category: "sp500_level",
+      closeTime: "2026-12-31T21:00:00Z",
+      url: "https://kalshi.com/markets/kxinxy",
+      source: "kalshi" as const,
+    },
+    {
+      id: "kalshi:KXINXY-26DEC31H1600-T4000",
+      ticker: "KXINXY-26DEC31H1600-T4000",
+      seriesTicker: "KXINXY",
+      title: "S&P 500 below 4000 EOY 2026",
+      category: "sp500_level",
+      closeTime: "2026-12-31T21:00:00Z",
+      url: "https://kalshi.com/markets/kxinxy",
+      source: "kalshi" as const,
+    },
+  ];
+}
+
+// ── Kalshi: get quote ─────────────────────────────────────────────────────────
 async function getKalshiQuote(ticker: string): Promise<MarketQuote> {
   const data = await fetchSafe(`${KALSHI_BASE}/markets/${encodeURIComponent(ticker)}/orderbook`);
   if (!data?.orderbook) return { yesBid: null, yesAsk: null };
@@ -66,13 +166,12 @@ async function getKalshiQuote(ticker: string): Promise<MarketQuote> {
 }
 
 // ── Kalshi: get candles ───────────────────────────────────────────────────────
-async function getKalshiCandles(ticker: string, seriesTicker?: string): Promise<Candle[]> {
+async function getKalshiCandles(ticker: string, seriesTicker: string): Promise<Candle[]> {
   const period = "60";
-  const series = seriesTicker ?? ticker.split("-")[0];
 
-  // Try live candles first
+  // Try live candles
   const liveData = await fetchSafe(
-    `${KALSHI_BASE}/series/${encodeURIComponent(series)}/markets/${encodeURIComponent(ticker)}/candlesticks?period_interval=${period}`
+    `${KALSHI_BASE}/series/${encodeURIComponent(seriesTicker)}/markets/${encodeURIComponent(ticker)}/candlesticks?period_interval=${period}`
   );
 
   if (liveData?.candlesticks?.length) {
@@ -97,65 +196,7 @@ async function getKalshiCandles(ticker: string, seriesTicker?: string): Promise<
   return [];
 }
 
-// ── Polymarket: get quote ────────────────────────────────────────────────────
-async function getPolymarketQuote(conditionId: string): Promise<MarketQuote> {
-  // Gamma API has price data
-  const data = await fetchSafe(`${POLYMARKET_GAMMA}/markets/${conditionId}`);
-  if (!data) return { yesBid: null, yesAsk: null };
-
-  // Gamma returns outcomePrices as JSON array string e.g. '["0.47","0.53"]'
-  let outcomePrices: number[] = [];
-  try {
-    const raw = typeof data.outcomePrices === "string"
-      ? JSON.parse(data.outcomePrices)
-      : data.outcomePrices;
-    outcomePrices = (raw as string[]).map(Number);
-  } catch {
-    outcomePrices = [];
-  }
-
-  // YES price is first outcome (cents equivalent: multiply by 100)
-  const yesPrice = outcomePrices[0] != null ? outcomePrices[0] * 100 : null;
-
-  // Try CLOB orderbook for spread
-  let yesBid: number | null = yesPrice;
-  let yesAsk: number | null = yesPrice;
-
-  const clobData = await fetchSafe(`${POLYMARKET_CLOB}/book?token_id=${conditionId}`);
-  if (clobData) {
-    const bids: any[] = clobData.bids ?? [];
-    const asks: any[] = clobData.asks ?? [];
-    if (bids.length) {
-      yesBid = Math.max(...bids.map((b: any) => Number(b.price) * 100));
-    }
-    if (asks.length) {
-      yesAsk = Math.min(...asks.map((a: any) => Number(a.price) * 100));
-    }
-  }
-
-  return { yesBid, yesAsk };
-}
-
-// ── Polymarket: get candles via time-series ──────────────────────────────────
-async function getPolymarketCandles(conditionId: string): Promise<Candle[]> {
-  // Gamma API price history
-  const data = await fetchSafe(
-    `${POLYMARKET_GAMMA}/prices-history?market=${conditionId}&interval=1h&fidelity=60`
-  );
-
-  const history: any[] = data?.history ?? data?.prices ?? [];
-  if (!history.length) return [];
-
-  return history
-    .slice(-120)
-    .map((p: any) => ({
-      ts: Number(p.t ?? p.timestamp ?? 0),
-      close: Number(p.p ?? p.price ?? 0) * 100, // Polymarket prices are 0–1, convert to cents
-    }))
-    .filter((c) => c.ts > 0 && c.close >= 0 && c.close <= 100);
-}
-
-// ── Scored market type ────────────────────────────────────────────────────────
+// ── Score a single market ─────────────────────────────────────────────────────
 export interface ScoredMarket {
   id: string;
   source: "kalshi" | "polymarket";
@@ -169,8 +210,7 @@ export interface ScoredMarket {
   sparkline: Array<{ ts: number; v: number }>;
 }
 
-// ── Score a single Kalshi market ─────────────────────────────────────────────
-async function scoreKalshiMarket(m: any): Promise<ScoredMarket> {
+async function scoreMarket(m: ReturnType<typeof getCuratedMarkets>[number]): Promise<ScoredMarket> {
   const [quote, candles] = await Promise.all([
     getKalshiQuote(m.ticker),
     getKalshiCandles(m.ticker, m.seriesTicker),
@@ -181,7 +221,7 @@ async function scoreKalshiMarket(m: any): Promise<ScoredMarket> {
 
   return {
     id: m.id,
-    source: "kalshi",
+    source: m.source,
     title: m.title,
     ticker: m.ticker,
     category: m.category,
@@ -193,63 +233,23 @@ async function scoreKalshiMarket(m: any): Promise<ScoredMarket> {
   };
 }
 
-// ── Score a single Polymarket market ─────────────────────────────────────────
-async function scorePolymarketMarket(m: any): Promise<ScoredMarket> {
-  const [quote, candles] = await Promise.all([
-    getPolymarketQuote(m.ticker),
-    getPolymarketCandles(m.ticker),
-  ]);
-
-  const result = runDeviationEngine(candles, quote);
-  const sparkline = normalizeSparkline(candles);
-
-  return {
-    id: m.id,
-    source: "polymarket",
-    title: m.title,
-    ticker: m.ticker,
-    category: m.category,
-    closeTime: m.closeTime,
-    url: m.url,
-    quote,
-    result,
-    sparkline,
-  };
-}
-
-// ── Handler ──────────────────────────────────────────────────────────────────
-export async function GET(req: Request) {
+// ── Handler ───────────────────────────────────────────────────────────────────
+export async function GET() {
   try {
     // Serve cache if fresh
     if (cache && Date.now() - cache.ts < CACHE_TTL_MS) {
       return NextResponse.json({ ...cache.data, cached: true });
     }
 
-    // 1. Fetch market list
-    const marketsRes = await fetchSafe(
-      `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/api/labs/kalshi/markets`
-    );
+    const markets = getCuratedMarkets();
 
-    const markets: any[] = marketsRes?.markets ?? [];
-
-    if (!markets.length) {
-      return NextResponse.json({ ok: false, error: "No markets found" }, { status: 502 });
-    }
-
-    // 2. Score all markets concurrently (cap at 15 to avoid rate limits)
-    const capped = markets.slice(0, 15);
-
+    // Score all concurrently — curated list is small so this is safe
     const scored = (
-      await Promise.allSettled(
-        capped.map((m) =>
-          m.source === "kalshi" ? scoreKalshiMarket(m) : scorePolymarketMarket(m)
-        )
-      )
+      await Promise.allSettled(markets.map(scoreMarket))
     )
       .filter((r): r is PromiseFulfilledResult<ScoredMarket> => r.status === "fulfilled")
       .map((r) => r.value);
 
-    // 3. Sort by |edgeZ| descending
     const sorted = sortByEdge(scored);
 
     const response = {
