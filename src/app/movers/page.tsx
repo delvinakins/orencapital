@@ -1,4 +1,4 @@
-// src/app/movers/page.tsx
+import { headers } from "next/headers";
 import { MoverChart, type MoverPt } from "@/components/charts/MoverChart";
 
 type Row = {
@@ -11,12 +11,7 @@ type Row = {
   series?: MoverPt[];
 };
 
-type ApiResp = {
-  ok: boolean;
-  rows: Row[];
-  universe?: string;
-  source?: string;
-};
+type ApiResp = { ok: boolean; rows: Row[] };
 
 function pct(x: number | null) {
   if (x == null || !Number.isFinite(x)) return "—";
@@ -29,7 +24,6 @@ function price(x: number | null) {
 }
 
 function badgeTone(tag: string) {
-  // no colors specified (your system preference), so just vary opacity/weight
   switch (tag) {
     case "Extreme":
     case "Red":
@@ -42,13 +36,21 @@ function badgeTone(tag: string) {
   }
 }
 
-export default async function MoversPage() {
-  const res = await fetch(
-    `${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/market/movers?limit=25&series=1`,
-    { cache: "no-store" }
-  );
-  const data = (await res.json()) as ApiResp;
+function getBaseUrlFromHeaders() {
+  const h = headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  if (!host) return "https://orencapital.com"; // fallback
+  return `${proto}://${host}`;
+}
 
+export default async function MoversPage() {
+  const baseUrl = getBaseUrlFromHeaders();
+  const res = await fetch(`${baseUrl}/api/market/movers?limit=25&series=1`, {
+    cache: "no-store",
+  });
+
+  const data = (await res.json()) as ApiResp;
   const rows = (data.ok ? data.rows : []).slice(0, 25);
 
   return (
@@ -60,18 +62,19 @@ export default async function MoversPage() {
         </p>
       </div>
 
-      {/* MOBILE: cards (fixes bunched columns) */}
+      {/* MOBILE: cards */}
       <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:hidden">
         {rows.map((r) => (
           <div
             key={r.symbol}
-            className="rounded-2xl border border-white/10 bg-black/30 p-4"
+            className="rounded-2xl border border-white/10 bg-black/30 p-3 sm:p-4"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold text-white">
                   {r.symbol}
                 </div>
+
                 <div className="mt-1 flex flex-wrap gap-2">
                   <span
                     className={`rounded-full border px-2 py-0.5 text-[11px] ${badgeTone(
@@ -114,10 +117,12 @@ export default async function MoversPage() {
             </div>
 
             {r.series && r.series.length >= 2 ? (
-              <div className="mt-3">
+              <div className="mt-2">
                 <MoverChart data={r.series} yDomain={[0, 100]} label="Tape" />
               </div>
-            ) : null}
+            ) : (
+              <div className="mt-2 text-xs text-white/40">No series</div>
+            )}
           </div>
         ))}
       </div>

@@ -9,8 +9,7 @@ type Row = {
   rangePct: number | null;
   dayVolTag: "Normal" | "High" | "Extreme";
   structuralRiskTag: "Green" | "Amber" | "Red";
-  // OPTIONAL spark series for charting (0-100 normalized or price-based)
-  series?: Array<{ ts: number; v: number }>;
+  series?: Array<{ ts: number; v: number }>; // normalized 0-100
 };
 
 function getKey() {
@@ -24,7 +23,10 @@ function pctTag(range: number | null): Row["dayVolTag"] {
   return "Normal";
 }
 
-function structuralTag(change: number | null, range: number | null): Row["structuralRiskTag"] {
+function structuralTag(
+  change: number | null,
+  range: number | null
+): Row["structuralRiskTag"] {
   const c = Math.abs(change ?? 0);
   const r = range ?? 0;
   if (c >= 0.08 || r >= 0.14) return "Red";
@@ -37,12 +39,13 @@ let spCache: { ts: number; set: Set<string> } | null = null;
 
 async function getSp500(): Promise<Set<string>> {
   const now = Date.now();
-  if (spCache && now - spCache.ts < 86400000) return spCache.set;
+  if (spCache && now - spCache.ts < 86_400_000) return spCache.set;
 
   const res = await fetch(
     "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv",
     { cache: "no-store" }
   );
+  if (!res.ok) throw new Error(`SP500 list fetch failed (${res.status})`);
 
   const text = await res.text();
   const lines = text.split("\n").slice(1);
@@ -58,9 +61,7 @@ async function getSp500(): Promise<Set<string>> {
 }
 
 async function fetchSnapshots(key: string) {
-  const url =
-    `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?include_otc=false&apiKey=${key}`;
-
+  const url = `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?include_otc=false&apiKey=${key}`;
   const res = await fetch(url, { cache: "no-store" });
 
   if (!res.ok) {
@@ -71,37 +72,41 @@ async function fetchSnapshots(key: string) {
   return res.json();
 }
 
-// ---- Intraday series (5m candles) for charting ----
-
+// ---- Intraday series (5m candles) ----
 type AggResp = { results?: Array<{ t: number; c: number }> };
 
-// cache series 60s per symbol+window
-const seriesCache = new Map<string, { ts: number; series: Array<{ ts: number; v: number }> }>();
+const seriesCache = new Map<
+  string,
+  { ts: number; series: Array<{ ts: number; v: number }> }
+>();
 
-function startOfDayET_ms() {
-  // Approx: use local date boundaries (good enough for sparkline). We can refine later.
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
+function yyyyMmDd(d: Date) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
-async function fetch5mSeries(key: string, symbol: string): Promise<Array<{ ts: number; v: number }>> {
+async function fetch5mSeries(
+  key: string,
+  symbol: string
+): Promise<Array<{ ts: number; v: number }>> {
   const cacheKey = `${symbol}:5m:today`;
   const now = Date.now();
   const cached = seriesCache.get(cacheKey);
   if (cached && now - cached.ts < 60_000) return cached.series;
 
-  const from = startOfDayET_ms();
-  const to = now;
+  // Use YYYY-MM-DD ranges (most reliable with Polygon aggs)
+  const today = new Date();
+  const from = yyyyMmDd(today);
+  const to = yyyyMmDd(today);
 
-  // 5-minute bars today
   const url =
     `https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(symbol)}` +
     `/range/5/minute/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${key}`;
 
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
-    // Don’t fail the whole endpoint if one ticker series fails
     seriesCache.set(cacheKey, { ts: now, series: [] });
     return [];
   }
@@ -112,8 +117,7 @@ async function fetch5mSeries(key: string, symbol: string): Promise<Array<{ ts: n
     .filter((r) => typeof r.t === "number" && typeof r.c === "number")
     .map((r) => ({ ts: r.t, v: r.c }));
 
-  // Normalize to 0-100 so all charts share the same yDomain and look consistent
-  // (Kalshi vibe). If you prefer price, remove this normalization and set yDomain auto.
+  // Normalize to 0-100 for consistent chart yDomain
   let series: Array<{ ts: number; v: number }> = raw;
   if (raw.length >= 2) {
     const vals = raw.map((p) => p.v);
@@ -152,7 +156,6 @@ export async function GET(req: Request) {
       .filter((t: any) => sp500.has(t.ticker))
       .map((t: any) => {
         const day = t.day ?? {};
-
         const open = day.o;
         const close = day.c;
         const high = day.h;
