@@ -1,4 +1,4 @@
-// components/charts/MoverChart.tsx
+// src/components/charts/MoverChart.tsx
 "use client";
 
 import * as React from "react";
@@ -12,16 +12,27 @@ import {
   CartesianGrid,
 } from "recharts";
 
-type Pt = { ts: number; v: number }; // ts in ms, v as percent (0-100) or index
+export type MoverPt = { ts: number; v: number };
+
+// Minimal tooltip typing that works across Recharts versions
+type TooltipPayloadItem = { payload?: unknown };
+type TooltipContentProps = {
+  active?: boolean;
+  payload?: TooltipPayloadItem[];
+};
 
 function fmtTime(ts: number) {
   const d = new Date(ts);
-  return d.toLocaleString(undefined, { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function fmtNum(v: number) {
-  // If you pass 0-100 probabilities, keep as percent-like.
-  return v % 1 === 0 ? String(v) : v.toFixed(2);
+  return Number.isInteger(v) ? String(v) : v.toFixed(2);
 }
 
 export function MoverChart({
@@ -29,18 +40,19 @@ export function MoverChart({
   yDomain,
   label = "Implied",
 }: {
-  data: Pt[];
+  data: MoverPt[];
   yDomain?: [number, number];
   label?: string;
 }) {
-  // Use a stable id so multiple charts don’t collide gradients
   const gid = React.useId().replaceAll(":", "");
 
   return (
     <div className="w-full rounded-2xl border border-white/10 bg-black/20 p-3">
       <div className="mb-2 flex items-center justify-between">
         <div className="text-sm text-white/80">{label}</div>
-        <div className="text-xs text-white/50">{data.length ? fmtTime(data[data.length - 1].ts) : ""}</div>
+        <div className="text-xs text-white/50">
+          {data.length ? fmtTime(data[data.length - 1].ts) : ""}
+        </div>
       </div>
 
       <div className="h-[220px]">
@@ -59,7 +71,12 @@ export function MoverChart({
               dataKey="ts"
               type="number"
               domain={["dataMin", "dataMax"]}
-              tickFormatter={(t) => new Date(t).toLocaleDateString(undefined, { month: "short", day: "2-digit" })}
+              tickFormatter={(t: number) =>
+                new Date(t).toLocaleDateString(undefined, {
+                  month: "short",
+                  day: "2-digit",
+                })
+              }
               tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 11 }}
               axisLine={false}
               tickLine={false}
@@ -76,9 +93,13 @@ export function MoverChart({
 
             <Tooltip
               cursor={{ opacity: 0.15 }}
-              content={({ active, payload }) => {
+              content={({ active, payload }: TooltipContentProps) => {
                 if (!active || !payload?.length) return null;
-                const p = payload[0].payload as Pt;
+
+                const first = payload[0];
+                const p = first?.payload as MoverPt | undefined;
+                if (!p || typeof p.ts !== "number" || typeof p.v !== "number") return null;
+
                 return (
                   <div className="rounded-xl border border-white/10 bg-black/80 px-3 py-2 text-xs text-white">
                     <div className="text-white/70">{fmtTime(p.ts)}</div>
@@ -91,7 +112,6 @@ export function MoverChart({
               }}
             />
 
-            {/* `type="stepAfter"` gives the Kalshi-like discrete-tick feel */}
             <Area
               type="stepAfter"
               dataKey="v"
