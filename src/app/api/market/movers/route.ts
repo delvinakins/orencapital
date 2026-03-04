@@ -9,7 +9,7 @@ type Row = {
   rangePct: number | null;
   dayVolTag: "Normal" | "High" | "Extreme";
   structuralRiskTag: "Green" | "Amber" | "Red";
-  series?: Array<{ ts: number; v: number }>;
+  series?: Array<{ ts: number; v: number }>; // normalized 0-100
 };
 
 function getKey() {
@@ -42,11 +42,7 @@ async function getSp500(): Promise<Set<string>> {
     "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv",
     { cache: "no-store" }
   );
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`SP500 list fetch failed (${res.status}) ${text.slice(0, 120)}`);
-  }
+  if (!res.ok) throw new Error(`SP500 list fetch failed (${res.status})`);
 
   const text = await res.text();
   const lines = text.split("\n").slice(1);
@@ -69,16 +65,17 @@ async function fetchSnapshots(key: string) {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    // Always throw with JSON-safe info
     throw new Error(`Polygon snapshot ${res.status}: ${body.slice(0, 200)}`);
   }
 
   return res.json();
 }
 
-// ---- Intraday series (5m candles) ----
+// ---------- Series: aggs + fallback ----------
+
 type AggResp = { results?: Array<{ t: number; c: number }> };
 
+// cache series 60s per symbol
 const seriesCache = new Map<string, { ts: number; series: Array<{ ts: number; v: number }> }>();
 
 function yyyyMmDd(d: Date) {
@@ -88,14 +85,32 @@ function yyyyMmDd(d: Date) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-async function fetch5mSeries(key: string, symbol: string) {
-  const cacheKey = `${symbol}:5m:today`;
+function addDays(d: Date, days: number) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
+}
+
+function normalize0to100(points: Array<{ ts: number; v: number }>) {
+  if (points.length < 2) return points;
+  const vals = points.map((p) => p.v);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const span = max - min;
+
+  if (span <= 0) return points.map((p) => ({ ts: p.ts, v: 50 }));
+  return points.map((p) => ({ ts: p.ts, v: ((p.v - min) / span) * 100 }));
+}
+
+async function fetch5mSeriesWide(key: string, symbol: string): Promise<Array<{ ts: number; v: number }>> {
+  const cacheKey = `${symbol}:5m:wide`;
   const now = Date.now();
   const cached = seriesCache.get(cacheKey);
   if (cached && now - cached.ts < 60_000) return cached.series;
 
+  // Wide window (last 7 days → today) so we don’t get empty on weekends/holidays/early-hours
   const today = new Date();
-  const from = yyyyMmDd(today);
+  const from = yyyyMmDd(addDays(today, -7));
   const to = yyyyMmDd(today);
 
   const url =
@@ -104,31 +119,51 @@ async function fetch5mSeries(key: string, symbol: string) {
 
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    // Don’t kill whole response on series failure
     seriesCache.set(cacheKey, { ts: now, series: [] });
     return [];
   }
 
   const data = (await res.json()) as AggResp;
+
+  // Use closes as the series signal
   const raw = (data.results ?? [])
     .filter((r) => typeof r.t === "number" && typeof r.c === "number")
     .map((r) => ({ ts: r.t, v: r.c }));
 
-  let series: Array<{ ts: number; v: number }> = raw;
-  if (raw.length >= 2) {
-    const vals = raw.map((p) => p.v);
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    const span = max - min;
-    series =
-      span > 0
-        ? raw.map((p) => ({ ts: p.ts, v: ((p.v - min) / span) * 100 }))
-        : raw.map((p) => ({ ts: p.ts, v: 50 }));
-  }
+  // Keep the last ~1 trading day worth of 5m bars (78 bars ~ 6.5 hours)
+  const trimmed = raw.length > 90 ? raw.slice(-90) : raw;
 
+  const series = normalize0to100(trimmed);
   seriesCache.set(cacheKey, { ts: now, series });
   return series;
+}
+
+function fallbackSeriesFromDay(day: any): Array<{ ts: number; v: number }> {
+  const now = Date.now();
+
+  const o = typeof day?.o === "number" ? day.o : null;
+  const c = typeof day?.c === "number" ? day.c : null;
+  const h = typeof day?.h === "number" ? day.h : null;
+  const l = typeof day?.l === "number" ? day.l : null;
+
+  // If we can’t build anything meaningful, return a flat midline
+  if (o == null || c == null) {
+    return [
+      { ts: now - 60 * 60 * 1000, v: 50 },
+      { ts: now, v: 50 },
+    ];
+  }
+
+  // Synthetic “tape-like” steps using OHLC (still normalized after)
+  const pts = [
+    { ts: now - 6 * 60 * 60 * 1000, v: o },
+    { ts: now - 4 * 60 * 60 * 1000, v: l ?? Math.min(o, c) },
+    { ts: now - 2 * 60 * 60 * 1000, v: h ?? Math.max(o, c) },
+    { ts: now - 1 * 60 * 60 * 1000, v: (o + c) / 2 },
+    { ts: now, v: c },
+  ];
+
+  return normalize0to100(pts);
 }
 
 export async function GET(req: Request) {
@@ -139,11 +174,7 @@ export async function GET(req: Request) {
 
   if (!key) {
     return NextResponse.json(
-      {
-        ok: false,
-        error: "Missing MASSIVE_API_KEY or POLYGON_API_KEY",
-        debug: { hasPolygon: Boolean(process.env.POLYGON_API_KEY), hasMassive: Boolean(process.env.MASSIVE_API_KEY) },
-      },
+      { ok: false, error: "Missing MASSIVE_API_KEY or POLYGON_API_KEY" },
       { status: 500 }
     );
   }
@@ -152,10 +183,15 @@ export async function GET(req: Request) {
     const sp500 = await getSp500();
     const snapshot = await fetchSnapshots(key);
 
+    // Keep a map of day data for fallback series
+    const dayBySymbol = new Map<string, any>();
+
     const rows: Row[] = (snapshot.tickers ?? [])
       .filter((t: any) => sp500.has(t.ticker))
       .map((t: any) => {
         const day = t.day ?? {};
+        dayBySymbol.set(t.ticker, day);
+
         const open = day.o;
         const close = day.c;
         const high = day.h;
@@ -177,37 +213,39 @@ export async function GET(req: Request) {
     rows.sort((a, b) => Math.abs(b.changePct ?? 0) - Math.abs(a.changePct ?? 0));
     const top = rows.slice(0, limit);
 
-    if (withSeries) {
-      const enriched = await Promise.all(
-        top.map(async (r) => ({ ...r, series: await fetch5mSeries(key, r.symbol) }))
-      );
-
+    if (!withSeries) {
       return NextResponse.json({
         ok: true,
-        rows: enriched,
+        rows: top,
         source: "polygon",
         universe: "sp500",
-        series: { interval: "5m", normalized: true },
       });
     }
 
+    const enriched = await Promise.all(
+      top.map(async (r) => {
+        let series = await fetch5mSeriesWide(key, r.symbol);
+
+        // If Polygon aggs still returns empty, synthesize a series from snapshot OHLC
+        if (!series || series.length < 2) {
+          const day = dayBySymbol.get(r.symbol);
+          series = fallbackSeriesFromDay(day);
+        }
+
+        return { ...r, series };
+      })
+    );
+
     return NextResponse.json({
       ok: true,
-      rows: top,
+      rows: enriched,
       source: "polygon",
       universe: "sp500",
+      series: { interval: "5m", normalized: true, fallback: "ohlc" },
     });
   } catch (err: any) {
-    // IMPORTANT: Always return JSON even on Polygon 401/html responses
     return NextResponse.json(
-      {
-        ok: false,
-        error: err?.message ?? "Unknown error",
-        debug:
-          process.env.NODE_ENV !== "production"
-            ? { nodeEnv: process.env.NODE_ENV }
-            : undefined,
-      },
+      { ok: false, error: err?.message ?? "Unknown error" },
       { status: 500 }
     );
   }
