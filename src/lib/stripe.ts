@@ -1,10 +1,11 @@
+// src/lib/stripe.ts
 import Stripe from "stripe";
 
-if (!process.env.STRIPE_SECRET_KEY) {
-  throw new Error("Missing STRIPE_SECRET_KEY environment variable.");
-}
+const apiVersion: Stripe.LatestApiVersion = "2026-02-25.clover";
+// If your installed stripe package expects a different version, set it to that exact value.
+// (The point is: keep the type AND the value aligned.)
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2026-01-28.clover",
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion,
   typescript: true,
 });
