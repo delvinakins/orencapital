@@ -14,13 +14,6 @@ import {
 
 export type MoverPt = { ts: number; v: number };
 
-// Minimal tooltip typing that works across Recharts versions
-type TooltipPayloadItem = { payload?: unknown };
-type TooltipContentProps = {
-  active?: boolean;
-  payload?: TooltipPayloadItem[];
-};
-
 function fmtTime(ts: number) {
   const d = new Date(ts);
   return d.toLocaleString(undefined, {
@@ -93,11 +86,13 @@ export function MoverChart({
 
             <Tooltip
               cursor={{ opacity: 0.15 }}
-              content={({ active, payload }: TooltipContentProps) => {
+              // Type boundary: Recharts types differ across versions; accept their props and validate runtime.
+              content={(props: any) => {
+                const active: boolean | undefined = props?.active;
+                const payload: readonly any[] | undefined = props?.payload;
                 if (!active || !payload?.length) return null;
 
-                const first = payload[0];
-                const p = first?.payload as MoverPt | undefined;
+                const p = payload[0]?.payload as MoverPt | undefined;
                 if (!p || typeof p.ts !== "number" || typeof p.v !== "number") return null;
 
                 return (
