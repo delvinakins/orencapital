@@ -10,7 +10,7 @@ type Row = {
   rangePct: number | null;
   dayVolTag: "Normal" | "High" | "Extreme";
   structuralRiskTag: "Green" | "Amber" | "Red";
-  series: MoverPt[]; // always present so sparklines always render
+  series: MoverPt[];
 };
 
 function getKey() {
@@ -67,30 +67,41 @@ async function fetchSnapshots(key: string) {
   return res.json();
 }
 
-function pct(x: number | null) {
+function fmtPct(x: number | null) {
   if (x == null || !Number.isFinite(x)) return "—";
   return `${(x * 100).toFixed(2)}%`;
 }
 
-function price(x: number | null) {
+function fmtPrice(x: number | null) {
   if (x == null || !Number.isFinite(x)) return "—";
   return x.toFixed(2);
 }
 
-function badgeTone(tag: string) {
+function changeMeta(changePct: number | null) {
+  if (changePct == null || !Number.isFinite(changePct) || changePct === 0) {
+    return { arrow: "", cls: "text-white/75" };
+  }
+  if (changePct > 0) return { arrow: "▲", cls: "text-emerald-300" };
+  return { arrow: "▼", cls: "text-rose-300" };
+}
+
+function tagPill(tag: Row["dayVolTag"] | Row["structuralRiskTag"]) {
+  // subtle border + glow background (Kalshi-ish)
   switch (tag) {
     case "Extreme":
     case "Red":
-      return "border-white/20 bg-white/10 text-white";
+      return "border-rose-400/35 bg-rose-500/10 text-rose-200";
     case "High":
     case "Amber":
-      return "border-white/15 bg-white/5 text-white/90";
+      return "border-amber-400/35 bg-amber-500/10 text-amber-200";
+    case "Normal":
+    case "Green":
     default:
-      return "border-white/10 bg-transparent text-white/70";
+      return "border-emerald-400/30 bg-emerald-500/10 text-emerald-200";
   }
 }
 
-// 30-point normalized fallback tape so it looks like a real tape (not cliffs)
+// 30-point normalized fallback tape (so it looks like real tape)
 function fallbackTape(day: any): MoverPt[] {
   const now = Date.now();
 
@@ -192,44 +203,61 @@ export default async function MoversPage() {
 
       {/* MOBILE: cards */}
       <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:hidden">
-        {rows.map((r) => (
-          <div key={r.symbol} className="rounded-2xl border border-white/10 bg-black/30 p-3 sm:p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-white">{r.symbol}</div>
+        {rows.map((r) => {
+          const meta = changeMeta(r.changePct);
+          return (
+            <div
+              key={r.symbol}
+              className="rounded-2xl border border-white/10 bg-black/30 p-3 sm:p-4"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-white">{r.symbol}</div>
 
-                <div className="mt-1 flex flex-wrap gap-2">
-                  <span className={`rounded-full border px-2 py-0.5 text-[11px] ${badgeTone(r.dayVolTag)}`}>
-                    Daily Vol: {r.dayVolTag}
-                  </span>
-                  <span className={`rounded-full border px-2 py-0.5 text-[11px] ${badgeTone(r.structuralRiskTag)}`}>
-                    Structural: {r.structuralRiskTag}
-                  </span>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-[11px] ${tagPill(
+                        r.dayVolTag
+                      )}`}
+                    >
+                      Daily Vol: {r.dayVolTag}
+                    </span>
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-[11px] ${tagPill(
+                        r.structuralRiskTag
+                      )}`}
+                    >
+                      Structural: {r.structuralRiskTag}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="shrink-0 text-right">
+                  <div className="text-xs text-white/50">Price</div>
+                  <div className="text-sm font-medium text-white">{fmtPrice(r.price)}</div>
                 </div>
               </div>
 
-              <div className="shrink-0 text-right">
-                <div className="text-xs text-white/50">Price</div>
-                <div className="text-sm font-medium text-white">{price(r.price)}</div>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="text-[11px] text-white/50">Change</div>
+                  <div className={`mt-1 text-sm font-medium ${meta.cls}`}>
+                    {meta.arrow ? <span className="mr-1">{meta.arrow}</span> : null}
+                    {fmtPct(r.changePct)}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                  <div className="text-[11px] text-white/50">Range</div>
+                  <div className="mt-1 text-sm font-medium text-white/80">{fmtPct(r.rangePct)}</div>
+                </div>
               </div>
-            </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                <div className="text-[11px] text-white/50">Change</div>
-                <div className="mt-1 text-sm font-medium text-white">{pct(r.changePct)}</div>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                <div className="text-[11px] text-white/50">Range</div>
-                <div className="mt-1 text-sm font-medium text-white">{pct(r.rangePct)}</div>
+              <div className="mt-2">
+                <MoverChart data={r.series} label="Tape" height={160} />
               </div>
             </div>
-
-            <div className="mt-2">
-              <MoverChart data={r.series} label="Tape" height={160} />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* DESKTOP: table */}
@@ -249,29 +277,39 @@ export default async function MoversPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r.symbol} className="border-b border-white/5">
-                    <td className="px-4 py-3 text-sm font-medium text-white">{r.symbol}</td>
-                    <td className="px-4 py-3 text-sm text-white/80">{price(r.price)}</td>
-                    <td className="px-4 py-3 text-sm text-white/80">{pct(r.changePct)}</td>
-                    <td className="px-4 py-3 text-sm text-white/80">{pct(r.rangePct)}</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] ${badgeTone(r.dayVolTag)}`}>
-                        {r.dayVolTag}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] ${badgeTone(r.structuralRiskTag)}`}>
-                        {r.structuralRiskTag}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="w-[180px]">
-                        <MoverChart data={r.series} height={44} />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((r) => {
+                  const meta = changeMeta(r.changePct);
+                  return (
+                    <tr key={r.symbol} className="border-b border-white/5">
+                      <td className="px-4 py-3 text-sm font-medium text-white">{r.symbol}</td>
+                      <td className="px-4 py-3 text-sm text-white/80">{fmtPrice(r.price)}</td>
+                      <td className={`px-4 py-3 text-sm font-medium ${meta.cls}`}>
+                        {meta.arrow ? <span className="mr-1">{meta.arrow}</span> : null}
+                        {fmtPct(r.changePct)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-white/80">{fmtPct(r.rangePct)}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] ${tagPill(r.dayVolTag)}`}>
+                          {r.dayVolTag}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] ${tagPill(
+                            r.structuralRiskTag
+                          )}`}
+                        >
+                          {r.structuralRiskTag}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="w-[180px]">
+                          <MoverChart data={r.series} height={44} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
 
                 {!userError && rows.length === 0 ? (
                   <tr>
