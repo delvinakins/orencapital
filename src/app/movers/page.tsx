@@ -1,3 +1,4 @@
+// src/app/movers/page.tsx
 import { headers } from "next/headers";
 import { MoverChart, type MoverPt } from "@/components/charts/MoverChart";
 
@@ -36,16 +37,17 @@ function badgeTone(tag: string) {
   }
 }
 
-function getBaseUrlFromHeaders() {
-  const h = headers();
+async function getBaseUrlFromHeaders() {
+  const h = await headers();
   const host = h.get("x-forwarded-host") ?? h.get("host");
   const proto = h.get("x-forwarded-proto") ?? "https";
-  if (!host) return "https://orencapital.com"; // fallback
+  if (!host) return "https://orencapital.com";
   return `${proto}://${host}`;
 }
 
 export default async function MoversPage() {
-  const baseUrl = getBaseUrlFromHeaders();
+  const baseUrl = await getBaseUrlFromHeaders();
+
   const res = await fetch(`${baseUrl}/api/market/movers?limit=25&series=1`, {
     cache: "no-store",
   });
