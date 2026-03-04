@@ -2,8 +2,8 @@
 import NbaClient from "./nba-client";
 
 export const metadata = {
-  title: "Labs • NBA Heat Map — Oren Capital",
-  description: "Live Deviation Heat Map for NBA games.",
+  title: "Labs • NBA Deviation Watchlist — Oren Capital",
+  description: "Live market move gaps vs closing line for NBA games.",
 };
 
 export default function NbaHeatMapPage() {

@@ -2,92 +2,21 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 
-type BookLevel = { price: number; quantity: number };
-type OrderbookResp = {
-  orderbook?: {
-    yes_bids?: BookLevel[];
-    no_bids?: BookLevel[];
-  };
-};
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
 
-function kalshiBase() {
-  // Kalshi docs show api.elections.kalshi.com for trade-api v2. :contentReference[oaicite:4]{index=4}
-  // If you later use a different base for non-election markets, we’ll swap here.
-  return "https://api.elections.kalshi.com/trade-api/v2";
-}
+  const ticker = searchParams.get("ticker");
 
-function toCents(x: any): number | null {
-  const n = Number(x);
-  if (!Number.isFinite(n)) return null;
-  return n;
-}
-
-function bestBid(levels?: BookLevel[]) {
-  if (!levels?.length) return null;
-  // orderbook levels are typically already sorted best-first, but don’t assume.
-  let best = -Infinity;
-  let qty = 0;
-  for (const l of levels) {
-    const p = toCents(l.price);
-    const q = Number(l.quantity ?? 0);
-    if (p == null) continue;
-    if (p > best) {
-      best = p;
-      qty = Number.isFinite(q) ? q : 0;
-    }
+  if (!ticker) {
+    return NextResponse.json(
+      { error: "Missing required param: ticker" },
+      { status: 400 }
+    );
   }
-  return best === -Infinity ? null : { price: best, quantity: qty };
-}
 
-export async function GET(req: Request) {
-  try {
-    const url = new URL(req.url);
-    const ticker = (url.searchParams.get("ticker") ?? "").trim();
-
-    if (!ticker) {
-      return NextResponse.json({ ok: false, error: "Missing ticker" }, { status: 400 });
-    }
-
-    // Public market-data endpoints can be accessed without auth per Kalshi quick start. :contentReference[oaicite:5]{index=5}
-    const obUrl = `${kalshiBase()}/markets/${encodeURIComponent(ticker)}/orderbook`;
-    const obRes = await fetch(obUrl, { cache: "no-store" });
-
-    if (!obRes.ok) {
-      const text = await obRes.text().catch(() => "");
-      return NextResponse.json(
-        { ok: false, error: `Kalshi orderbook ${obRes.status}: ${text.slice(0, 200)}` },
-        { status: 502 }
-      );
-    }
-
-    const ob = (await obRes.json()) as OrderbookResp;
-
-    const yesBest = bestBid(ob.orderbook?.yes_bids);
-    const noBest = bestBid(ob.orderbook?.no_bids);
-
-    // Kalshi returns bids only; asks are implied via the complementary side (100 - opposite best bid). :contentReference[oaicite:6]{index=6}
-    const yesBid = yesBest?.price ?? null;
-    const yesAsk = noBest?.price != null ? 100 - noBest.price : null; // implied
-    const mid =
-      yesBid != null && yesAsk != null ? (yesBid + yesAsk) / 2 :
-      yesBid != null ? yesBid :
-      yesAsk != null ? yesAsk :
-      null;
-
-    const spread =
-      yesBid != null && yesAsk != null ? Math.max(0, yesAsk - yesBid) : null;
-
-    return NextResponse.json({
-      ok: true,
-      ticker,
-      yesBid,
-      yesAsk,
-      mid,       // cents, interpret as % probability ~ mid%
-      spread,    // cents
-      yesBidQty: yesBest?.quantity ?? 0,
-      noBidQty: noBest?.quantity ?? 0,
-    });
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: err?.message ?? "Unknown error" }, { status: 500 });
-  }
+  return NextResponse.json({
+    ok: true,
+    ticker,
+    message: "cpi-deviation route working",
+  });
 }
