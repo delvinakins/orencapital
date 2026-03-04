@@ -8,12 +8,13 @@ export const runtime = "nodejs";
 const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
 const POLYMARKET_GAMMA = "https://gamma-api.polymarket.com";
 
-async function fetchSafe(url: string, ms = 8000): Promise<Response | null> {
+async function fetchSafe(url: string, ms = 8000): Promise<any | null> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
     const res = await fetch(url, { cache: "no-store", signal: ctrl.signal });
-    return res;
+    if (!res.ok) return null;
+    return await res.json();
   } catch {
     return null;
   } finally {
@@ -26,33 +27,32 @@ export interface NormalizedMarket {
   source: "kalshi" | "polymarket";
   title: string;
   subtitle: string;
-  ticker: string;         // platform-native ticker / conditionId
-  seriesTicker?: string;  // Kalshi only
-  category: "sp500_level" | "sp500_weekly" | "other";
+  ticker: string;
+  seriesTicker?: string;
+  category: "sp500_level" | "sp500_weekly" | "sp500_range" | "other";
   closeTime: string | null;
   url: string;
 }
 
-// ── Kalshi: search for S&P markets ──────────────────────────────────────────
-async function fetchKalshiMarkets(): Promise<NormalizedMarket[]> {
-  const queries = [
-    `${KALSHI_BASE}/markets?status=open&search=S%26P+500&limit=20`,
-    `${KALSHI_BASE}/markets?status=open&search=SP500&limit=20`,
-    `${KALSHI_BASE}/markets?status=open&search=SPX&limit=20`,
-  ];
+// Known Kalshi S&P 500 series tickers
+// KXINX  = S&P daily range
+// KXINXY = S&P yearly range
+// KXSP500 = S&P level / close
+const KALSHI_SP_SERIES = ["KXINX", "KXINXY", "KXSP500", "INXD", "INXW"];
 
+async function fetchKalshiMarkets(): Promise<NormalizedMarket[]> {
   const seen = new Set<string>();
   const results: NormalizedMarket[] = [];
 
-  for (const url of queries) {
-    const res = await fetchSafe(url);
-    if (!res?.ok) continue;
+  for (const series of KALSHI_SP_SERIES) {
+    const data = await fetchSafe(
+      `${KALSHI_BASE}/markets?status=open&series_ticker=${encodeURIComponent(series)}&limit=20`
+    );
 
-    const data: any = await res.json().catch(() => null);
     const markets: any[] = data?.markets ?? [];
 
     for (const m of markets) {
-      const ticker: string = (m.ticker ?? m.id ?? "").toUpperCase();
+      const ticker: string = (m.ticker ?? "").toUpperCase();
       if (!ticker || seen.has(ticker)) continue;
       seen.add(ticker);
 
@@ -60,11 +60,10 @@ async function fetchKalshiMarkets(): Promise<NormalizedMarket[]> {
       const lower = title.toLowerCase();
 
       const category =
-        lower.includes("weekly") || lower.includes("week")
-          ? "sp500_weekly"
-          : lower.includes("close") || lower.includes("level") || lower.includes("above") || lower.includes("below")
-          ? "sp500_level"
-          : "other";
+        lower.includes("week") ? "sp500_weekly" :
+        lower.includes("range") ? "sp500_range" :
+        lower.includes("close") || lower.includes("above") || lower.includes("below") || lower.includes("level") ? "sp500_level" :
+        "sp500_range";
 
       results.push({
         id: `kalshi:${ticker}`,
@@ -72,10 +71,10 @@ async function fetchKalshiMarkets(): Promise<NormalizedMarket[]> {
         title,
         subtitle: m.subtitle ?? "",
         ticker,
-        seriesTicker: m.series_ticker ?? undefined,
+        seriesTicker: m.series_ticker ?? series,
         category,
         closeTime: m.close_time ?? m.expiration_time ?? null,
-        url: `https://kalshi.com/markets/${ticker.toLowerCase()}`,
+        url: `https://kalshi.com/markets/${series.toLowerCase()}/${ticker.toLowerCase()}`,
       });
     }
   }
@@ -83,22 +82,18 @@ async function fetchKalshiMarkets(): Promise<NormalizedMarket[]> {
   return results;
 }
 
-// ── Polymarket: search for S&P markets ──────────────────────────────────────
 async function fetchPolymarketMarkets(): Promise<NormalizedMarket[]> {
   const queries = [
     `${POLYMARKET_GAMMA}/markets?active=true&closed=false&search=S%26P+500&limit=20`,
     `${POLYMARKET_GAMMA}/markets?active=true&closed=false&search=SPX&limit=20`,
+    `${POLYMARKET_GAMMA}/markets?active=true&closed=false&search=S%26P&limit=10`,
   ];
 
   const seen = new Set<string>();
   const results: NormalizedMarket[] = [];
 
   for (const url of queries) {
-    const res = await fetchSafe(url);
-    if (!res?.ok) continue;
-
-    const data: any = await res.json().catch(() => null);
-    // Gamma API returns array directly or wrapped
+    const data = await fetchSafe(url);
     const markets: any[] = Array.isArray(data) ? data : (data?.markets ?? data?.data ?? []);
 
     for (const m of markets) {
@@ -109,12 +104,13 @@ async function fetchPolymarketMarkets(): Promise<NormalizedMarket[]> {
       const title: string = m.question ?? m.title ?? conditionId;
       const lower = title.toLowerCase();
 
+      // Only include if clearly S&P related
+      if (!lower.includes("s&p") && !lower.includes("spx") && !lower.includes("sp500") && !lower.includes("s&amp;p")) continue;
+
       const category =
-        lower.includes("weekly") || lower.includes("week")
-          ? "sp500_weekly"
-          : lower.includes("close") || lower.includes("level") || lower.includes("above") || lower.includes("below")
-          ? "sp500_level"
-          : "other";
+        lower.includes("week") ? "sp500_weekly" :
+        lower.includes("range") ? "sp500_range" :
+        "sp500_level";
 
       results.push({
         id: `polymarket:${conditionId}`,
@@ -132,11 +128,10 @@ async function fetchPolymarketMarkets(): Promise<NormalizedMarket[]> {
   return results;
 }
 
-// ── Handler ──────────────────────────────────────────────────────────────────
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const categoryFilter = url.searchParams.get("category"); // optional filter
+    const categoryFilter = url.searchParams.get("category");
 
     const [kalshiMarkets, polyMarkets] = await Promise.allSettled([
       fetchKalshiMarkets(),
@@ -148,16 +143,12 @@ export async function GET(req: Request) {
       ...(polyMarkets.status === "fulfilled" ? polyMarkets.value : []),
     ];
 
-    // Filter to only sp500_level + sp500_weekly by default
-    markets = markets.filter((m) =>
-      categoryFilter ? m.category === categoryFilter : m.category !== "other"
-    );
+    if (categoryFilter) {
+      markets = markets.filter((m) => m.category === categoryFilter);
+    }
 
-    // Sort: level first, then weekly, then by closeTime ascending
+    // Sort by closeTime ascending (nearest expiry first)
     markets.sort((a, b) => {
-      const catOrder = { sp500_level: 0, sp500_weekly: 1, other: 2 };
-      const catDiff = catOrder[a.category] - catOrder[b.category];
-      if (catDiff !== 0) return catDiff;
       if (!a.closeTime) return 1;
       if (!b.closeTime) return -1;
       return new Date(a.closeTime).getTime() - new Date(b.closeTime).getTime();
