@@ -1,6 +1,7 @@
 // src/app/movers/page.tsx
-import { headers } from "next/headers";
 import { MoverChart, type MoverPt } from "@/components/charts/MoverChart";
+
+export const runtime = "nodejs";
 
 type Row = {
   symbol: string;
@@ -12,7 +13,11 @@ type Row = {
   series?: MoverPt[];
 };
 
-type ApiResp = { ok: boolean; rows: Row[] };
+type ApiResp = {
+  ok: boolean;
+  rows?: Row[];
+  error?: string;
+};
 
 function pct(x: number | null) {
   if (x == null || !Number.isFinite(x)) return "—";
@@ -37,23 +42,47 @@ function badgeTone(tag: string) {
   }
 }
 
-async function getBaseUrlFromHeaders() {
-  const h = await headers();
-  const host = h.get("x-forwarded-host") ?? h.get("host");
-  const proto = h.get("x-forwarded-proto") ?? "https";
-  if (!host) return "https://orencapital.com";
-  return `${proto}://${host}`;
+function getBaseUrl() {
+  // Works reliably on Vercel SSR
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  // Local dev fallback
+  return "http://localhost:3000";
+}
+
+async function safeFetchMovers(): Promise<{ rows: Row[]; error: string | null }> {
+  const baseUrl = getBaseUrl();
+  const url = `${baseUrl}/api/market/movers?limit=25&series=1`;
+
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+
+    // If API returns non-JSON, res.json() will throw—guard it.
+    const text = await res.text();
+    let json: ApiResp | null = null;
+    try {
+      json = JSON.parse(text) as ApiResp;
+    } catch {
+      return {
+        rows: [],
+        error: `Movers API returned non-JSON (status ${res.status}).`,
+      };
+    }
+
+    if (!res.ok || !json?.ok) {
+      return {
+        rows: [],
+        error: json?.error ?? `Movers API failed (status ${res.status}).`,
+      };
+    }
+
+    return { rows: (json.rows ?? []).slice(0, 25), error: null };
+  } catch (e: any) {
+    return { rows: [], error: e?.message ?? "Movers API request failed." };
+  }
 }
 
 export default async function MoversPage() {
-  const baseUrl = await getBaseUrlFromHeaders();
-
-  const res = await fetch(`${baseUrl}/api/market/movers?limit=25&series=1`, {
-    cache: "no-store",
-  });
-
-  const data = (await res.json()) as ApiResp;
-  const rows = (data.ok ? data.rows : []).slice(0, 25);
+  const { rows, error } = await safeFetchMovers();
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 pb-16 pt-6 sm:px-6">
@@ -63,6 +92,18 @@ export default async function MoversPage() {
           S&amp;P 500 movers with intraday tape.
         </p>
       </div>
+
+      {error ? (
+        <div className="mb-4 rounded-2xl border border-white/10 bg-black/30 p-4 text-sm text-white/70">
+          <div className="font-medium text-white">Movers data unavailable</div>
+          <div className="mt-1 text-white/60">
+            {error}
+          </div>
+          <div className="mt-2 text-xs text-white/40">
+            Check Vercel logs for <code>/api/market/movers</code> and confirm POLYGON_API_KEY is set in production.
+          </div>
+        </div>
+      ) : null}
 
       {/* MOBILE: cards */}
       <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:hidden">
