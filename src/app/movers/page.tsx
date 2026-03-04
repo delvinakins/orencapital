@@ -10,7 +10,7 @@ type Row = {
   rangePct: number | null;
   dayVolTag: "Normal" | "High" | "Extreme";
   structuralRiskTag: "Green" | "Amber" | "Red";
-  series: MoverPt[]; // ALWAYS present now (fallback if needed)
+  series: MoverPt[]; // always present so sparklines always render
 };
 
 function getKey() {
@@ -43,7 +43,6 @@ async function getSp500(): Promise<Set<string>> {
     "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv",
     { cache: "no-store" }
   );
-
   if (!res.ok) throw new Error(`SP500 list fetch failed (${res.status})`);
 
   const text = await res.text();
@@ -91,7 +90,7 @@ function badgeTone(tag: string) {
   }
 }
 
-// Always produce a tape-like series, normalized 0–100, so charts render now.
+// 30-point normalized fallback tape so it looks like a real tape (not cliffs)
 function fallbackTape(day: any): MoverPt[] {
   const now = Date.now();
 
@@ -101,14 +100,29 @@ function fallbackTape(day: any): MoverPt[] {
   const l = typeof day?.l === "number" ? day.l : null;
 
   const base = o ?? c ?? 100;
+  const low = l ?? base * 0.985;
+  const high = h ?? base * 1.015;
+  const close = c ?? base;
 
-  const raw = [
-    { ts: now - 6 * 60 * 60 * 1000, v: base },
-    { ts: now - 4 * 60 * 60 * 1000, v: l ?? base * 0.98 },
-    { ts: now - 2 * 60 * 60 * 1000, v: h ?? base * 1.02 },
-    { ts: now - 1 * 60 * 60 * 1000, v: (o != null && c != null ? (o + c) / 2 : base) },
-    { ts: now, v: c ?? base },
-  ];
+  const anchors = [base, low, (low + high) / 2, high, (high + close) / 2, close];
+
+  const steps = 30;
+  const start = now - 6 * 60 * 60 * 1000;
+
+  const raw: Array<{ ts: number; v: number }> = [];
+  for (let i = 0; i < steps; i++) {
+    const ts = start + (i * (now - start)) / (steps - 1);
+
+    const a = (i / (steps - 1)) * (anchors.length - 1);
+    const idx = Math.floor(a);
+    const frac = a - idx;
+
+    const v0 = anchors[idx]!;
+    const v1 = anchors[Math.min(idx + 1, anchors.length - 1)]!;
+    const v = v0 + (v1 - v0) * frac;
+
+    raw.push({ ts, v });
+  }
 
   const vals = raw.map((p) => p.v);
   const min = Math.min(...vals);
@@ -116,7 +130,6 @@ function fallbackTape(day: any): MoverPt[] {
   const span = max - min;
 
   if (span <= 0) return raw.map((p) => ({ ts: p.ts, v: 50 }));
-
   return raw.map((p) => ({ ts: p.ts, v: ((p.v - min) / span) * 100 }));
 }
 
@@ -213,7 +226,7 @@ export default async function MoversPage() {
             </div>
 
             <div className="mt-2">
-              <MoverChart data={r.series} yDomain={[0, 100]} label="Tape" />
+              <MoverChart data={r.series} label="Tape" height={160} />
             </div>
           </div>
         ))}
@@ -253,8 +266,8 @@ export default async function MoversPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="w-[260px]">
-                        <MoverChart data={r.series} yDomain={[0, 100]} label="" />
+                      <div className="w-[180px]">
+                        <MoverChart data={r.series} height={44} />
                       </div>
                     </td>
                   </tr>
