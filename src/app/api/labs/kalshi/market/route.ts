@@ -3,34 +3,21 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 type BookLevel = { price: number; quantity: number };
-type OrderbookResp = {
-  orderbook?: {
-    yes_bids?: BookLevel[];
-    no_bids?: BookLevel[];
-  };
-};
+type OrderbookResp = { orderbook?: { yes_bids?: BookLevel[]; no_bids?: BookLevel[] } };
 
 function kalshiBase() {
-  // Kalshi docs show api.elections.kalshi.com for trade-api v2. :contentReference[oaicite:4]{index=4}
-  // If you later use a different base for non-election markets, we’ll swap here.
+  // Kalshi trade-api v2 base shown in docs (commonly used for market-data). Adjust if needed later.
   return "https://api.elections.kalshi.com/trade-api/v2";
-}
-
-function toCents(x: any): number | null {
-  const n = Number(x);
-  if (!Number.isFinite(n)) return null;
-  return n;
 }
 
 function bestBid(levels?: BookLevel[]) {
   if (!levels?.length) return null;
-  // orderbook levels are typically already sorted best-first, but don’t assume.
   let best = -Infinity;
   let qty = 0;
   for (const l of levels) {
-    const p = toCents(l.price);
+    const p = Number(l.price);
     const q = Number(l.quantity ?? 0);
-    if (p == null) continue;
+    if (!Number.isFinite(p)) continue;
     if (p > best) {
       best = p;
       qty = Number.isFinite(q) ? q : 0;
@@ -48,7 +35,6 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: false, error: "Missing ticker" }, { status: 400 });
     }
 
-    // Public market-data endpoints can be accessed without auth per Kalshi quick start. :contentReference[oaicite:5]{index=5}
     const obUrl = `${kalshiBase()}/markets/${encodeURIComponent(ticker)}/orderbook`;
     const obRes = await fetch(obUrl, { cache: "no-store" });
 
@@ -65,9 +51,10 @@ export async function GET(req: Request) {
     const yesBest = bestBid(ob.orderbook?.yes_bids);
     const noBest = bestBid(ob.orderbook?.no_bids);
 
-    // Kalshi returns bids only; asks are implied via the complementary side (100 - opposite best bid). :contentReference[oaicite:6]{index=6}
+    // Implied YES ask from best NO bid: yesAsk = 100 - noBid
     const yesBid = yesBest?.price ?? null;
-    const yesAsk = noBest?.price != null ? 100 - noBest.price : null; // implied
+    const yesAsk = noBest?.price != null ? 100 - noBest.price : null;
+
     const mid =
       yesBid != null && yesAsk != null ? (yesBid + yesAsk) / 2 :
       yesBid != null ? yesBid :
@@ -82,8 +69,8 @@ export async function GET(req: Request) {
       ticker,
       yesBid,
       yesAsk,
-      mid,       // cents, interpret as % probability ~ mid%
-      spread,    // cents
+      mid, // cents ≈ probability %
+      spread,
       yesBidQty: yesBest?.quantity ?? 0,
       noBidQty: noBest?.quantity ?? 0,
     });
