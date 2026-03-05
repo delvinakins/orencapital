@@ -38,7 +38,7 @@ async function fetchSafe(url: string, ms = 7000): Promise<any | null> {
 }
 
 // ── Polymarket: build SPX daily candles from last N trading days ──────────────
-// Uses the spx-daily-up-or-down series — each day is a market with a price history
+// For each past trading day: fetch event slug → get clobTokenId → take last price from CLOB history
 function buildSlug(date: Date): string {
   const months = ["january","february","march","april","may","june",
                   "july","august","september","october","november","december"];
@@ -48,7 +48,6 @@ function buildSlug(date: Date): string {
   return `spx-up-or-down-on-${m}-${d}-${y}`;
 }
 
-// Get last N calendar days (skipping weekends)
 function getRecentTradingDays(n: number): Date[] {
   const days: Date[] = [];
   const now = new Date();
@@ -57,7 +56,7 @@ function getRecentTradingDays(n: number): Date[] {
 
   while (days.length < n) {
     const dow = cursor.getUTCDay();
-    if (dow !== 0 && dow !== 6) { // skip Sun/Sat
+    if (dow !== 0 && dow !== 6) {
       days.push(new Date(cursor));
     }
     cursor.setUTCDate(cursor.getUTCDate() - 1);
@@ -68,33 +67,48 @@ function getRecentTradingDays(n: number): Date[] {
 async function getPolymarketSPXCandles(days = 30): Promise<Candle[]> {
   const tradingDays = getRecentTradingDays(days);
 
-  // Fetch all events in parallel
   const results = await Promise.allSettled(
     tradingDays.map(async (date) => {
       const slug = buildSlug(date);
+
+      // Step 1: get the event and extract the "Up" clobTokenId
       const data = await fetchSafe(`${POLY_GAMMA}/events?slug=${slug}`);
       const event = Array.isArray(data) ? data[0] : data;
       if (!event?.markets?.length) return null;
 
       const market = event.markets[0];
-      // Use lastTradePrice for resolved markets (outcomePrices snaps to 0/1 after resolution)
-      let upPrice = 50;
+      let tokenId: string | null = null;
       try {
-        const ltp = Number(market.lastTradePrice ?? 0);
-        if (ltp > 0.01 && ltp < 0.99) {
-          upPrice = ltp * 100;
-        } else {
-          const prices = typeof market.outcomePrices === "string"
-            ? JSON.parse(market.outcomePrices)
-            : market.outcomePrices;
-          const p = Number(prices[0]);
-          if (p > 0.01 && p < 0.99) upPrice = p * 100;
-        }
+        const ids = typeof market.clobTokenIds === "string"
+          ? JSON.parse(market.clobTokenIds)
+          : market.clobTokenIds;
+        tokenId = ids?.[0] ?? null; // index 0 = "Up" outcome
       } catch {}
+
+      if (!tokenId) return null;
+
+      // Step 2: fetch price history and take the last price before market close
+      const histData = await fetchSafe(
+        `${POLY_CLOB}/prices-history?market=${tokenId}&interval=1d&fidelity=60`
+      );
+      const history = histData?.history;
+      if (!Array.isArray(history) || history.length === 0) return null;
+
+      // Take last price that is not 0 or 1 (pre-resolution price)
+      let closePrice: number | null = null;
+      for (let i = history.length - 1; i >= 0; i--) {
+        const p = Number(history[i].p);
+        if (p > 0.01 && p < 0.99) {
+          closePrice = p * 100;
+          break;
+        }
+      }
+
+      if (closePrice === null) return null;
 
       return {
         ts: Math.floor(date.getTime() / 1000),
-        close: upPrice,
+        close: closePrice,
       } as Candle;
     })
   );
@@ -102,8 +116,8 @@ async function getPolymarketSPXCandles(days = 30): Promise<Candle[]> {
   return results
     .filter((r): r is PromiseFulfilledResult<Candle | null> => r.status === "fulfilled")
     .map((r) => r.value)
-    .filter((c): c is Candle => c !== null && c.close > 0 && c.close <= 100)
-    .sort((a, b) => a.ts - b.ts); // chronological
+    .filter((c): c is Candle => c !== null)
+    .sort((a, b) => a.ts - b.ts);
 }
 
 // ── Kalshi: live quote ────────────────────────────────────────────────────────
