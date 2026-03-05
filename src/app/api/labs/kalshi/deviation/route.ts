@@ -48,7 +48,7 @@ async function getSPXCandles(days = 15): Promise<Candle[]> {
   const toStr = to.toISOString().slice(0, 10);
 
   const url =
-    `${POLYGON_BASE}/v2/aggs/ticker/I:SPX/range/1/day/${fromStr}/${toStr}` +
+    `${POLYGON_BASE}/v2/aggs/ticker/SPY/range/1/day/${fromStr}/${toStr}` +
     `?adjusted=true&sort=asc&limit=${days * 2}&apiKey=${POLYGON_KEY}`;
 
   const data = await fetchSafe(url);
