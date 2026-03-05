@@ -127,13 +127,12 @@ function getCuratedMarkets() {
   ];
 }
 
-// ── Kalshi: get quote from market endpoint (more reliable than orderbook) ─────
+// ── Kalshi: get quote from market endpoint ────────────────────────────────────
 async function getKalshiQuote(ticker: string): Promise<MarketQuote> {
   const data = await fetchSafe(`${KALSHI_BASE}/markets/${encodeURIComponent(ticker)}`);
   const m = data?.market ?? data;
   if (!m) return { yesBid: null, yesAsk: null };
 
-  // Kalshi returns yes_bid / yes_ask directly in cents (0–100)
   const yesBid = m.yes_bid != null ? Number(m.yes_bid) : null;
   const yesAsk = m.yes_ask != null ? Number(m.yes_ask) : null;
 
@@ -141,29 +140,33 @@ async function getKalshiQuote(ticker: string): Promise<MarketQuote> {
 }
 
 // ── Kalshi: get candles ───────────────────────────────────────────────────────
+// Tries multiple period intervals and lookback windows to maximize data
 async function getKalshiCandles(ticker: string, seriesTicker: string): Promise<Candle[]> {
-  const period = "60";
-
-  const liveData = await fetchSafe(
-    `${KALSHI_BASE}/series/${encodeURIComponent(seriesTicker)}/markets/${encodeURIComponent(ticker)}/candlesticks?period_interval=${period}`
-  );
-
-  if (liveData?.candlesticks?.length) {
-    return (liveData.candlesticks as any[])
-      .slice(-120)
-      .map((c: any) => ({ ts: Number(c.start_ts), close: Number(c.close) }));
-  }
-
   const endTs = Math.floor(Date.now() / 1000);
-  const startTs = endTs - 7 * 24 * 60 * 60;
-  const histData = await fetchSafe(
-    `${KALSHI_BASE}/historical/markets/${encodeURIComponent(ticker)}/candlesticks?start_ts=${startTs}&end_ts=${endTs}&period_interval=${period}`
-  );
 
-  if (histData?.candlesticks?.length) {
-    return (histData.candlesticks as any[])
-      .slice(-120)
-      .map((c: any) => ({ ts: Number(c.start_ts), close: Number(c.close) }));
+  // Try multiple approaches in order of preference
+  const attempts = [
+    // Historical 30d, 1h candles
+    `${KALSHI_BASE}/historical/markets/${encodeURIComponent(ticker)}/candlesticks?start_ts=${endTs - 30 * 24 * 60 * 60}&end_ts=${endTs}&period_interval=60`,
+    // Historical 7d, 1h candles
+    `${KALSHI_BASE}/historical/markets/${encodeURIComponent(ticker)}/candlesticks?start_ts=${endTs - 7 * 24 * 60 * 60}&end_ts=${endTs}&period_interval=60`,
+    // Historical 30d, 1d candles
+    `${KALSHI_BASE}/historical/markets/${encodeURIComponent(ticker)}/candlesticks?start_ts=${endTs - 30 * 24 * 60 * 60}&end_ts=${endTs}&period_interval=1440`,
+    // Live series endpoint, 1h
+    `${KALSHI_BASE}/series/${encodeURIComponent(seriesTicker)}/markets/${encodeURIComponent(ticker)}/candlesticks?period_interval=60`,
+    // Live series endpoint, 1d
+    `${KALSHI_BASE}/series/${encodeURIComponent(seriesTicker)}/markets/${encodeURIComponent(ticker)}/candlesticks?period_interval=1440`,
+  ];
+
+  for (const url of attempts) {
+    const data = await fetchSafe(url);
+    const sticks: any[] = data?.candlesticks ?? [];
+    if (sticks.length >= 2) {
+      return sticks
+        .slice(-120)
+        .map((c: any) => ({ ts: Number(c.start_ts), close: Number(c.close) }))
+        .filter((c) => c.close > 0 && c.close <= 100);
+    }
   }
 
   return [];
