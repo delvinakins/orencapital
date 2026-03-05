@@ -14,7 +14,7 @@ import {
 } from "@/lib/kalshi/deviationEngine";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 45;
 
 const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
 const POLY_GAMMA = "https://gamma-api.polymarket.com";
@@ -23,7 +23,7 @@ const POLY_CLOB = "https://clob.polymarket.com";
 let cache: { ts: number; data: any } | null = null;
 const CACHE_TTL_MS = 60_000;
 
-async function fetchSafe(url: string, ms = 7000): Promise<any | null> {
+async function fetchSafe(url: string, ms = 4000): Promise<any | null> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
@@ -64,61 +64,60 @@ function getRecentTradingDays(n: number): Date[] {
   return days;
 }
 
-async function getPolymarketSPXCandles(days = 30): Promise<Candle[]> {
+async function getPolymarketSPXCandles(days = 15): Promise<Candle[]> {
   const tradingDays = getRecentTradingDays(days);
 
-  const results = await Promise.allSettled(
+  // Wave 1: all slug→event fetches in parallel to get clobTokenIds
+  const eventResults = await Promise.allSettled(
     tradingDays.map(async (date) => {
       const slug = buildSlug(date);
-
-      // Step 1: get the event and extract the "Up" clobTokenId
       const data = await fetchSafe(`${POLY_GAMMA}/events?slug=${slug}`);
       const event = Array.isArray(data) ? data[0] : data;
       if (!event?.markets?.length) return null;
-
       const market = event.markets[0];
       let tokenId: string | null = null;
       try {
         const ids = typeof market.clobTokenIds === "string"
-          ? JSON.parse(market.clobTokenIds)
-          : market.clobTokenIds;
+          ? JSON.parse(market.clobTokenIds) : market.clobTokenIds;
         tokenId = ids?.[0] ?? null; // index 0 = "Up" outcome
       } catch {}
+      return tokenId ? { date, tokenId } : null;
+    })
+  );
 
-      if (!tokenId) return null;
+  const validEvents = eventResults
+    .filter((r): r is PromiseFulfilledResult<{ date: Date; tokenId: string } | null> =>
+      r.status === "fulfilled")
+    .map((r) => r.value)
+    .filter((v): v is { date: Date; tokenId: string } => v !== null);
 
-      // Step 2: fetch price history and take the last price before market close
+  // Wave 2: all CLOB price history fetches in parallel
+  const candleResults = await Promise.allSettled(
+    validEvents.map(async ({ date, tokenId }) => {
       const histData = await fetchSafe(
-        `${POLY_CLOB}/prices-history?market=${tokenId}&interval=1d&fidelity=60`
+        `${POLY_CLOB}/prices-history?market=${tokenId}&interval=1d&fidelity=1440`
       );
       const history = histData?.history;
       if (!Array.isArray(history) || history.length === 0) return null;
 
-      // Take last price that is not 0 or 1 (pre-resolution price)
+      // Walk back to find last pre-resolution price (exclude 0/1 snap values)
       let closePrice: number | null = null;
       for (let i = history.length - 1; i >= 0; i--) {
         const p = Number(history[i].p);
-        if (p > 0.01 && p < 0.99) {
-          closePrice = p * 100;
-          break;
-        }
+        if (p > 0.02 && p < 0.98) { closePrice = p * 100; break; }
       }
-
       if (closePrice === null) return null;
-
-      return {
-        ts: Math.floor(date.getTime() / 1000),
-        close: closePrice,
-      } as Candle;
+      return { ts: Math.floor(date.getTime() / 1000), close: closePrice } as Candle;
     })
   );
 
-  return results
+  return candleResults
     .filter((r): r is PromiseFulfilledResult<Candle | null> => r.status === "fulfilled")
     .map((r) => r.value)
     .filter((c): c is Candle => c !== null)
     .sort((a, b) => a.ts - b.ts);
 }
+
 
 // ── Kalshi: live quote ────────────────────────────────────────────────────────
 async function getKalshiQuote(ticker: string): Promise<MarketQuote> {
@@ -234,7 +233,7 @@ export async function GET() {
 
     // Fetch candles + market quotes in parallel
     const [spxCandles, ...quoteResults] = await Promise.all([
-      getPolymarketSPXCandles(30),
+      getPolymarketSPXCandles(15),
       ...getCuratedMarkets().map((m) => getKalshiQuote(m.ticker)),
     ]);
 
