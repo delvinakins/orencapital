@@ -1,6 +1,7 @@
 // src/app/api/labs/kalshi/deviation/route.ts
-// Runs the Oren Deviation Engine across S&P prediction markets
-// Returns markets sorted by |edgeZ| descending
+// Oren Deviation Engine
+// Candle history: Polymarket SPX daily Up/Down series (no auth needed)
+// Live quotes: Kalshi KXINX / KXINXY markets
 
 import { NextResponse } from "next/server";
 import {
@@ -16,11 +17,13 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
+const POLY_GAMMA = "https://gamma-api.polymarket.com";
+const POLY_CLOB = "https://clob.polymarket.com";
 
 let cache: { ts: number; data: any } | null = null;
 const CACHE_TTL_MS = 60_000;
 
-async function fetchSafe(url: string, ms = 6000): Promise<any | null> {
+async function fetchSafe(url: string, ms = 7000): Promise<any | null> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
@@ -34,142 +37,78 @@ async function fetchSafe(url: string, ms = 6000): Promise<any | null> {
   }
 }
 
-// ── Curated markets ───────────────────────────────────────────────────────────
-function getCuratedMarkets() {
-  const now = new Date();
-  const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
-  const yy = String(now.getUTCFullYear()).slice(2);
-  const mm = months[now.getUTCMonth()];
-  const dd = String(now.getUTCDate() + (now.getUTCHours() >= 21 ? 1 : 0)).padStart(2, "0");
-  const dateStr = `${yy}${mm}${dd}`;
-
-  return [
-    {
-      id: `kalshi:KXINX-${dateStr}H1600-T7249.9999`,
-      ticker: `KXINX-${dateStr}H1600-T7249.9999`,
-      seriesTicker: "KXINX",
-      title: `S&P 500 above 7250 today`,
-      category: "sp500_level",
-      closeTime: null,
-      url: `https://kalshi.com/markets/kxinx`,
-      source: "kalshi" as const,
-    },
-    {
-      id: `kalshi:KXINX-${dateStr}H1600-B7237`,
-      ticker: `KXINX-${dateStr}H1600-B7237`,
-      seriesTicker: "KXINX",
-      title: `S&P 500 between 7225–7250 today`,
-      category: "sp500_range",
-      closeTime: null,
-      url: `https://kalshi.com/markets/kxinx`,
-      source: "kalshi" as const,
-    },
-    {
-      id: `kalshi:KXINX-${dateStr}H1600-B7212`,
-      ticker: `KXINX-${dateStr}H1600-B7212`,
-      seriesTicker: "KXINX",
-      title: `S&P 500 between 7200–7225 today`,
-      category: "sp500_range",
-      closeTime: null,
-      url: `https://kalshi.com/markets/kxinx`,
-      source: "kalshi" as const,
-    },
-    {
-      id: "kalshi:KXINXY-26DEC31H1600-B7300",
-      ticker: "KXINXY-26DEC31H1600-B7300",
-      seriesTicker: "KXINXY",
-      title: "S&P 500 between 7200–7400 EOY 2026",
-      category: "sp500_range",
-      closeTime: "2026-12-31T21:00:00Z",
-      url: "https://kalshi.com/markets/kxinxy",
-      source: "kalshi" as const,
-    },
-    {
-      id: "kalshi:KXINXY-26DEC31H1600-B7500",
-      ticker: "KXINXY-26DEC31H1600-B7500",
-      seriesTicker: "KXINXY",
-      title: "S&P 500 between 7400–7600 EOY 2026",
-      category: "sp500_range",
-      closeTime: "2026-12-31T21:00:00Z",
-      url: "https://kalshi.com/markets/kxinxy",
-      source: "kalshi" as const,
-    },
-    {
-      id: "kalshi:KXINXY-26DEC31H1600-B7100",
-      ticker: "KXINXY-26DEC31H1600-B7100",
-      seriesTicker: "KXINXY",
-      title: "S&P 500 between 7000–7200 EOY 2026",
-      category: "sp500_range",
-      closeTime: "2026-12-31T21:00:00Z",
-      url: "https://kalshi.com/markets/kxinxy",
-      source: "kalshi" as const,
-    },
-    {
-      id: "kalshi:KXINXY-26DEC31H1600-T9000",
-      ticker: "KXINXY-26DEC31H1600-T9000",
-      seriesTicker: "KXINXY",
-      title: "S&P 500 above 9000 EOY 2026",
-      category: "sp500_level",
-      closeTime: "2026-12-31T21:00:00Z",
-      url: "https://kalshi.com/markets/kxinxy",
-      source: "kalshi" as const,
-    },
-    {
-      id: "kalshi:KXINXY-26DEC31H1600-T4000",
-      ticker: "KXINXY-26DEC31H1600-T4000",
-      seriesTicker: "KXINXY",
-      title: "S&P 500 below 4000 EOY 2026",
-      category: "sp500_level",
-      closeTime: "2026-12-31T21:00:00Z",
-      url: "https://kalshi.com/markets/kxinxy",
-      source: "kalshi" as const,
-    },
-  ];
+// ── Polymarket: build SPX daily candles from last N trading days ──────────────
+// Uses the spx-daily-up-or-down series — each day is a market with a price history
+function buildSlug(date: Date): string {
+  const months = ["january","february","march","april","may","june",
+                  "july","august","september","october","november","december"];
+  const m = months[date.getUTCMonth()];
+  const d = date.getUTCDate();
+  const y = date.getUTCFullYear();
+  return `spx-up-or-down-on-${m}-${d}-${y}`;
 }
 
-// ── Kalshi: get quote from market endpoint ────────────────────────────────────
+// Get last N calendar days (skipping weekends)
+function getRecentTradingDays(n: number): Date[] {
+  const days: Date[] = [];
+  const now = new Date();
+  let cursor = new Date(now);
+  cursor.setUTCDate(cursor.getUTCDate() - 1); // start from yesterday
+
+  while (days.length < n) {
+    const dow = cursor.getUTCDay();
+    if (dow !== 0 && dow !== 6) { // skip Sun/Sat
+      days.push(new Date(cursor));
+    }
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  return days;
+}
+
+async function getPolymarketSPXCandles(days = 30): Promise<Candle[]> {
+  const tradingDays = getRecentTradingDays(days);
+
+  // Fetch all events in parallel
+  const results = await Promise.allSettled(
+    tradingDays.map(async (date) => {
+      const slug = buildSlug(date);
+      const data = await fetchSafe(`${POLY_GAMMA}/events?slug=${slug}`);
+      const event = Array.isArray(data) ? data[0] : data;
+      if (!event?.markets?.length) return null;
+
+      const market = event.markets[0];
+      // outcomePrices is "[\"0.52\", \"0.48\"]" — index 0 = Up price
+      let upPrice = 50; // default 50%
+      try {
+        const prices = typeof market.outcomePrices === "string"
+          ? JSON.parse(market.outcomePrices)
+          : market.outcomePrices;
+        upPrice = Number(prices[0]) * 100;
+      } catch {}
+
+      return {
+        ts: Math.floor(date.getTime() / 1000),
+        close: upPrice,
+      } as Candle;
+    })
+  );
+
+  return results
+    .filter((r): r is PromiseFulfilledResult<Candle | null> => r.status === "fulfilled")
+    .map((r) => r.value)
+    .filter((c): c is Candle => c !== null && c.close > 0 && c.close <= 100)
+    .sort((a, b) => a.ts - b.ts); // chronological
+}
+
+// ── Kalshi: live quote ────────────────────────────────────────────────────────
 async function getKalshiQuote(ticker: string): Promise<MarketQuote> {
   const data = await fetchSafe(`${KALSHI_BASE}/markets/${encodeURIComponent(ticker)}`);
   const m = data?.market ?? data;
   if (!m) return { yesBid: null, yesAsk: null };
-
-  const yesBid = m.yes_bid != null ? Number(m.yes_bid) : null;
-  const yesAsk = m.yes_ask != null ? Number(m.yes_ask) : null;
-
-  return { yesBid, yesAsk };
-}
-
-// ── Kalshi: get candles ───────────────────────────────────────────────────────
-// Tries multiple period intervals and lookback windows to maximize data
-async function getKalshiCandles(ticker: string, seriesTicker: string): Promise<Candle[]> {
-  const endTs = Math.floor(Date.now() / 1000);
-
-  // Try multiple approaches in order of preference
-  const attempts = [
-    // Historical 30d, 1h candles
-    `${KALSHI_BASE}/historical/markets/${encodeURIComponent(ticker)}/candlesticks?start_ts=${endTs - 30 * 24 * 60 * 60}&end_ts=${endTs}&period_interval=60`,
-    // Historical 7d, 1h candles
-    `${KALSHI_BASE}/historical/markets/${encodeURIComponent(ticker)}/candlesticks?start_ts=${endTs - 7 * 24 * 60 * 60}&end_ts=${endTs}&period_interval=60`,
-    // Historical 30d, 1d candles
-    `${KALSHI_BASE}/historical/markets/${encodeURIComponent(ticker)}/candlesticks?start_ts=${endTs - 30 * 24 * 60 * 60}&end_ts=${endTs}&period_interval=1440`,
-    // Live series endpoint, 1h
-    `${KALSHI_BASE}/series/${encodeURIComponent(seriesTicker)}/markets/${encodeURIComponent(ticker)}/candlesticks?period_interval=60`,
-    // Live series endpoint, 1d
-    `${KALSHI_BASE}/series/${encodeURIComponent(seriesTicker)}/markets/${encodeURIComponent(ticker)}/candlesticks?period_interval=1440`,
-  ];
-
-  for (const url of attempts) {
-    const data = await fetchSafe(url);
-    const sticks: any[] = data?.candlesticks ?? [];
-    if (sticks.length >= 2) {
-      return sticks
-        .slice(-120)
-        .map((c: any) => ({ ts: Number(c.start_ts), close: Number(c.close) }))
-        .filter((c) => c.close > 0 && c.close <= 100);
-    }
-  }
-
-  return [];
+  return {
+    yesBid: m.yes_bid != null ? Number(m.yes_bid) : null,
+    yesAsk: m.yes_ask != null ? Number(m.yes_ask) : null,
+  };
 }
 
 // ── Scored market type ────────────────────────────────────────────────────────
@@ -184,29 +123,86 @@ export interface ScoredMarket {
   quote: MarketQuote;
   result: DeviationResult;
   sparkline: Array<{ ts: number; v: number }>;
+  candleSource: string;
 }
 
-async function scoreMarket(m: ReturnType<typeof getCuratedMarkets>[number]): Promise<ScoredMarket> {
-  const [quote, candles] = await Promise.all([
-    getKalshiQuote(m.ticker),
-    getKalshiCandles(m.ticker, m.seriesTicker),
-  ]);
+// ── Curated Kalshi markets ────────────────────────────────────────────────────
+function getCuratedMarkets() {
+  const now = new Date();
+  const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+  const yy = String(now.getUTCFullYear()).slice(2);
+  const mm = months[now.getUTCMonth()];
+  const dd = String(now.getUTCDate() + (now.getUTCHours() >= 21 ? 1 : 0)).padStart(2, "0");
+  const dateStr = `${yy}${mm}${dd}`;
 
-  const result = runDeviationEngine(candles, quote);
-  const sparkline = normalizeSparkline(candles);
-
-  return {
-    id: m.id,
-    source: m.source,
-    title: m.title,
-    ticker: m.ticker,
-    category: m.category,
-    closeTime: m.closeTime,
-    url: m.url,
-    quote,
-    result,
-    sparkline,
-  };
+  return [
+    // Today's daily brackets
+    {
+      id: `kalshi:KXINX-${dateStr}H1600-T7249.9999`,
+      ticker: `KXINX-${dateStr}H1600-T7249.9999`,
+      title: "S&P 500 above 7250 today",
+      category: "sp500_level",
+      closeTime: null,
+      url: "https://kalshi.com/markets/kxinx",
+    },
+    {
+      id: `kalshi:KXINX-${dateStr}H1600-B7237`,
+      ticker: `KXINX-${dateStr}H1600-B7237`,
+      title: "S&P 500 7225–7250 today",
+      category: "sp500_range",
+      closeTime: null,
+      url: "https://kalshi.com/markets/kxinx",
+    },
+    {
+      id: `kalshi:KXINX-${dateStr}H1600-B7212`,
+      ticker: `KXINX-${dateStr}H1600-B7212`,
+      title: "S&P 500 7200–7225 today",
+      category: "sp500_range",
+      closeTime: null,
+      url: "https://kalshi.com/markets/kxinx",
+    },
+    // EOY range markets
+    {
+      id: "kalshi:KXINXY-26DEC31H1600-B7300",
+      ticker: "KXINXY-26DEC31H1600-B7300",
+      title: "S&P 500 7200–7400 EOY 2026",
+      category: "sp500_range",
+      closeTime: "2026-12-31T21:00:00Z",
+      url: "https://kalshi.com/markets/kxinxy",
+    },
+    {
+      id: "kalshi:KXINXY-26DEC31H1600-B7500",
+      ticker: "KXINXY-26DEC31H1600-B7500",
+      title: "S&P 500 7400–7600 EOY 2026",
+      category: "sp500_range",
+      closeTime: "2026-12-31T21:00:00Z",
+      url: "https://kalshi.com/markets/kxinxy",
+    },
+    {
+      id: "kalshi:KXINXY-26DEC31H1600-B7100",
+      ticker: "KXINXY-26DEC31H1600-B7100",
+      title: "S&P 500 7000–7200 EOY 2026",
+      category: "sp500_range",
+      closeTime: "2026-12-31T21:00:00Z",
+      url: "https://kalshi.com/markets/kxinxy",
+    },
+    {
+      id: "kalshi:KXINXY-26DEC31H1600-T9000",
+      ticker: "KXINXY-26DEC31H1600-T9000",
+      title: "S&P 500 above 9000 EOY 2026",
+      category: "sp500_level",
+      closeTime: "2026-12-31T21:00:00Z",
+      url: "https://kalshi.com/markets/kxinxy",
+    },
+    {
+      id: "kalshi:KXINXY-26DEC31H1600-T4000",
+      ticker: "KXINXY-26DEC31H1600-T4000",
+      title: "S&P 500 below 4000 EOY 2026",
+      category: "sp500_level",
+      closeTime: "2026-12-31T21:00:00Z",
+      url: "https://kalshi.com/markets/kxinxy",
+    },
+  ];
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -216,13 +212,33 @@ export async function GET() {
       return NextResponse.json({ ...cache.data, cached: true });
     }
 
+    // Fetch candles + market quotes in parallel
+    const [spxCandles, ...quoteResults] = await Promise.all([
+      getPolymarketSPXCandles(30),
+      ...getCuratedMarkets().map((m) => getKalshiQuote(m.ticker)),
+    ]);
+
     const markets = getCuratedMarkets();
 
-    const scored = (
-      await Promise.allSettled(markets.map(scoreMarket))
-    )
-      .filter((r): r is PromiseFulfilledResult<ScoredMarket> => r.status === "fulfilled")
-      .map((r) => r.value);
+    const scored: ScoredMarket[] = markets.map((m, i) => {
+      const quote = quoteResults[i];
+      const result = runDeviationEngine(spxCandles, quote);
+      const sparkline = normalizeSparkline(spxCandles);
+
+      return {
+        id: m.id,
+        source: "kalshi" as const,
+        title: m.title,
+        ticker: m.ticker,
+        category: m.category,
+        closeTime: m.closeTime,
+        url: m.url,
+        quote,
+        result,
+        sparkline,
+        candleSource: "polymarket-spx-daily",
+      };
+    });
 
     const sorted = sortByEdge(scored);
 
@@ -230,6 +246,7 @@ export async function GET() {
       ok: true,
       updatedAt: new Date().toISOString(),
       count: sorted.length,
+      candleCount: spxCandles.length,
       markets: sorted,
     };
 
