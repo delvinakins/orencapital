@@ -95,7 +95,7 @@ async function getPolymarketSPXCandles(days = 15): Promise<Candle[]> {
   const candleResults = await Promise.allSettled(
     validEvents.map(async ({ date, tokenId }) => {
       const histData = await fetchSafe(
-        `${POLY_CLOB}/prices-history?market=${tokenId}&interval=1d&fidelity=1440`
+        `${POLY_CLOB}/prices-history?market=${tokenId}&interval=1d&fidelity=60`
       );
       const history = histData?.history;
       if (!Array.isArray(history) || history.length === 0) return null;
@@ -104,7 +104,7 @@ async function getPolymarketSPXCandles(days = 15): Promise<Candle[]> {
       let closePrice: number | null = null;
       for (let i = history.length - 1; i >= 0; i--) {
         const p = Number(history[i].p);
-        if (p > 0.02 && p < 0.98) { closePrice = p * 100; break; }
+        if (p > 0.02 && p < 0.75) { closePrice = p * 100; break; }
       }
       if (closePrice === null) return null;
       return { ts: Math.floor(date.getTime() / 1000), close: closePrice } as Candle;
