@@ -1,6 +1,6 @@
 // src/app/api/labs/kalshi/deviation/route.ts
 // Oren Deviation Engine
-// Candle history: Polymarket SPX daily Up/Down series (no auth needed)
+// Candle history: Polygon.io SPX daily closes (already integrated)
 // Live quotes: Kalshi KXINX / KXINXY markets
 
 import { NextRequest, NextResponse } from "next/server";
@@ -17,13 +17,13 @@ export const runtime = "nodejs";
 export const maxDuration = 45;
 
 const KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2";
-const POLY_GAMMA = "https://gamma-api.polymarket.com";
-const POLY_CLOB = "https://clob.polymarket.com";
+const POLYGON_BASE = "https://api.polygon.io";
+const POLYGON_KEY = process.env.POLYGON_API_KEY ?? "";
 
 let cache: { ts: number; data: any } | null = null;
 const CACHE_TTL_MS = 60_000;
 
-async function fetchSafe(url: string, ms = 4000): Promise<any | null> {
+async function fetchSafe(url: string, ms = 6000): Promise<any | null> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
@@ -37,151 +37,27 @@ async function fetchSafe(url: string, ms = 4000): Promise<any | null> {
   }
 }
 
-// ── Polymarket: build SPX daily candles ──────────────────────────────────────
-function buildSlug(date: Date): string {
-  const months = [
-    "january","february","march","april","may","june",
-    "july","august","september","october","november","december",
-  ];
-  const m = months[date.getUTCMonth()];
-  const d = date.getUTCDate();
-  const y = date.getUTCFullYear();
-  return `spx-up-or-down-on-${m}-${d}-${y}`;
-}
+// ── Polygon: SPX daily closes ────────────────────────────────────────────────
+async function getSPXCandles(days = 15): Promise<Candle[]> {
+  // Request 2x window to account for weekends/holidays, then trim to `days`
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - days * 2);
 
-function getRecentTradingDays(n: number): Date[] {
-  const days: Date[] = [];
-  const now = new Date();
-  let cursor = new Date(now);
-  cursor.setUTCDate(cursor.getUTCDate() - 1);
+  const fromStr = from.toISOString().slice(0, 10);
+  const toStr = to.toISOString().slice(0, 10);
 
-  while (days.length < n) {
-    const dow = cursor.getUTCDay();
-    if (dow !== 0 && dow !== 6) {
-      days.push(new Date(cursor));
-    }
-    cursor.setUTCDate(cursor.getUTCDate() - 1);
-  }
-  return days;
-}
+  const url =
+    `${POLYGON_BASE}/v2/aggs/ticker/I:SPX/range/1/day/${fromStr}/${toStr}` +
+    `?adjusted=true&sort=asc&limit=${days * 2}&apiKey=${POLYGON_KEY}`;
 
-interface SlugDebug {
-  slug: string;
-  date: string;
-  step: "no_event" | "no_token" | "ok_gamma" | "no_history_clob" | "no_valid_price_clob" | "ok_clob";
-  tokenId?: string | null;
-  closePrice?: number | null;
-  source?: string;
-}
+  const data = await fetchSafe(url);
+  if (!Array.isArray(data?.results) || data.results.length === 0) return [];
 
-// Extract "Up" outcome close price from Gamma market object.
-// outcomePrices is typically '["0.97","0.03"]' — index 0 = Up.
-// Falls back to lastTradePrice if present.
-function extractGammaClosePrice(market: any): number | null {
-  try {
-    const raw = market.outcomePrices ?? market.lastTradePrice ?? null;
-    if (!raw) return null;
-
-    if (typeof raw === "string" && raw.startsWith("[")) {
-      const arr = JSON.parse(raw);
-      const p = Number(arr[0]);
-      if (!isNaN(p) && p > 0.02 && p < 0.98) return p * 100;
-      return null;
-    }
-
-    const p = Number(raw);
-    if (!isNaN(p) && p > 0.02 && p < 0.98) return p * 100;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-async function getPolymarketSPXCandles(
-  days = 15,
-  debug = false
-): Promise<{ candles: Candle[]; slugDebug: SlugDebug[] }> {
-  const tradingDays = getRecentTradingDays(days);
-  const slugDebug: SlugDebug[] = [];
-
-  const results = await Promise.allSettled(
-    tradingDays.map(async (date): Promise<Candle | null> => {
-      const slug = buildSlug(date);
-      const dateStr = date.toISOString().slice(0, 10);
-      const data = await fetchSafe(`${POLY_GAMMA}/events?slug=${slug}`);
-      const event = Array.isArray(data) ? data[0] : data;
-
-      if (!event?.markets?.length) {
-        if (debug) slugDebug.push({ slug, date: dateStr, step: "no_event" });
-        return null;
-      }
-
-      const market = event.markets[0];
-
-      // Extract tokenId for CLOB fallback
-      let tokenId: string | null = null;
-      try {
-        const ids =
-          typeof market.clobTokenIds === "string"
-            ? JSON.parse(market.clobTokenIds)
-            : market.clobTokenIds;
-        tokenId = ids?.[0] ?? null;
-      } catch {}
-
-      if (!tokenId) {
-        if (debug) slugDebug.push({ slug, date: dateStr, step: "no_token" });
-        return null;
-      }
-
-      // ── Strategy 1: Gamma outcomePrices (resolved markets) ──────────────────
-      const gammaPrice = extractGammaClosePrice(market);
-      if (gammaPrice !== null) {
-        if (debug)
-          slugDebug.push({ slug, date: dateStr, step: "ok_gamma", tokenId, closePrice: gammaPrice, source: "gamma" });
-        return { ts: Math.floor(date.getTime() / 1000), close: gammaPrice };
-      }
-
-      // ── Strategy 2: CLOB prices-history (live/recent markets) ───────────────
-      const histData = await fetchSafe(
-        `${POLY_CLOB}/prices-history?market=${tokenId}&interval=1d&fidelity=60`
-      );
-      const history = histData?.history;
-
-      if (!Array.isArray(history) || history.length === 0) {
-        if (debug)
-          slugDebug.push({ slug, date: dateStr, step: "no_history_clob", tokenId });
-        return null;
-      }
-
-      let closePrice: number | null = null;
-      for (let i = history.length - 1; i >= 0; i--) {
-        const p = Number(history[i].p);
-        if (p > 0.02 && p < 0.97) {
-          closePrice = p * 100;
-          break;
-        }
-      }
-
-      if (closePrice === null) {
-        if (debug)
-          slugDebug.push({ slug, date: dateStr, step: "no_valid_price_clob", tokenId });
-        return null;
-      }
-
-      if (debug)
-        slugDebug.push({ slug, date: dateStr, step: "ok_clob", tokenId, closePrice, source: "clob" });
-
-      return { ts: Math.floor(date.getTime() / 1000), close: closePrice };
-    })
-  );
-
-  const candles = results
-    .filter((r): r is PromiseFulfilledResult<Candle | null> => r.status === "fulfilled")
-    .map((r) => r.value)
-    .filter((c): c is Candle => c !== null)
-    .sort((a, b) => a.ts - b.ts);
-
-  return { candles, slugDebug };
+  return data.results.slice(-days).map((bar: any) => ({
+    ts: Math.floor(bar.t / 1000), // Polygon returns ms timestamps
+    close: bar.c,
+  }));
 }
 
 // ── Kalshi: live quote ──────────────────────────────────────────────────────
@@ -296,8 +172,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ...cache.data, cached: true });
     }
 
-    const [{ candles: spxCandles, slugDebug }, ...quoteResults] = await Promise.all([
-      getPolymarketSPXCandles(15, isDebug),
+    if (!POLYGON_KEY) {
+      return NextResponse.json(
+        { ok: false, error: "POLYGON_API_KEY env var not set" },
+        { status: 500 }
+      );
+    }
+
+    const [spxCandles, ...quoteResults] = await Promise.all([
+      getSPXCandles(15),
       ...getCuratedMarkets().map((m) => getKalshiQuote(m.ticker)),
     ]);
 
@@ -319,7 +202,7 @@ export async function GET(req: NextRequest) {
         quote,
         result,
         sparkline,
-        candleSource: "polymarket-spx-daily",
+        candleSource: "polygon-spx-daily",
       };
     });
 
@@ -331,7 +214,12 @@ export async function GET(req: NextRequest) {
       count: sorted.length,
       candleCount: spxCandles.length,
       markets: sorted,
-      ...(isDebug && { slugDebug }),
+      ...(isDebug && {
+        candles: spxCandles.map((c) => ({
+          date: new Date(c.ts * 1000).toISOString().slice(0, 10),
+          close: c.close,
+        })),
+      }),
     };
 
     if (!isDebug) {
