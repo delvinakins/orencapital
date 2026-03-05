@@ -77,13 +77,19 @@ async function getPolymarketSPXCandles(days = 30): Promise<Candle[]> {
       if (!event?.markets?.length) return null;
 
       const market = event.markets[0];
-      // outcomePrices is "[\"0.52\", \"0.48\"]" — index 0 = Up price
-      let upPrice = 50; // default 50%
+      // Use lastTradePrice for resolved markets (outcomePrices snaps to 0/1 after resolution)
+      let upPrice = 50;
       try {
-        const prices = typeof market.outcomePrices === "string"
-          ? JSON.parse(market.outcomePrices)
-          : market.outcomePrices;
-        upPrice = Number(prices[0]) * 100;
+        const ltp = Number(market.lastTradePrice ?? 0);
+        if (ltp > 0.01 && ltp < 0.99) {
+          upPrice = ltp * 100;
+        } else {
+          const prices = typeof market.outcomePrices === "string"
+            ? JSON.parse(market.outcomePrices)
+            : market.outcomePrices;
+          const p = Number(prices[0]);
+          if (p > 0.01 && p < 0.99) upPrice = p * 100;
+        }
       } catch {}
 
       return {
