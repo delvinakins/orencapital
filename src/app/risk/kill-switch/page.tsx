@@ -202,9 +202,16 @@ export default function KillSwitchPage() {
       <div className="mx-auto max-w-3xl px-4 sm:px-6 py-10 sm:py-16 space-y-6">
 
         {/* Header */}
-        <header className="space-y-1">
-          <h1 className="text-3xl font-semibold tracking-tight">Account Kill Switch</h1>
-          <p className="text-sm text-foreground/70">
+        <header className="space-y-4">
+          <div className="text-xs tracking-[0.22em] text-foreground/40">RISK MANAGEMENT</div>
+          <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
+            <span className="relative inline-block">
+              <span className="relative z-10 text-[color:var(--accent)]">Account Kill Switch</span>
+              <span aria-hidden className="absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-90" />
+              <span aria-hidden className="absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-10" />
+            </span>
+          </h1>
+          <p className="text-sm text-foreground/70 max-w-xl">
             Advisory risk governor. Cuts your allowed risk per trade when account conditions deteriorate.
           </p>
         </header>
