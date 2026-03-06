@@ -4,7 +4,6 @@
 import * as React from "react";
 import Tooltip from "@/components/Tooltip";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
 type RiskState = "Normal" | "Caution" | "Restricted" | "Kill Switch";
 
 type ClimateData = {
@@ -25,7 +24,6 @@ type KillSwitchResult = {
   killSwitch: { active: boolean; reason: string | null; triggeredAt: string | null };
 };
 
-// ── Risk state engine ─────────────────────────────────────────────────────────
 function computeRiskState(args: {
   drawdownPct: number;
   survivalScore: number;
@@ -39,26 +37,27 @@ function computeRiskState(args: {
   if (killSwitchActive) {
     return {
       riskState: "Kill Switch", allowedRiskPct: 0, blocked: true,
-      reasons: ["Kill switch active — no new risk allowed"],
+      reasons: ["Kill switch persisted from a prior evaluation — reset below to re-evaluate"],
       multipliers: { regime: 0, drawdown: 0, survivability: 0 },
-      survivalScore, survivalLabel: survivalScore >= 80 ? "Strong" : survivalScore >= 60 ? "Watch" : "Fragile",
+      survivalScore,
+      survivalLabel: survivalScore >= 80 ? "Strong" : survivalScore >= 60 ? "Watch" : "Fragile",
       killSwitch: { active: true, reason: null, triggeredAt: null },
     };
   }
 
   let regimeMult = 1.0;
-  if (climateScore >= 70)      { regimeMult = 0.5;  reasons.push("Macro risk-off"); }
-  else if (climateScore >= 45) { regimeMult = 0.75; reasons.push("Macro elevated"); }
+  if (climateScore >= 70)      { regimeMult = 0.5;  reasons.push("Macro risk-off (climate ≥ 70)"); }
+  else if (climateScore >= 45) { regimeMult = 0.75; reasons.push("Macro elevated (climate ≥ 45)"); }
 
   let drawdownMult = 1.0;
-  if (drawdownPct >= 0.12)      { drawdownMult = 0.3;  reasons.push("Drawdown critical (≥12%)"); }
-  else if (drawdownPct >= 0.08) { drawdownMult = 0.5;  reasons.push("Drawdown severe (≥8%)"); }
-  else if (drawdownPct >= 0.05) { drawdownMult = 0.7;  reasons.push("Drawdown elevated (≥5%)"); }
+  if (drawdownPct >= 0.12)      { drawdownMult = 0.3;  reasons.push("Drawdown critical (≥ 12%)"); }
+  else if (drawdownPct >= 0.08) { drawdownMult = 0.5;  reasons.push("Drawdown severe (≥ 8%)"); }
+  else if (drawdownPct >= 0.05) { drawdownMult = 0.7;  reasons.push("Drawdown elevated (≥ 5%)"); }
 
   let survMult = 1.0;
-  if (survivalScore < 40)      { survMult = 0.3;  reasons.push("Survivability critical (<40)"); }
-  else if (survivalScore < 55) { survMult = 0.5;  reasons.push("Survivability low (<55)"); }
-  else if (survivalScore < 70) { survMult = 0.75; reasons.push("Survivability watch (<70)"); }
+  if (survivalScore < 40)      { survMult = 0.3;  reasons.push("Survivability critical (< 40)"); }
+  else if (survivalScore < 55) { survMult = 0.5;  reasons.push("Survivability low (< 55)"); }
+  else if (survivalScore < 70) { survMult = 0.75; reasons.push("Survivability watch (< 70)"); }
 
   const allowedRiskPct = baseRiskPct * regimeMult * drawdownMult * survMult;
   const reduction = 1 - allowedRiskPct / baseRiskPct;
@@ -106,18 +105,19 @@ function multColor(v: number) {
   return "text-[color:var(--accent)]";
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
 export default function KillSwitchPage() {
   const [currentEquity, setCurrentEquity] = React.useState("");
   const [peakEquity, setPeakEquity]       = React.useState("");
   const [baseRisk, setBaseRisk]           = React.useState("1.0");
 
-  const [climate, setClimate]             = React.useState<ClimateData | null>(null);
+  const [climate, setClimate]               = React.useState<ClimateData | null>(null);
   const [climateLoading, setClimateLoading] = React.useState(true);
 
-  const [result, setResult]   = React.useState<KillSwitchResult | null>(null);
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError]     = React.useState<string | null>(null);
+  const [result, setResult]     = React.useState<KillSwitchResult | null>(null);
+  const [loading, setLoading]   = React.useState(false);
+  const [resetting, setResetting] = React.useState(false);
+  const [resetMsg, setResetMsg] = React.useState<string | null>(null);
+  const [error, setError]       = React.useState<string | null>(null);
 
   React.useEffect(() => {
     fetch("/api/market/climate", { cache: "no-store" })
@@ -129,9 +129,10 @@ export default function KillSwitchPage() {
 
   async function evaluate() {
     setError(null);
-    const curr  = parseFloat(currentEquity);
-    const peak  = parseFloat(peakEquity);
-    const base  = parseFloat(baseRisk) / 100;
+    setResetMsg(null);
+    const curr = parseFloat(currentEquity);
+    const peak = parseFloat(peakEquity);
+    const base = parseFloat(baseRisk) / 100;
 
     if (!Number.isFinite(curr) || curr <= 0) { setError("Enter a valid current equity."); return; }
     if (!Number.isFinite(peak) || peak <= 0) { setError("Enter a valid peak equity."); return; }
@@ -153,9 +154,9 @@ export default function KillSwitchPage() {
 
       const computed = computeRiskState({
         drawdownPct,
-        survivalScore: data.score ?? 50,
-        climateScore:  climate?.score ?? 0,
-        baseRiskPct:   base,
+        survivalScore:    data.score ?? 50,
+        climateScore:     climate?.score ?? 0,
+        baseRiskPct:      base,
         killSwitchActive: data.killSwitch?.active ?? false,
       });
 
@@ -173,6 +174,29 @@ export default function KillSwitchPage() {
     }
   }
 
+  async function resetKillSwitch() {
+    setResetting(true);
+    setResetMsg(null);
+    try {
+      const res = await fetch("/api/admin/kill-switch/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setResetMsg("Kill switch cleared. Re-evaluate to get your current risk state.");
+        setResult(null);
+      } else {
+        setResetMsg(data.error ?? "Reset failed.");
+      }
+    } catch {
+      setResetMsg("Reset failed. Try again.");
+    } finally {
+      setResetting(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-3xl px-4 sm:px-6 py-10 sm:py-16 space-y-6">
@@ -181,13 +205,22 @@ export default function KillSwitchPage() {
         <header className="space-y-1">
           <h1 className="text-3xl font-semibold tracking-tight">Account Kill Switch</h1>
           <p className="text-sm text-foreground/70">
-            Advisory risk governor. Cuts allowed risk automatically when conditions deteriorate.
+            Advisory risk governor. Cuts your allowed risk per trade when account conditions deteriorate.
           </p>
         </header>
 
         {/* Macro climate */}
         <div className="flex items-center gap-3 text-xs">
-          <span className="text-foreground/40">Macro Climate</span>
+          <Tooltip label="Macro Climate">
+            <div className="space-y-1.5">
+              <p>Derived from VIX and SPX vs its 200-day moving average.</p>
+              <ul className="list-disc pl-4 space-y-1">
+                <li><span className="font-semibold">Stable:</span> VIX normal, trend healthy — regime multiplier ×1.0</li>
+                <li><span className="font-semibold">Elevated:</span> VIX rising or trend mixed — regime multiplier ×0.75</li>
+                <li><span className="font-semibold">High Risk:</span> VIX high or trend fragile — regime multiplier ×0.5</li>
+              </ul>
+            </div>
+          </Tooltip>
           {climateLoading ? (
             <span className="text-foreground/30">Loading…</span>
           ) : climate ? (
@@ -208,36 +241,53 @@ export default function KillSwitchPage() {
           <div className="text-xs tracking-[0.22em] text-foreground/50">ACCOUNT INPUTS</div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            {[
-              { label: "Current Equity", value: currentEquity, set: setCurrentEquity, prefix: "$", placeholder: "50000" },
-              { label: "Peak Equity",    value: peakEquity,    set: setPeakEquity,    prefix: "$", placeholder: "55000" },
-              { label: "Base Risk / Trade", value: baseRisk,   set: setBaseRisk,      suffix: "%", placeholder: "1.0" },
-            ].map(({ label, value, set, prefix, suffix, placeholder }) => (
-              <div key={label}>
-                <label className="block text-xs text-foreground/60 mb-1.5">{label}</label>
-                <div className="flex items-center rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] overflow-hidden focus-within:border-[color:var(--accent)]/40 transition-colors">
-                  {prefix && <span className="px-3 text-xs text-foreground/40 border-r border-[color:var(--border)]">{prefix}</span>}
-                  <input
-                    type="number"
-                    step="any"
-                    value={value}
-                    onChange={(e) => set(e.target.value)}
-                    placeholder={placeholder}
-                    className="flex-1 bg-transparent px-3 py-2.5 text-sm text-foreground placeholder-foreground/20 outline-none"
-                  />
-                  {suffix && <span className="px-3 text-xs text-foreground/40 border-l border-[color:var(--border)]">{suffix}</span>}
-                </div>
+            {/* Current Equity */}
+            <div>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <label className="text-xs text-foreground/60">Current Equity</label>
+                <Tooltip label="Current Equity">Your account value right now.</Tooltip>
               </div>
-            ))}
+              <div className="flex items-center rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] overflow-hidden focus-within:border-[color:var(--accent)]/40 transition-colors">
+                <span className="px-3 text-xs text-foreground/40 border-r border-[color:var(--border)]">$</span>
+                <input type="number" step="any" value={currentEquity} onChange={(e) => setCurrentEquity(e.target.value)} placeholder="50000"
+                  className="flex-1 bg-transparent px-3 py-2.5 text-sm text-foreground placeholder-foreground/20 outline-none" />
+              </div>
+            </div>
+
+            {/* Peak Equity */}
+            <div>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <label className="text-xs text-foreground/60">Peak Equity</label>
+                <Tooltip label="Peak Equity">The highest your account has ever been. Used to calculate drawdown from peak.</Tooltip>
+              </div>
+              <div className="flex items-center rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] overflow-hidden focus-within:border-[color:var(--accent)]/40 transition-colors">
+                <span className="px-3 text-xs text-foreground/40 border-r border-[color:var(--border)]">$</span>
+                <input type="number" step="any" value={peakEquity} onChange={(e) => setPeakEquity(e.target.value)} placeholder="55000"
+                  className="flex-1 bg-transparent px-3 py-2.5 text-sm text-foreground placeholder-foreground/20 outline-none" />
+              </div>
+            </div>
+
+            {/* Base Risk */}
+            <div>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <label className="text-xs text-foreground/60">Base Risk / Trade</label>
+                <Tooltip label="Base Risk per Trade">
+                  Your normal risk % under good conditions. The kill switch multiplies this down when conditions worsen.
+                </Tooltip>
+              </div>
+              <div className="flex items-center rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] overflow-hidden focus-within:border-[color:var(--accent)]/40 transition-colors">
+                <input type="number" step="any" value={baseRisk} onChange={(e) => setBaseRisk(e.target.value)} placeholder="1.0"
+                  className="flex-1 bg-transparent px-3 py-2.5 text-sm text-foreground placeholder-foreground/20 outline-none" />
+                <span className="px-3 text-xs text-foreground/40 border-l border-[color:var(--border)]">%</span>
+              </div>
+            </div>
           </div>
 
           {error && <p className="text-xs text-rose-400">{error}</p>}
+          {resetMsg && <p className="text-xs text-[color:var(--accent)]">{resetMsg}</p>}
 
-          <button
-            onClick={evaluate}
-            disabled={loading}
-            className="oc-btn oc-btn-primary w-full disabled:opacity-50"
-          >
+          <button onClick={evaluate} disabled={loading}
+            className="oc-btn oc-btn-primary w-full disabled:opacity-50">
             {loading ? "Evaluating…" : "Evaluate Risk State"}
           </button>
         </section>
@@ -245,18 +295,20 @@ export default function KillSwitchPage() {
         {/* Result */}
         {result && (
           <>
-            {/* State card */}
             <section className={`oc-glass rounded-2xl p-6 border ${stateBorder(result.riskState)} space-y-5`}>
               <div className="text-xs tracking-[0.22em] text-foreground/50">RISK STATE</div>
 
               <div className="flex items-start justify-between">
-                <div>
-                  <div className={`text-4xl font-semibold ${stateAccent(result.riskState)}`}>
-                    {result.riskState}
-                  </div>
+                <div className={`text-4xl font-semibold ${stateAccent(result.riskState)}`}>
+                  {result.riskState}
                 </div>
                 <div className="text-right">
-                  <div className="text-xs text-foreground/50 mb-1">Allowed / Trade</div>
+                  <div className="text-xs text-foreground/50 mb-1">
+                    <Tooltip label="Allowed / Trade">
+                      Max risk you should take per trade today given current conditions.
+                      Formula: base risk × regime × drawdown × survivability multipliers.
+                    </Tooltip>
+                  </div>
                   <div className="text-3xl font-semibold tabular-nums">
                     {result.blocked ? "—" : fmtPct(result.allowedRiskPct)}
                   </div>
@@ -266,12 +318,17 @@ export default function KillSwitchPage() {
               {/* Multipliers */}
               <div className="grid grid-cols-3 gap-3">
                 {([
-                  ["Regime",         result.multipliers.regime],
-                  ["Drawdown",       result.multipliers.drawdown],
-                  ["Survivability",  result.multipliers.survivability],
-                ] as [string, number][]).map(([label, val]) => (
+                  ["Regime", result.multipliers.regime,
+                    "Macro climate multiplier. High Risk = ×0.5, Elevated = ×0.75, Stable = ×1.0"],
+                  ["Drawdown", result.multipliers.drawdown,
+                    "How far you are from peak equity. ≥12% = ×0.3, ≥8% = ×0.5, ≥5% = ×0.7, below 5% = ×1.0"],
+                  ["Survivability", result.multipliers.survivability,
+                    "Survival score-based multiplier. Score < 40 = ×0.3, < 55 = ×0.5, < 70 = ×0.75, ≥ 70 = ×1.0"],
+                ] as [string, number, string][]).map(([label, val, tip]) => (
                   <div key={label} className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-3 text-center">
-                    <div className="text-[11px] text-foreground/40 mb-1">{label}</div>
+                    <div className="flex items-center justify-center gap-1 text-[11px] text-foreground/40 mb-1">
+                      <Tooltip label={label}>{tip}</Tooltip>
+                    </div>
                     <div className={`text-sm font-semibold tabular-nums ${multColor(val)}`}>×{val.toFixed(2)}</div>
                   </div>
                 ))}
@@ -281,7 +338,14 @@ export default function KillSwitchPage() {
               <div className="flex items-center justify-between rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-3">
                 <div className="text-xs text-foreground/50">
                   <Tooltip label="Survival Score">
-                    Computed from drawdown severity and risk per trade. Drives the survivability multiplier.
+                    <div className="space-y-1.5">
+                      <p>Computed from drawdown severity and risk per trade.</p>
+                      <ul className="list-disc pl-4 space-y-1">
+                        <li><span className="font-semibold">Strong (≥80):</span> Survivability multiplier ×1.0</li>
+                        <li><span className="font-semibold">Watch (60–79):</span> Survivability multiplier ×0.75</li>
+                        <li><span className="font-semibold">Fragile (&lt;60):</span> Survivability multiplier ×0.5 or lower</li>
+                      </ul>
+                    </div>
                   </Tooltip>
                 </div>
                 <div className="flex items-center gap-2">
@@ -329,17 +393,26 @@ export default function KillSwitchPage() {
               </section>
             )}
 
-            {/* Persisted kill switch warning */}
+            {/* Persisted kill switch — reset banner */}
             {result.killSwitch.active && (
-              <section className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-5">
-                <div className="text-sm font-semibold text-rose-300 mb-1">Kill Switch Persisted to Account</div>
-                <p className="text-xs text-rose-200/70">
-                  Your kill switch is active and saved.
-                  {result.killSwitch.triggeredAt && (
-                    <> Triggered {new Date(result.killSwitch.triggeredAt).toLocaleDateString()}.</>
-                  )}
-                  {" "}Auto-clears after 7 days. Contact support to reset early.
-                </p>
+              <section className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-5 space-y-3">
+                <div>
+                  <div className="text-sm font-semibold text-rose-300 mb-1">Kill Switch Active on Account</div>
+                  <p className="text-xs text-rose-200/70">
+                    A prior evaluation triggered your kill switch and it was saved to your account.
+                    {result.killSwitch.triggeredAt && (
+                      <> Triggered {new Date(result.killSwitch.triggeredAt).toLocaleDateString()}.</>
+                    )}
+                    {" "}It auto-clears after 7 days. If your conditions have genuinely improved, you can reset it manually below.
+                  </p>
+                </div>
+                <button
+                  onClick={resetKillSwitch}
+                  disabled={resetting}
+                  className="oc-btn w-full border border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 transition-colors disabled:opacity-50"
+                >
+                  {resetting ? "Resetting…" : "Reset Kill Switch"}
+                </button>
               </section>
             )}
           </>
