@@ -5,6 +5,7 @@ import TopNav from "@/components/TopNav";
 import { Inter_Tight } from "next/font/google";
 import Link from "next/link";
 import LegalGate from "@/components/LegalGate";
+import { Analytics } from "@vercel/analytics/next";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -59,6 +60,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </footer>
         </div>
+
+        <Analytics />
       </body>
     </html>
   );
