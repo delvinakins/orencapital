@@ -84,15 +84,20 @@ async function getKXINXMarkets(eventTicker: string): Promise<KalshiMarketRaw[]> 
   return data?.markets ?? [];
 }
 
-// ── Build today's event ticker ────────────────────────────────────────────────
-function getTodayEventTicker(): string {
-  const now = new Date();
+// ── Build event ticker candidates (today + tomorrow) ─────────────────────────
+function getEventTickerCandidates(): string[] {
   const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
-  const yy = String(now.getUTCFullYear()).slice(2);
-  const mm = months[now.getUTCMonth()];
-  // Advance to next trading day if after 4pm EST (21:00 UTC)
-  const dd = String(now.getUTCDate() + (now.getUTCHours() >= 21 ? 1 : 0)).padStart(2, "0");
-  return `KXINX-${yy}${mm}${dd}H1600`;
+  const toTicker = (d: Date) => {
+    const yy = String(d.getUTCFullYear()).slice(2);
+    const mm = months[d.getUTCMonth()];
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    return `KXINX-${yy}${mm}${dd}H1600`;
+  };
+  const now = new Date();
+  const tomorrow = new Date(now);
+  tomorrow.setUTCDate(now.getUTCDate() + 1);
+  // Try today first, then tomorrow (markets open pre-close; tomorrow opens after 4pm EST)
+  return [toTicker(now), toTicker(tomorrow)];
 }
 
 // ── Parse strike info from Kalshi market ─────────────────────────────────────
@@ -210,14 +215,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "POLYGON_API_KEY not set" }, { status: 500 });
     }
 
-    const eventTicker = getTodayEventTicker();
+    const tickerCandidates = getEventTickerCandidates();
     const hoursLeft = hoursUntilClose();
 
-    // Fetch SPY candles + today's KXINX markets in parallel
-    const [spyCandles, rawMarkets] = await Promise.all([
+    const [spyCandles, ...candidateResults] = await Promise.all([
       getSPYCandles(20),
-      getKXINXMarkets(eventTicker),
+      ...tickerCandidates.map((t) => getKXINXMarkets(t)),
     ]);
+
+    const candidateMarkets = candidateResults as KalshiMarketRaw[][];
+    const candidateIdx = candidateMarkets.findIndex((m) => m.length > 0);
+    const eventTicker = tickerCandidates[candidateIdx >= 0 ? candidateIdx : 0];
+    const rawMarkets: KalshiMarketRaw[] = candidateIdx >= 0 ? candidateMarkets[candidateIdx] : [];
 
     if (spyCandles.length === 0) {
       return NextResponse.json({ ok: false, error: "No SPY candles from Polygon" }, { status: 500 });
