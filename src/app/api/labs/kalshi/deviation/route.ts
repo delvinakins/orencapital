@@ -66,7 +66,7 @@ async function getKalshiQuote(ticker: string): Promise<MarketQuote> {
   };
 }
 
-// ── Discover today's KXINX markets from Kalshi ──────────────────────────────
+// ── Discover today's KXINX markets via series endpoint ──────────────────────
 interface KalshiMarketRaw {
   ticker: string;
   subtitle: string;
@@ -78,10 +78,15 @@ interface KalshiMarketRaw {
 }
 
 async function getKXINXMarkets(eventTicker: string): Promise<KalshiMarketRaw[]> {
+  // Use series endpoint (proven to work) instead of events endpoint
   const data = await fetchSafe(
-    `${KALSHI_BASE}/events/${encodeURIComponent(eventTicker)}/markets?limit=50`
+    `${KALSHI_BASE}/markets?status=open&series_ticker=KXINX&limit=100`
   );
-  return data?.markets ?? [];
+  const all: any[] = data?.markets ?? [];
+  // Filter to today's event only by matching the event ticker prefix
+  return all.filter((m: any) =>
+    (m.ticker ?? "").toUpperCase().startsWith(eventTicker.toUpperCase())
+  );
 }
 
 // ── Build event ticker candidates (today + tomorrow) ─────────────────────────
@@ -153,13 +158,11 @@ function parseKalshiStrike(m: KalshiMarketRaw): StrikeInfo {
 }
 
 // ── Select brackets nearest to current SPX price ─────────────────────────────
-// SPY * 10 ≈ SPX. Returns the 5 most relevant markets (2 below, current, 2 above)
 function selectNearestBrackets(
   markets: KalshiMarketRaw[],
   spxPrice: number,
   count = 5
 ): KalshiMarketRaw[] {
-  // Score each market by how close its midpoint is to current SPX
   const scored = markets
     .map((m) => {
       const floor = m.floor_strike != null ? Number(m.floor_strike) : null;
@@ -218,6 +221,7 @@ export async function GET(req: NextRequest) {
     const tickerCandidates = getEventTickerCandidates();
     const hoursLeft = hoursUntilClose();
 
+    // Fetch SPY candles + KXINX markets for each candidate event ticker
     const [spyCandles, ...candidateResults] = await Promise.all([
       getSPYCandles(20),
       ...tickerCandidates.map((t) => getKXINXMarkets(t)),
@@ -243,6 +247,11 @@ export async function GET(req: NextRequest) {
         ok: false,
         error: `No markets found for event ${eventTicker}`,
         eventTicker,
+        debug: {
+          tickerCandidates,
+          rawMarketCount: rawMarkets.length,
+          spxPrice: Math.round(spxPrice),
+        },
       }, { status: 404 });
     }
 
