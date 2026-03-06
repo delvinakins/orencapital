@@ -34,17 +34,7 @@ function computeRiskState(args: {
   const { drawdownPct, survivalScore, climateScore, baseRiskPct, killSwitchActive } = args;
   const reasons: string[] = [];
 
-  if (killSwitchActive) {
-    return {
-      riskState: "Kill Switch", allowedRiskPct: 0, blocked: true,
-      reasons: ["Kill switch persisted from a prior evaluation — reset below to re-evaluate"],
-      multipliers: { regime: 0, drawdown: 0, survivability: 0 },
-      survivalScore,
-      survivalLabel: survivalScore >= 80 ? "Strong" : survivalScore >= 60 ? "Watch" : "Fragile",
-      killSwitch: { active: true, reason: null, triggeredAt: null },
-    };
-  }
-
+  // Always compute real multipliers so we can show why it's in kill switch state
   let regimeMult = 1.0;
   if (climateScore >= 70)      { regimeMult = 0.5;  reasons.push("Macro risk-off (climate ≥ 70)"); }
   else if (climateScore >= 45) { regimeMult = 0.75; reasons.push("Macro elevated (climate ≥ 45)"); }
@@ -67,6 +57,25 @@ function computeRiskState(args: {
   else if (reduction >= 0.6)  riskState = "Restricted";
   else if (reduction >= 0.25) riskState = "Caution";
 
+  const survivalLabel = survivalScore >= 80 ? "Strong" : survivalScore >= 60 ? "Watch" : "Fragile";
+
+  // If persisted kill switch, override state but keep real multipliers visible
+  if (killSwitchActive) {
+    return {
+      riskState: "Kill Switch",
+      allowedRiskPct: 0,
+      blocked: true,
+      reasons: [
+        "Kill switch persisted from a prior evaluation — reset below to re-evaluate",
+        ...reasons,
+      ],
+      multipliers: { regime: regimeMult, drawdown: drawdownMult, survivability: survMult },
+      survivalScore,
+      survivalLabel,
+      killSwitch: { active: true, reason: null, triggeredAt: null },
+    };
+  }
+
   return {
     riskState,
     allowedRiskPct: Math.max(0, allowedRiskPct),
@@ -74,7 +83,7 @@ function computeRiskState(args: {
     reasons,
     multipliers: { regime: regimeMult, drawdown: drawdownMult, survivability: survMult },
     survivalScore,
-    survivalLabel: survivalScore >= 80 ? "Strong" : survivalScore >= 60 ? "Watch" : "Fragile",
+    survivalLabel,
     killSwitch: { active: false, reason: null, triggeredAt: null },
   };
 }
@@ -105,6 +114,11 @@ function multColor(v: number) {
   return "text-[color:var(--accent)]";
 }
 
+// Field label component — avoids the Tooltip label doubling
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return <span className="text-xs text-foreground/60">{children}</span>;
+}
+
 export default function KillSwitchPage() {
   const [currentEquity, setCurrentEquity] = React.useState("");
   const [peakEquity, setPeakEquity]       = React.useState("");
@@ -113,11 +127,11 @@ export default function KillSwitchPage() {
   const [climate, setClimate]               = React.useState<ClimateData | null>(null);
   const [climateLoading, setClimateLoading] = React.useState(true);
 
-  const [result, setResult]     = React.useState<KillSwitchResult | null>(null);
-  const [loading, setLoading]   = React.useState(false);
+  const [result, setResult]       = React.useState<KillSwitchResult | null>(null);
+  const [loading, setLoading]     = React.useState(false);
   const [resetting, setResetting] = React.useState(false);
-  const [resetMsg, setResetMsg] = React.useState<string | null>(null);
-  const [error, setError]       = React.useState<string | null>(null);
+  const [resetMsg, setResetMsg]   = React.useState<string | null>(null);
+  const [error, setError]         = React.useState<string | null>(null);
 
   React.useEffect(() => {
     fetch("/api/market/climate", { cache: "no-store" })
@@ -251,7 +265,7 @@ export default function KillSwitchPage() {
             {/* Current Equity */}
             <div>
               <div className="flex items-center gap-1.5 mb-1.5">
-                <label className="text-xs text-foreground/60">Current Equity</label>
+                <FieldLabel>Current Equity</FieldLabel>
                 <Tooltip label="Current Equity">Your account value right now.</Tooltip>
               </div>
               <div className="flex items-center rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] overflow-hidden focus-within:border-[color:var(--accent)]/40 transition-colors">
@@ -264,7 +278,7 @@ export default function KillSwitchPage() {
             {/* Peak Equity */}
             <div>
               <div className="flex items-center gap-1.5 mb-1.5">
-                <label className="text-xs text-foreground/60">Peak Equity</label>
+                <FieldLabel>Peak Equity</FieldLabel>
                 <Tooltip label="Peak Equity">The highest your account has ever been. Used to calculate drawdown from peak.</Tooltip>
               </div>
               <div className="flex items-center rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] overflow-hidden focus-within:border-[color:var(--accent)]/40 transition-colors">
@@ -277,7 +291,7 @@ export default function KillSwitchPage() {
             {/* Base Risk */}
             <div>
               <div className="flex items-center gap-1.5 mb-1.5">
-                <label className="text-xs text-foreground/60">Base Risk / Trade</label>
+                <FieldLabel>Base Risk / Trade</FieldLabel>
                 <Tooltip label="Base Risk per Trade">
                   Your normal risk % under good conditions. The kill switch multiplies this down when conditions worsen.
                 </Tooltip>
@@ -290,7 +304,7 @@ export default function KillSwitchPage() {
             </div>
           </div>
 
-          {error && <p className="text-xs text-rose-400">{error}</p>}
+          {error   && <p className="text-xs text-rose-400">{error}</p>}
           {resetMsg && <p className="text-xs text-[color:var(--accent)]">{resetMsg}</p>}
 
           <button onClick={evaluate} disabled={loading}
@@ -310,7 +324,8 @@ export default function KillSwitchPage() {
                   {result.riskState}
                 </div>
                 <div className="text-right">
-                  <div className="text-xs text-foreground/50 mb-1">
+                  <div className="flex items-center justify-end gap-1.5 mb-1">
+                    <span className="text-xs text-foreground/50">Allowed / Trade</span>
                     <Tooltip label="Allowed / Trade">
                       Max risk you should take per trade today given current conditions.
                       Formula: base risk × regime × drawdown × survivability multipliers.
