@@ -79,16 +79,6 @@ const PRINCIPLES = [
   },
 ];
 
-const STACK = [
-  { label: "Framework", value: "Next.js + TypeScript", detail: "App Router, Server Components" },
-  { label: "Styling", value: "Tailwind CSS", detail: "Utility-first, dark theme" },
-  { label: "Database", value: "Supabase", detail: "Postgres, Auth, Realtime" },
-  { label: "Market Data", value: "Polygon.io", detail: "Equities, snapshots, candles" },
-  { label: "Macro Data", value: "FRED API", detail: "Rates, indicators, series" },
-  { label: "Payments", value: "Stripe", detail: "Subscriptions, gating" },
-  { label: "Deployment", value: "Vercel", detail: "Edge, cron jobs, CI/CD" },
-  { label: "Sports Data", value: "API-Sports + Odds", detail: "NBA lines, scores, results" },
-];
 
 const STATUS = [
   { label: "NBA Edge Record", value: "16–11", sub: "33 games graded" },
@@ -284,42 +274,14 @@ export default function Home() {
 
         <div className="border-t border-[color:var(--border)]" />
 
-        {/* ── STACK ────────────────────────────────────── */}
+        {/* ── ABOUT ──────────────────────────────────── */}
         <section className="py-16 sm:py-20">
           <FadeIn>
             <div className="text-xs tracking-[0.22em] text-foreground/35 uppercase mb-2">
-              Infrastructure
+              About
             </div>
             <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight mb-10">
-              How it&rsquo;s built
-            </h2>
-          </FadeIn>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {STACK.map((item, i) => (
-              <FadeIn key={item.label} delay={i * 0.04}>
-                <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-4 space-y-1.5 hover:border-[color:var(--accent)]/30 transition-colors">
-                  <div className="text-[10px] tracking-[0.18em] text-foreground/35 uppercase">
-                    {item.label}
-                  </div>
-                  <div className="text-sm font-medium leading-snug">{item.value}</div>
-                  <div className="text-xs text-foreground/45">{item.detail}</div>
-                </div>
-              </FadeIn>
-            ))}
-          </div>
-        </section>
-
-        <div className="border-t border-[color:var(--border)]" />
-
-        {/* ── BUILDER ──────────────────────────────────── */}
-        <section className="py-16 sm:py-20">
-          <FadeIn>
-            <div className="text-xs tracking-[0.22em] text-foreground/35 uppercase mb-2">
-              Builder
-            </div>
-            <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight mb-10">
-              Solo-built. End to end.
+              Built by a trader. For traders.
             </h2>
           </FadeIn>
 
@@ -327,14 +289,15 @@ export default function Home() {
             <FadeIn delay={0.06}>
               <div className="space-y-4 text-sm text-foreground/60 leading-relaxed">
                 <p>
-                  Oren Capital is designed, engineered, and shipped by one person.
-                  Product decisions, data pipelines, quantitative models, frontend,
-                  infrastructure — no team, no committee, no consensus overhead.
+                  Oren Capital was built by a real trader and sports fanatic who got
+                  tired of sizing by feel. The same instincts that make betting markets
+                  interesting — edge, variance, expected value — apply directly to how
+                  you should be managing risk in your trading account.
                 </p>
                 <p>
-                  Every feature ships fast, gets graded against real data, and evolves
-                  based on what actually works. The NBA model has a public scoreboard.
-                  The deviation engine logs every signal. Nothing hides from the numbers.
+                  Every model ships with a public scoreboard. The NBA Edge record is
+                  live. The deviation engine logs every signal. If it doesn&rsquo;t
+                  hold up against real data, it gets killed. No hiding from the numbers.
                 </p>
               </div>
             </FadeIn>
@@ -342,7 +305,7 @@ export default function Home() {
             <FadeIn delay={0.14}>
               <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 space-y-0">
                 <div className="text-xs tracking-[0.18em] text-foreground/35 uppercase mb-4">
-                  Current Status
+                  Model Scorecard
                 </div>
                 {STATUS.map((s, i) => (
                   <div
