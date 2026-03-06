@@ -819,7 +819,7 @@ export default function NbaClient() {
       else cur.push++;
       byDay.set(k, cur);
     }
-    const days = Array.from(byDay.entries()).sort((a, b) => a[0].localeCompare(b[0])).slice(-7).reverse();
+    const days = Array.from(byDay.entries()).sort((a, b) => a[0].localeCompare(b[0])).slice(-5).reverse();
     return { hits, misses, pushes, graded, p, days };
   }, [scoreboard]);
 
@@ -870,12 +870,16 @@ export default function NbaClient() {
 
         {/* Scoreboard */}
         <section className="rounded-2xl border border-white/10 bg-black/30 p-5 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-xs tracking-[0.18em] text-foreground/40 mb-1">SCOREBOARD</div>
-              <div className="text-sm font-medium text-foreground">Oren Edge</div>
-              <div className="text-xs text-foreground/40 mt-0.5">Finals only · Edge sign vs ATS result</div>
-            </div>
+          <div>
+            <div className="text-xs tracking-[0.18em] text-foreground/40 mb-1">SCOREBOARD</div>
+            <div className="text-sm font-medium text-foreground">Oren Edge · This device</div>
+            <div className="text-xs text-foreground/40 mt-0.5">Finals only · Edge sign vs ATS result</div>
+          </div>
+
+
+          {/* Season totals */}
+          <div className="border-t border-white/8 pt-3">
+            <div className="text-[10px] text-foreground/35 tracking-wide uppercase mb-2">Season totals</div>
             <div className="flex flex-wrap items-center gap-2">
               {[
                 { label: "Hits", val: scoreSummary.hits, cls: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" },
@@ -894,62 +898,32 @@ export default function NbaClient() {
             </div>
           </div>
 
-          {/* Global row */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-3">
-            <div className="text-xs text-foreground/40">
-              Global ·{" "}
-              <span className="text-foreground/25">
-                {globalStatus === "loading" ? "Loading…" : globalStatus === "missing" ? "Unavailable" : "Synced"}
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {[
-                { label: "Hits", val: globalSummary?.hits, cls: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" },
-                { label: "Miss", val: globalSummary?.misses, cls: "border-rose-400/30 bg-rose-500/10 text-rose-200" },
-                { label: "Push", val: globalSummary?.pushes, cls: "border-white/10 bg-white/5 text-white/60" },
-              ].map(({ label, val, cls }) => (
-                <span key={label} className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", cls)}>
-                  <span className="tabular-nums font-semibold">{val ?? "—"}</span>
-                  <span className="opacity-60">{label}</span>
-                </span>
-              ))}
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/60">
-                <span className="tabular-nums font-semibold">{formatPct(globalSummary?.p ?? null)}</span>
-                <span className="opacity-60">Hit rate</span>
-              </span>
-              <button
-                type="button"
-                onClick={syncGlobalScoreboard}
-                className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-              >
-                Sync
-              </button>
-            </div>
-          </div>
-
-          {/* Day grid */}
+          {/* Last 5 days */}
           {scoreSummary.days.length > 0 ? (
-            <div className="grid gap-2 sm:grid-cols-3 border-t border-white/8 pt-3">
-              {scoreSummary.days.map(([day, v]: [string, DayAgg]) => {
-                const graded = v.hit + v.miss;
-                const p = graded > 0 ? v.hit / graded : null;
-                const pct = formatPct(p);
-                const pctColor = p == null ? "text-white/40" : p >= 0.6 ? "text-emerald-300" : p >= 0.4 ? "text-white/70" : "text-rose-300";
-                return (
-                  <div key={day} className="rounded-xl border border-white/8 bg-black/20 px-3.5 py-3">
-                    <div className="text-[10px] text-foreground/35 tracking-wide uppercase mb-1">{day}</div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm">
-                        <span className="font-semibold text-emerald-300">{v.hit}</span>
-                        <span className="text-white/30 mx-1">–</span>
-                        <span className="font-semibold text-rose-300">{v.miss}</span>
-                        {v.push > 0 && <span className="text-xs text-white/30 ml-1">({v.push}p)</span>}
-                      </span>
-                      <span className={cn("tabular-nums text-sm font-semibold", pctColor)}>{pct}</span>
+            <div className="border-t border-white/8 pt-3">
+              <div className="text-[10px] text-foreground/35 tracking-wide uppercase mb-2">Last 5 days</div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {scoreSummary.days.map(([day, v]: [string, DayAgg]) => {
+                  const graded = v.hit + v.miss;
+                  const p = graded > 0 ? v.hit / graded : null;
+                  const pct = formatPct(p);
+                  const pctColor = p == null ? "text-white/40" : p >= 0.6 ? "text-emerald-300" : p >= 0.4 ? "text-white/70" : "text-rose-300";
+                  return (
+                    <div key={day} className="rounded-xl border border-white/8 bg-black/20 px-3.5 py-3">
+                      <div className="text-[10px] text-foreground/35 tracking-wide uppercase mb-1">{day}</div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm">
+                          <span className="font-semibold text-emerald-300">{v.hit}</span>
+                          <span className="text-white/30 mx-1">–</span>
+                          <span className="font-semibold text-rose-300">{v.miss}</span>
+                          {v.push > 0 && <span className="text-xs text-white/30 ml-1">({v.push}p)</span>}
+                        </span>
+                        <span className={cn("tabular-nums text-sm font-semibold", pctColor)}>{pct}</span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           ) : (
             <div className="text-xs text-foreground/35 border-t border-white/8 pt-3">No graded finals saved yet on this device.</div>
