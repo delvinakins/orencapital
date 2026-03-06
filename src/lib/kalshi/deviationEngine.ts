@@ -40,10 +40,12 @@ export type DeviationLabel =
 // ── Constants ────────────────────────────────────────────────────────────────
 const EWMA_ALPHA = 0.25;
 const EPSILON = 0.005;
-const SPREAD_MAX_CENTS = 10;
+// Raised from 10 → 30 to handle KXINX bracket spreads (typically 14–43¢)
+const SPREAD_MAX_CENTS = 30;
 const DEPTH_REF_QTY = 50;
 const MIN_CANDLES = 6;
-const CONFIDENCE_THRESHOLD = 0.4;
+// Lowered from 0.4 → 0.25 so wide-spread markets still score
+const CONFIDENCE_THRESHOLD = 0.25;
 const TRADING_HOURS_PER_DAY = 6.5;
 const TRADING_DAYS_PER_YEAR = 252;
 
