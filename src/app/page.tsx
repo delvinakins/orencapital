@@ -1,93 +1,42 @@
 // src/app/page.tsx
 "use client";
 
-import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-/* =========================================================
-   Local Tooltip (matches your style)
-========================================================= */
+/* ── Tooltip ────────────────────────────────────────────── */
 
 function Tooltip({ label, children }: { label: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
-  const tipRef = useRef<HTMLSpanElement | null>(null);
-  const boxRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    function onPointerDown(e: PointerEvent) {
-      if (!open) return;
-      const el = tipRef.current;
-      if (!el) return;
-      if (e.target instanceof Node && !el.contains(e.target)) setOpen(false);
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
+  const ref = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
-    const box = boxRef.current;
-    if (!box) return;
-
-    box.style.transform = "translateX(-50%)";
-    requestAnimationFrame(() => {
-      const r = box.getBoundingClientRect();
-      const vw = window.innerWidth;
-      const pad = 12;
-
-      let dx = 0;
-      if (r.left < pad) dx = pad - r.left;
-      if (r.right > vw - pad) dx = vw - pad - r.right;
-
-      if (dx !== 0) box.style.transform = `translateX(calc(-50% + ${dx}px))`;
-    });
+    const close = (e: PointerEvent) => {
+      if (e.target instanceof Node && !ref.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
   }, [open]);
 
   return (
-    <span className="inline-flex items-center gap-2" ref={tipRef}>
+    <span className="inline-flex items-center gap-2" ref={ref}>
       <span>{label}</span>
-
       <span className="relative inline-flex">
         <button
           type="button"
           aria-label={`Help: ${label}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            setOpen((v) => !v);
-          }}
-          className="
-            inline-flex h-5 w-5 items-center justify-center
-            rounded-full
-            border border-[color:var(--border)]
-            bg-[color:var(--card)]
-            text-[11px] text-foreground/80
-            hover:border-[color:var(--accent)]
-            hover:text-[color:var(--accent)]
-            active:scale-[0.98]
-            transition-colors
-          "
+          onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] text-[11px] text-foreground/80 hover:border-[color:var(--accent)] hover:text-[color:var(--accent)] transition-colors"
         >
           i
         </button>
-
         {open && (
           <div
-            ref={boxRef}
             role="dialog"
             aria-label={`${label} help`}
             onClick={(e) => e.stopPropagation()}
-            className="
-              absolute left-1/2 top-[140%] z-50
-              w-[min(420px,85vw)]
-              -translate-x-1/2
-              rounded-xl
-              border border-[color:var(--border)]
-              bg-[color:var(--background)]
-              px-3 py-2
-              text-xs text-foreground/90
-              shadow-2xl shadow-black/40
-            "
+            className="absolute left-1/2 top-[140%] z-50 w-[min(420px,85vw)] -translate-x-1/2 rounded-xl border border-[color:var(--border)] bg-[color:var(--background)] px-3 py-2 text-xs text-foreground/90 shadow-2xl shadow-black/40"
           >
             {children}
             <div className="mt-2 text-[11px] text-foreground/60">Tap outside to close</div>
@@ -98,9 +47,7 @@ function Tooltip({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/* =========================================================
-   Macro Climate Component (live feed)
-========================================================= */
+/* ── Macro Climate Bar ──────────────────────────────────── */
 
 type Climate = {
   score: number;
@@ -113,21 +60,59 @@ type Climate = {
   cap_bps?: number | null;
 };
 
-function getToneColor(tone: Climate["tone"]) {
-  if (tone === "accent") return "bg-[color:var(--accent)]";
-  if (tone === "warn") return "bg-amber-500";
-  return "bg-yellow-500";
+function fmt(x?: number | null, d = 2) {
+  return x != null && Number.isFinite(x) ? x.toLocaleString(undefined, { maximumFractionDigits: d }) : "—";
 }
 
-function fmtNum(x?: number | null, digits = 2) {
-  if (x == null || !Number.isFinite(x)) return "—";
-  return x.toLocaleString(undefined, { maximumFractionDigits: digits });
+function pct(x?: number | null, d = 1) {
+  return x != null && Number.isFinite(x) ? `${(x * 100).toFixed(d)}%` : "—";
 }
 
-function fmtPct01(x01?: number | null, digits = 1) {
-  if (x01 == null || !Number.isFinite(x01)) return "—";
-  return `${(x01 * 100).toFixed(digits)}%`;
+const TONE_BG: Record<Climate["tone"], string> = {
+  accent: "bg-[color:var(--accent)]",
+  neutral: "bg-yellow-500",
+  warn: "bg-amber-500",
+};
+
+function ClimateTooltip({ c }: { c: Climate }) {
+  const trend = c.spx != null && c.spx200 != null && c.spx200 > 0
+    ? (c.spx - c.spx200) / c.spx200 : null;
+
+  const inputs: [string, string][] = [
+    ["VIX", fmt(c.vix, 2)],
+    ["SPX", fmt(c.spx, 0)],
+    ["SPX vs 200d", pct(trend, 2)],
+    ["Risk cap", c.cap_bps != null ? `${c.cap_bps} bps` : "—"],
+  ];
+
+  return (
+    <div className="space-y-2">
+      <div><span className="font-semibold">{c.score} / 100</span> — market stress score. 0 = calm, 100 = crisis.</div>
+      <div className="text-foreground/70">
+        Answers: <span className="font-semibold">&quot;Is the environment forgiving or punishing for sizing right now?&quot;</span>
+      </div>
+      <div className="space-y-1 text-foreground/70">
+        <div><span className="font-semibold">0–25:</span> Stable</div>
+        <div><span className="font-semibold">26–60:</span> Elevated — consider sizing down</div>
+        <div><span className="font-semibold">61–100:</span> High Risk — survival mode</div>
+      </div>
+      <div className="pt-2 mt-2 border-t border-[color:var(--border)] space-y-1 text-foreground/70">
+        <div className="text-[11px] uppercase tracking-wide text-foreground/50 mb-2">Live inputs</div>
+        {inputs.map(([k, v]) => (
+          <div key={k} className="flex items-center justify-between gap-3">
+            <span>{k}</span>
+            <span className="tabular-nums font-semibold text-foreground">{v}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
+
+const CLIMATE_FALLBACK: Climate = {
+  score: 0, label: "Stable", tone: "neutral",
+  details: "Market climate unavailable", vix: null, spx: null, spx200: null, cap_bps: null,
+};
 
 function MarketClimateBar() {
   const [climate, setClimate] = useState<Climate | null>(null);
@@ -135,219 +120,140 @@ function MarketClimateBar() {
 
   useEffect(() => {
     let alive = true;
-
-    async function load() {
-      try {
-        setLoading(true);
-        const res = await fetch("/api/market/climate", { cache: "no-store" });
-        const json = await res.json().catch(() => null);
-        if (!alive) return;
-
-        if (json?.ok && json?.climate) {
-          setClimate(json.climate as Climate);
-        } else {
-          setClimate(null);
-        }
-      } catch {
-        if (!alive) return;
-        setClimate(null);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    }
-
-    load();
-    return () => {
-      alive = false;
-    };
+    fetch("/api/market/climate", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((json) => { if (alive && json?.ok) setClimate(json.climate); })
+      .catch(() => {})
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
   }, []);
 
-  const c: Climate =
-    climate ?? {
-      score: 0,
-      label: "Stable",
-      tone: "neutral",
-      details: "Market climate unavailable",
-      vix: null,
-      spx: null,
-      spx200: null,
-      cap_bps: null,
-    };
-
-  const spxTrend01 =
-    c.spx != null && c.spx200 != null && c.spx200 > 0 ? (c.spx - c.spx200) / c.spx200 : null;
-
-  const tip = (
-    <div className="space-y-2">
-      <div>
-        <span className="font-semibold">{c.score} / 100</span> is a{" "}
-        <span className="font-semibold">market stress score</span> (0 = calm, 100 = crisis).
-      </div>
-
-      <div className="text-foreground/70">
-        It answers: <span className="font-semibold">“Is the environment forgiving or punishing for sizing?”</span>
-      </div>
-
-      <div className="space-y-1 text-foreground/70">
-        <div>
-          <span className="font-semibold">0–25:</span> Stable (forgiving)
-        </div>
-        <div>
-          <span className="font-semibold">26–60:</span> Elevated (size down)
-        </div>
-        <div>
-          <span className="font-semibold">61–100:</span> High Risk (survival mode)
-        </div>
-      </div>
-
-      <div className="pt-2 mt-2 border-t border-[color:var(--border)] space-y-1 text-foreground/70">
-        <div className="text-[11px] uppercase tracking-wide text-foreground/50">Live inputs</div>
-        <div className="flex items-center justify-between gap-3">
-          <span>VIX</span>
-          <span className="tabular-nums font-semibold text-foreground">{fmtNum(c.vix, 2)}</span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span>SPX</span>
-          <span className="tabular-nums font-semibold text-foreground">{fmtNum(c.spx, 2)}</span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span>SPX vs 200d</span>
-          <span className="tabular-nums font-semibold text-foreground">{fmtPct01(spxTrend01, 2)}</span>
-        </div>
-        <div className="flex items-center justify-between gap-3">
-          <span>Risk cap (if active)</span>
-          <span className="tabular-nums font-semibold text-foreground">{c.cap_bps == null ? "—" : `${c.cap_bps} bps`}</span>
-        </div>
-      </div>
-
-      <div className="text-foreground/60">
-        Higher stress typically means higher volatility and more regime risk — which increases blow-up risk at the same risk %.
-      </div>
-    </div>
-  );
+  const c = climate ?? CLIMATE_FALLBACK;
 
   return (
-    <div className="mt-12 space-y-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6">
+    <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 sm:p-6 space-y-3">
       <div className="flex items-center justify-between">
-        <div className="text-xs uppercase tracking-wide text-foreground/60">
-          <Tooltip label="Macro Risk Climate">{tip}</Tooltip>
+        <div className="text-xs uppercase tracking-wide text-foreground/50">
+          <Tooltip label="Macro Risk Climate"><ClimateTooltip c={c} /></Tooltip>
         </div>
-        <div className="text-xs text-foreground/60 tabular-nums">
+        <div className="text-xs text-foreground/50 tabular-nums">
           {loading ? "…" : `${c.score} / 100`}
         </div>
       </div>
 
-      <div className="flex items-center justify-between text-sm">
-        <div className="font-semibold tracking-tight">{loading ? "Loading…" : c.label}</div>
-        <div className="text-xs text-foreground/55">
-          {loading ? "Fetching live signal" : `VIX ${fmtNum(c.vix, 2)} · SPX ${fmtNum(c.spx, 0)}`}
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium">{loading ? "Loading…" : c.label}</div>
+        <div className="text-xs text-foreground/50">
+          {!loading && `VIX ${fmt(c.vix, 2)} · SPX ${fmt(c.spx, 0)}`}
         </div>
       </div>
 
-      <div className="h-2 w-full rounded-full bg-[color:var(--border)] overflow-hidden">
+      <div className="h-1.5 w-full rounded-full bg-[color:var(--border)] overflow-hidden">
         <div
-          className={`h-full transition-all duration-500 ${getToneColor(c.tone)}`}
-          style={{ width: `${Math.max(0, Math.min(100, c.score))}%` }}
+          className={`h-full rounded-full transition-all duration-700 ${TONE_BG[c.tone]}`}
+          style={{ width: `${Math.max(2, Math.min(100, c.score))}%` }}
         />
       </div>
 
-      <div className="text-xs text-foreground/60">{loading ? "Updating…" : c.details}</div>
+      <div className="text-xs text-foreground/50">{loading ? "Fetching live signal…" : c.details}</div>
     </div>
   );
 }
 
-/* =========================================================
-   Page
-========================================================= */
+/* ── Feature Card ───────────────────────────────────────── */
+
+function FeatureCard({ href, label, title, desc }: {
+  href: string; label: string; title: string; desc: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group flex flex-col gap-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 hover:border-[color:var(--accent)]/30 transition-colors"
+    >
+      <div className="text-[10px] tracking-[0.2em] text-foreground/35 uppercase">{label}</div>
+      <div className="text-sm font-medium text-foreground">{title}</div>
+      <div className="text-sm text-foreground/55 leading-relaxed flex-1">{desc}</div>
+      <div className="text-xs text-[color:var(--accent)] opacity-0 group-hover:opacity-100 transition-opacity mt-auto">
+        Open →
+      </div>
+    </Link>
+  );
+}
+
+/* ── Features data ──────────────────────────────────────── */
+
+const FEATURES = [
+  { href: "/risk", label: "Core", title: "50% Drawdown Risk", desc: "Monte Carlo survivability model. See your probability of hitting -50% equity given your sizing and edge." },
+  { href: "/position-risk", label: "Core", title: "Position Risk", desc: "R-based position sizing with multi-leg support. Entry, stop, size — calculated with discipline." },
+  { href: "/variance", label: "Core", title: "Variance Simulator", desc: "Run your strategy parameters through 300+ simulations. See realistic drawdowns and losing streaks." },
+  { href: "/risk/kill-switch", label: "Protection", title: "Account Kill Switch", desc: "Advisory risk governor. Automatically cuts your allowed risk when drawdown and conditions deteriorate." },
+  { href: "/portfolio", label: "Pro", title: "Portfolio Overview", desc: "Discipline across your open book. Exposure heat, drawdown context, and concentration at a glance." },
+  { href: "/journal", label: "Pro", title: "Trade Journal", desc: "Structured trade logging measured in R. Strategy breakdown, EV tracking, and behavioral patterns." },
+  { href: "/movers", label: "Market", title: "S&P 500 Movers", desc: "Top 10 movers with intraday sparklines, vol tags, and structural risk signals. Refreshes every 60s." },
+  { href: "/labs/nba", label: "Labs", title: "NBA Deviation", desc: "Live deviation tracking vs consensus closing line. Spread and total during games." },
+] as const;
+
+/* ── Page ────────────────────────────────────────────────── */
 
 export default function Home() {
-  const pathname = usePathname();
-
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto max-w-4xl px-6 py-16">
-        <div className="space-y-6">
-          <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-4 py-2 text-sm text-foreground/80">
-            Oren Capital • Risk discipline across markets
-          </div>
+      <div className="mx-auto max-w-4xl px-4 sm:px-6 py-16 sm:py-24">
 
-          <h1 className="text-4xl font-semibold tracking-tight sm:text-6xl">
-            <span className="oren-accent relative inline-block align-baseline">
-              <span className="relative z-10 text-[color:var(--accent)]">Discipline</span>
-              <span
-                key={`underline-${pathname}`}
-                aria-hidden
-                className="oren-underline pointer-events-none absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-[0.9]"
-              />
-              <span
-                aria-hidden
-                className="pointer-events-none absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-[0.10]"
-              />
-            </span>{" "}
-            across markets.
+        {/* Hero */}
+        <div className="space-y-6 mb-14">
+          <div className="text-xs tracking-[0.22em] text-foreground/35">OREN CAPITAL</div>
+
+          <h1 className="text-4xl sm:text-6xl font-semibold tracking-tight leading-[1.08]">
+            <span className="relative inline-block">
+              <span className="relative z-10 text-[color:var(--accent)]">Capital survival</span>
+              <span aria-hidden className="absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-90 origin-left scale-x-0 animate-[oren_underline_700ms_ease-out_120ms_forwards]" />
+              <span aria-hidden className="absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-10" />
+            </span>
+            {" "}is not optional.
           </h1>
 
-          <p className="max-w-2xl text-lg leading-relaxed text-foreground/75">
-            Institutional risk systems for disciplined market participants: position sizing, bankroll management, drawdown tracking,
-            expectancy modeling, and exposure heat — across stocks, options, and sports.
+          <p className="max-w-xl text-base sm:text-lg leading-relaxed text-foreground/65">
+            Risk tools for traders who think about longevity — not just returns.
+            Size positions correctly, model your drawdowns before they happen,
+            and know when to stop.
           </p>
 
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <Link
-              href="/risk-engine"
-              className="oc-home-primary inline-flex items-center justify-center rounded-lg bg-white px-5 py-3 text-sm font-medium text-black active:scale-[0.98]"
-            >
-              Open the Risk Engine
-            </Link>
-
-            <Link
-              href="/pricing"
-              className="inline-flex items-center justify-center rounded-lg border border-[color:var(--border)] bg-[color:var(--card)] px-5 py-3 text-sm font-medium text-foreground/90 hover:bg-white/5 active:scale-[0.98]"
-            >
-              View Pricing
-            </Link>
+          <div className="flex flex-wrap gap-3 pt-1">
+            <Link href="/risk" className="oc-btn oc-btn-primary">Survivability Engine</Link>
+            <Link href="/position-risk" className="oc-btn oc-btn-secondary">Position Risk</Link>
           </div>
+        </div>
 
-          {/* Live climate bar */}
-          <MarketClimateBar />
+        <MarketClimateBar />
 
-          <div className="mt-10 grid gap-4 sm:grid-cols-3">
-            {[
-              { title: "Position Sizing", desc: "Size decisions with discipline. Risk first, entry second." },
-              { title: "Variance Simulator", desc: "See realistic drawdowns and losing streaks before they happen." },
-              { title: "Exposure Heat", desc: "Avoid correlated stacking and hidden concentration." },
-            ].map((f) => (
-              <div key={f.title} className="rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] p-5">
-                <div className="text-base font-medium">{f.title}</div>
-                <div className="mt-2 text-sm text-foreground/70">{f.desc}</div>
-              </div>
-            ))}
+        <div className="my-12 border-t border-[color:var(--border)]" />
+
+        {/* Features */}
+        <div className="mb-5">
+          <div className="text-xs tracking-[0.22em] text-foreground/35 mb-2">TOOLS</div>
+          <div className="text-sm text-foreground/50">Everything in the platform.</div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {FEATURES.map((f) => <FeatureCard key={f.href} {...f} />)}
+        </div>
+
+        {/* Footer CTA */}
+        <div className="mt-12 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5">
+          <div>
+            <div className="text-base font-medium mb-1">Ready to trade with structure?</div>
+            <div className="text-sm text-foreground/50">Free tools available. Pro unlocks the full platform.</div>
+          </div>
+          <div className="flex flex-wrap gap-3 shrink-0">
+            <Link href="/risk" className="oc-btn oc-btn-primary">Get Started</Link>
+            <Link href="/pricing" className="oc-btn oc-btn-secondary">View Pricing</Link>
           </div>
         </div>
       </div>
 
       <style>{`
-        .oc-home-primary {
-          background: #ffffff;
-          transition: opacity 150ms ease, transform 150ms ease;
-        }
-        .oc-home-primary:hover {
-          background: #ffffff;
-          opacity: 0.92;
-        }
-
-        @media (prefers-reduced-motion: no-preference) {
-          .oren-underline {
-            transform-origin: left;
-            transform: scaleX(0);
-            animation: oren_underline 700ms cubic-bezier(0.2, 0.8, 0.2, 1) 120ms forwards;
-          }
-        }
-
-        @keyframes oren_underline {
-          from { transform: scaleX(0); }
-          to { transform: scaleX(1); }
-        }
+        @keyframes oren_underline { from { transform: scaleX(0) } to { transform: scaleX(1) } }
       `}</style>
     </main>
   );
