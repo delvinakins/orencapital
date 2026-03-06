@@ -242,8 +242,14 @@ export default function PortfolioPage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <div className="text-xs tracking-[0.22em] text-foreground/40 mb-4">PORTFOLIO</div>
-            <h1 className="text-4xl font-semibold tracking-tight">Portfolio</h1>
-            <p className="mt-3 max-w-2xl text-base text-foreground/65">
+            <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
+              <span className="relative inline-block">
+                <span className="relative z-10 text-[color:var(--accent)]">Portfolio</span>
+                <span aria-hidden className="absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-90" />
+                <span aria-hidden className="absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-10" />
+              </span>
+            </h1>
+            <p className="mt-4 max-w-2xl text-[15px] text-foreground/70">
               Exposure, drawdown, and concentration — built for longevity.
             </p>
             <div className="mt-2 text-xs text-foreground/40">
