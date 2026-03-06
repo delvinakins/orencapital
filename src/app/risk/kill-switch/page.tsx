@@ -34,7 +34,7 @@ function computeRiskState(args: {
   const { drawdownPct, survivalScore, climateScore, baseRiskPct, killSwitchActive } = args;
   const reasons: string[] = [];
 
-  // Always compute real multipliers so we can show why it's in kill switch state
+  // Always compute real multipliers so they're visible even in kill switch state
   let regimeMult = 1.0;
   if (climateScore >= 70)      { regimeMult = 0.5;  reasons.push("Macro risk-off (climate ≥ 70)"); }
   else if (climateScore >= 45) { regimeMult = 0.75; reasons.push("Macro elevated (climate ≥ 45)"); }
@@ -59,7 +59,6 @@ function computeRiskState(args: {
 
   const survivalLabel = survivalScore >= 80 ? "Strong" : survivalScore >= 60 ? "Watch" : "Fragile";
 
-  // If persisted kill switch, override state but keep real multipliers visible
   if (killSwitchActive) {
     return {
       riskState: "Kill Switch",
@@ -112,11 +111,6 @@ function multColor(v: number) {
   if (v < 0.5) return "text-rose-400";
   if (v < 0.8) return "text-amber-400";
   return "text-[color:var(--accent)]";
-}
-
-// Field label component — avoids the Tooltip label doubling
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <span className="text-xs text-foreground/60">{children}</span>;
 }
 
 export default function KillSwitchPage() {
@@ -264,8 +258,7 @@ export default function KillSwitchPage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             {/* Current Equity */}
             <div>
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <FieldLabel>Current Equity</FieldLabel>
+              <div className="mb-1.5">
                 <Tooltip label="Current Equity">Your account value right now.</Tooltip>
               </div>
               <div className="flex items-center rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] overflow-hidden focus-within:border-[color:var(--accent)]/40 transition-colors">
@@ -277,8 +270,7 @@ export default function KillSwitchPage() {
 
             {/* Peak Equity */}
             <div>
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <FieldLabel>Peak Equity</FieldLabel>
+              <div className="mb-1.5">
                 <Tooltip label="Peak Equity">The highest your account has ever been. Used to calculate drawdown from peak.</Tooltip>
               </div>
               <div className="flex items-center rounded-xl border border-[color:var(--border)] bg-[color:var(--card)] overflow-hidden focus-within:border-[color:var(--accent)]/40 transition-colors">
@@ -290,9 +282,8 @@ export default function KillSwitchPage() {
 
             {/* Base Risk */}
             <div>
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <FieldLabel>Base Risk / Trade</FieldLabel>
-                <Tooltip label="Base Risk per Trade">
+              <div className="mb-1.5">
+                <Tooltip label="Base Risk / Trade">
                   Your normal risk % under good conditions. The kill switch multiplies this down when conditions worsen.
                 </Tooltip>
               </div>
@@ -304,7 +295,7 @@ export default function KillSwitchPage() {
             </div>
           </div>
 
-          {error   && <p className="text-xs text-rose-400">{error}</p>}
+          {error    && <p className="text-xs text-rose-400">{error}</p>}
           {resetMsg && <p className="text-xs text-[color:var(--accent)]">{resetMsg}</p>}
 
           <button onClick={evaluate} disabled={loading}
