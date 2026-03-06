@@ -281,7 +281,7 @@ export default function Home() {
               About
             </div>
             <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight mb-10">
-              Built by a trader. For traders.
+              Built by traders. For traders.
             </h2>
           </FadeIn>
 
@@ -289,8 +289,7 @@ export default function Home() {
             <FadeIn delay={0.06}>
               <div className="space-y-4 text-sm text-foreground/60 leading-relaxed">
                 <p>
-                  Oren Capital was built by a real trader and sports fanatic who got
-                  tired of sizing by feel. The same instincts that make betting markets
+                  Oren Capital was built by real traders and sports fanatics. The same instincts that make betting markets
                   interesting — edge, variance, expected value — apply directly to how
                   you should be managing risk in your trading account.
                 </p>
