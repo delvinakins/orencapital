@@ -1,8 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/labs/nba/snapshots/cron",
-      "schedule": "*/5 * * * *"
-    }
-  ]
-}
+{"crons":[{"path":"/api/cron/nba-grader","schedule":"0 17 * * *"}]}

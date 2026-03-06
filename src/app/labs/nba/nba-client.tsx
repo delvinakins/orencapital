@@ -489,33 +489,8 @@ function inSignalWindow(period: number | null, secondsRemaining: number | null):
   return false;
 }
 
-// ─── Scoreboard persistence ────────────────────────────────────────────────────
-type ScoreRecord = { gameId: string; dateKeyPT: string; mark: Exclude<ScoreMark, "na">; ts: number };
-type ScoreboardState = { version: 1; records: Record<string, ScoreRecord> };
+// ─── Scoreboard ───────────────────────────────────────────────────────────────
 type GlobalTotals = { hits: number; misses: number; push: number; hitRate: number | null };
-
-const SCOREBOARD_KEY = "oren:nba:scoreboard:v1";
-const SCOREBOARD_SYNC_LAST_KEY = "oren:nba:scoreboard:sync:last:v1";
-
-function safeReadScoreboard(): ScoreboardState {
-  try {
-    if (typeof window === "undefined") return { version: 1, records: {} };
-    const raw = window.localStorage.getItem(SCOREBOARD_KEY);
-    if (!raw) return { version: 1, records: {} };
-    const j: unknown = JSON.parse(raw);
-    const jj = j as { version?: unknown; records?: unknown };
-    if (jj?.version !== 1 || typeof jj?.records !== "object" || jj.records == null) return { version: 1, records: {} };
-    return { version: 1, records: jj.records as Record<string, ScoreRecord> };
-  } catch {
-    return { version: 1, records: {} };
-  }
-}
-
-function safeWriteScoreboard(s: ScoreboardState) {
-  try {
-    if (typeof window !== "undefined") window.localStorage.setItem(SCOREBOARD_KEY, JSON.stringify(s));
-  } catch {}
-}
 
 function formatPct(p: number | null) {
   if (p == null || !Number.isFinite(p)) return "—";
@@ -558,7 +533,6 @@ type Row = {
   confluence: number | null; confirmed: boolean; scoreMark: ScoreMark;
 };
 
-type DayAgg = { hit: number; miss: number; push: number };
 
 // ─── StatusPill ────────────────────────────────────────────────────────────────
 function StatusPill({ children, variant = "neutral" }: {
@@ -591,7 +565,6 @@ export default function NbaClient() {
   const [orenStatus, setOrenStatus] = useState<"loading" | "ok" | "missing">("loading");
 
   const [nowTick, setNowTick] = useState(() => Date.now());
-  const [scoreboard, setScoreboard] = useState<ScoreboardState>(() => ({ version: 1, records: {} }));
   const [globalTotals, setGlobalTotals] = useState<GlobalTotals | null>(null);
   const [globalStatus, setGlobalStatus] = useState<"idle" | "loading" | "ok" | "missing">("idle");
 
@@ -602,7 +575,6 @@ export default function NbaClient() {
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => { setScoreboard(safeReadScoreboard()); }, []);
 
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
@@ -670,17 +642,7 @@ export default function NbaClient() {
     } catch { setGlobalStatus("missing"); }
   }
 
-  async function syncGlobalScoreboard() {
-    try {
-      if (typeof window !== "undefined") {
-        const last = Number(window.localStorage.getItem(SCOREBOARD_SYNC_LAST_KEY) || "0");
-        if (Number.isFinite(last) && Date.now() - last < 6 * 60 * 60 * 1000) return;
-        window.localStorage.setItem(SCOREBOARD_SYNC_LAST_KEY, String(Date.now()));
-      }
-      await fetch(`/api/labs/nba/scoreboard/sync?season=2025-2026&league=nba&sport=basketball&_t=${Date.now()}`, { method: "POST", cache: "no-store" }).catch(() => null);
-      await loadGlobalTotals();
-    } catch {}
-  }
+
 
   useEffect(() => { load(); const t = setInterval(load, 60_000); return () => clearInterval(t); }, []);
   useEffect(() => { loadGlobalTotals(); const t = setInterval(loadGlobalTotals, 3 * 60_000); return () => clearInterval(t); }, []);
@@ -767,28 +729,7 @@ export default function NbaClient() {
     return computed;
   }, [games, spreadIndex, orenMap, orenParams]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const dateKey = meta?.dateKeyPT ? String(meta.dateKeyPT) : dateKeyPTNow();
-    setScoreboard((prev: ScoreboardState) => {
-      const next: ScoreboardState = { version: 1, records: { ...(prev.records || {}) } };
-      let changed = false;
-      for (const r of rows) {
-        if (r.phase !== "final" || r.scoreMark === "na") continue;
-        if (!next.records[r.gameId]) {
-          next.records[r.gameId] = { gameId: r.gameId, dateKeyPT: dateKey, mark: r.scoreMark, ts: Date.now() };
-          changed = true;
-        }
-      }
-      if (changed) safeWriteScoreboard(next);
-      return next;
-    });
-  }, [rows, meta]);
 
-  useEffect(() => {
-    if (Object.values(scoreboard.records || {}).length === 0) return;
-    syncGlobalScoreboard();
-  }, [scoreboard]);
 
   useEffect(() => {
     const now = Date.now();
@@ -803,25 +744,7 @@ export default function NbaClient() {
 
   const liveCount = useMemo(() => rows.filter((r) => r.isLive).length, [rows]);
 
-  const scoreSummary = useMemo(() => {
-    const recs = Object.values(scoreboard.records || {}) as ScoreRecord[];
-    const hits = recs.filter((r: ScoreRecord) => r.mark === "hit").length;
-    const misses = recs.filter((r: ScoreRecord) => r.mark === "miss").length;
-    const pushes = recs.filter((r: ScoreRecord) => r.mark === "push").length;
-    const graded = hits + misses;
-    const p = graded > 0 ? hits / graded : null;
-    const byDay = new Map<string, DayAgg>();
-    for (const r of recs) {
-      const k = r.dateKeyPT || "—";
-      const cur = byDay.get(k) ?? { hit: 0, miss: 0, push: 0 };
-      if (r.mark === "hit") cur.hit++;
-      else if (r.mark === "miss") cur.miss++;
-      else cur.push++;
-      byDay.set(k, cur);
-    }
-    const days = Array.from(byDay.entries()).sort((a, b) => a[0].localeCompare(b[0])).slice(-5).reverse();
-    return { hits, misses, pushes, graded, p, days };
-  }, [scoreboard]);
+
 
   const globalSummary = useMemo(() => {
     if (!globalTotals) return null;
@@ -872,62 +795,34 @@ export default function NbaClient() {
         <section className="rounded-2xl border border-white/10 bg-black/30 p-5 space-y-4">
           <div>
             <div className="text-xs tracking-[0.18em] text-foreground/40 mb-1">SCOREBOARD</div>
-            <div className="text-sm font-medium text-foreground">Oren Edge · This device</div>
-            <div className="text-xs text-foreground/40 mt-0.5">Finals only · Edge sign vs ATS result</div>
+            <div className="text-sm font-medium text-foreground">Oren Edge</div>
+            <div className="text-xs text-foreground/40 mt-0.5">Finals only · Edge sign vs ATS result · 2025–26 season</div>
           </div>
 
-
-          {/* Season totals */}
           <div className="border-t border-white/8 pt-3">
-            <div className="text-[10px] text-foreground/35 tracking-wide uppercase mb-2">Season totals</div>
-            <div className="flex flex-wrap items-center gap-2">
-              {[
-                { label: "Hits", val: scoreSummary.hits, cls: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" },
-                { label: "Miss", val: scoreSummary.misses, cls: "border-rose-400/30 bg-rose-500/10 text-rose-200" },
-                { label: "Push", val: scoreSummary.pushes, cls: "border-white/10 bg-white/5 text-white/60" },
-              ].map(({ label, val, cls }) => (
-                <span key={label} className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", cls)}>
-                  <span className="tabular-nums font-semibold">{val}</span>
-                  <span className="opacity-60">{label}</span>
+            {globalStatus === "loading" ? (
+              <div className="text-xs text-foreground/35">Loading…</div>
+            ) : globalStatus === "missing" || !globalSummary ? (
+              <div className="text-xs text-foreground/35">Scoreboard unavailable</div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  { label: "Hits", val: globalSummary.hits, cls: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" },
+                  { label: "Miss", val: globalSummary.misses, cls: "border-rose-400/30 bg-rose-500/10 text-rose-200" },
+                  { label: "Push", val: globalSummary.pushes, cls: "border-white/10 bg-white/5 text-white/60" },
+                ].map(({ label, val, cls }) => (
+                  <span key={label} className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", cls)}>
+                    <span className="tabular-nums font-semibold">{val}</span>
+                    <span className="opacity-60">{label}</span>
+                  </span>
+                ))}
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/60">
+                  <span className="tabular-nums font-semibold">{formatPct(globalSummary.p)}</span>
+                  <span className="opacity-60">Hit rate</span>
                 </span>
-              ))}
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/60">
-                <span className="tabular-nums font-semibold">{formatPct(scoreSummary.p)}</span>
-                <span className="opacity-60">Hit rate</span>
-              </span>
-            </div>
-          </div>
-
-          {/* Last 5 days */}
-          {scoreSummary.days.length > 0 ? (
-            <div className="border-t border-white/8 pt-3">
-              <div className="text-[10px] text-foreground/35 tracking-wide uppercase mb-2">Last 5 days</div>
-              <div className="grid gap-2 sm:grid-cols-3">
-                {scoreSummary.days.map(([day, v]: [string, DayAgg]) => {
-                  const graded = v.hit + v.miss;
-                  const p = graded > 0 ? v.hit / graded : null;
-                  const pct = formatPct(p);
-                  const pctColor = p == null ? "text-white/40" : p >= 0.6 ? "text-emerald-300" : p >= 0.4 ? "text-white/70" : "text-rose-300";
-                  return (
-                    <div key={day} className="rounded-xl border border-white/8 bg-black/20 px-3.5 py-3">
-                      <div className="text-[10px] text-foreground/35 tracking-wide uppercase mb-1">{day}</div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm">
-                          <span className="font-semibold text-emerald-300">{v.hit}</span>
-                          <span className="text-white/30 mx-1">–</span>
-                          <span className="font-semibold text-rose-300">{v.miss}</span>
-                          {v.push > 0 && <span className="text-xs text-white/30 ml-1">({v.push}p)</span>}
-                        </span>
-                        <span className={cn("tabular-nums text-sm font-semibold", pctColor)}>{pct}</span>
-                      </div>
-                    </div>
-                  );
-                })}
               </div>
-            </div>
-          ) : (
-            <div className="text-xs text-foreground/35 border-t border-white/8 pt-3">No graded finals saved yet on this device.</div>
-          )}
+            )}
+          </div>
         </section>
 
         {/* Games */}
