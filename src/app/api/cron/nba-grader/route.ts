@@ -1,8 +1,8 @@
 // src/app/api/cron/nba-grader/route.ts
 //
 // Vercel cron: runs nightly at 9:00 AM PT (17:00 UTC)
-// Reads last night's finals from nba_live_snapshots, grades Oren Edge vs ATS,
-// and upserts to nba_edge_scoreboard. Idempotent — skips already-graded games.
+// Calls /api/labs/nba/live-games to get last night's finals (live source),
+// grades Oren Edge vs ATS, upserts to nba_edge_scoreboard. Idempotent.
 //
 // Manual run: GET /api/cron/nba-grader?secret=<CRON_SECRET>
 
@@ -45,6 +45,27 @@ function grade(
   return (edge > 0) === (ats > 0) ? "hit" : "miss";
 }
 
+// Fetch yesterday's finals from the live-games route (the real live source)
+async function fetchFinals(baseUrl: string, dateKeyPT: string): Promise<any[]> {
+  const url = `${baseUrl}/api/labs/nba/live-games?dateKeyPT=${dateKeyPT}`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`live-games fetch failed: ${res.status}`);
+  const json = await res.json();
+  return (json?.items ?? []).filter(
+    (g: any) => g.phase === "final" && g.homeScore != null && g.awayScore != null
+  );
+}
+
+function yesterdayPT(): string {
+  const now = new Date();
+  // Subtract 1 day, then format as YYYY-MM-DD in PT
+  const d = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(d);
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const secret = process.env.CRON_SECRET;
@@ -59,53 +80,45 @@ export async function GET(req: Request) {
     const sb = getSupabase();
     const season = "2025-2026";
 
-    // Load Oren params
+    // ── 1. Load Oren params ───────────────────────────────────────────────────
     const { data: p, error: pErr } = await sb
       .from("nba_oren_params").select("a,k,s").eq("season", season).single();
     if (pErr || !p) throw new Error("Oren params unavailable");
     const params = { A: Number(p.a), k: Number(p.k), S: Number(p.s) };
 
-    // Load rankings
+    // ── 2. Load rankings ──────────────────────────────────────────────────────
     const { data: ranks, error: rErr } = await sb
       .from("nba_power_rankings").select("team,rank").eq("season", season);
     if (rErr) throw new Error("Rankings unavailable");
     const rankMap: Record<string, number> = {};
     for (const r of ranks ?? []) rankMap[r.team.toLowerCase().trim()] = Number(r.rank);
 
-    // Read snapshot
-    const { data: snap, error: sErr } = await sb
-      .from("nba_live_snapshots").select("payload").eq("id", "latest").single();
-    if (sErr || !snap) throw new Error("Snapshot unavailable");
-
-    const finals = ((snap.payload as any)?.items ?? []).filter(
-      (g: any) => g.phase === "final" && g.homeScore != null && g.awayScore != null
-    );
+    // ── 3. Fetch yesterday's finals from live-games ───────────────────────────
+    // Use the request origin so this works in both prod and preview deployments
+    const baseUrl = `${url.protocol}//${url.host}`;
+    const dateKey = url.searchParams.get("date") ?? yesterdayPT();
+    const finals = await fetchFinals(baseUrl, dateKey);
 
     if (!finals.length) {
-      return NextResponse.json({ ok: true, graded: 0, skipped: 0, message: "No finals in snapshot" });
+      return NextResponse.json({ ok: true, graded: 0, skipped: 0, message: `No finals for ${dateKey}` });
     }
 
     const gameIds = finals.map((g: any) => g.gameId as string);
 
-    // Load closing lines
-    const { data: lines } = await sb
-      .from("nba_closing_lines").select("game_key,closing_home_spread").in("game_key", gameIds);
-    const lineMap: Record<string, number> = {};
-    for (const l of lines ?? []) lineMap[l.game_key] = Number(l.closing_home_spread);
-
-    // Already-graded games
+    // ── 4. Already-graded games ───────────────────────────────────────────────
     const { data: done } = await sb
       .from("nba_edge_scoreboard").select("game_id").in("game_id", gameIds);
     const doneSet = new Set((done ?? []).map((r: any) => r.game_id));
 
-    // Grade
+    // ── 5. Grade ──────────────────────────────────────────────────────────────
     const upserts: any[] = [];
     let skipped = 0;
 
     for (const g of finals) {
       if (doneSet.has(g.gameId)) { skipped++; continue; }
 
-      const closingHome = lineMap[g.gameId];
+      // live-games already attaches closingSpreadHome
+      const closingHome = g.closingSpreadHome != null ? Number(g.closingSpreadHome) : null;
       if (closingHome == null) { skipped++; continue; }
 
       const edge = computeEdge(g.homeTeam, g.awayTeam, closingHome, rankMap, params);
@@ -137,10 +150,11 @@ export async function GET(req: Request) {
       if (uErr) throw new Error(`Upsert failed: ${uErr.message}`);
     }
 
-    console.log(`[nba-grader] graded=${upserts.length} skipped=${skipped} finals=${finals.length}`);
+    console.log(`[nba-grader] date=${dateKey} graded=${upserts.length} skipped=${skipped} finals=${finals.length}`);
 
     return NextResponse.json({
       ok: true,
+      date: dateKey,
       graded: upserts.length,
       skipped,
       total_finals: finals.length,
