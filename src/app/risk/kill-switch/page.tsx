@@ -34,7 +34,6 @@ function computeRiskState(args: {
   const { drawdownPct, survivalScore, climateScore, baseRiskPct, killSwitchActive } = args;
   const reasons: string[] = [];
 
-  // Always compute real multipliers so they're visible even in kill switch state
   let regimeMult = 1.0;
   if (climateScore >= 70)      { regimeMult = 0.5;  reasons.push("Macro risk-off (climate ≥ 70)"); }
   else if (climateScore >= 45) { regimeMult = 0.75; reasons.push("Macro elevated (climate ≥ 45)"); }
@@ -64,10 +63,7 @@ function computeRiskState(args: {
       riskState: "Kill Switch",
       allowedRiskPct: 0,
       blocked: true,
-      reasons: [
-        "Kill switch persisted from a prior evaluation — reset below to re-evaluate",
-        ...reasons,
-      ],
+      reasons: ["Kill switch persisted from a prior evaluation — reset below to re-evaluate", ...reasons],
       multipliers: { regime: regimeMult, drawdown: drawdownMult, survivability: survMult },
       survivalScore,
       survivalLabel,
@@ -315,8 +311,7 @@ export default function KillSwitchPage() {
                   {result.riskState}
                 </div>
                 <div className="text-right">
-                  <div className="flex items-center justify-end gap-1.5 mb-1">
-                    <span className="text-xs text-foreground/50">Allowed / Trade</span>
+                  <div className="flex items-center justify-end mb-1">
                     <Tooltip label="Allowed / Trade">
                       Max risk you should take per trade today given current conditions.
                       Formula: base risk × regime × drawdown × survivability multipliers.
