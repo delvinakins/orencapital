@@ -1,11 +1,10 @@
 // src/app/api/labs/kalshi/deviation/route.ts
-// Oren Deviation Engine V2
-// Daily KXINX markets: scored via SPY realized vol + N(d2) digital option model
-// EOY KXINXY markets: scored via Kalshi candle history + EWMA baseline
+// Oren Deviation Engine V3
+// Dynamically discovers KXINX brackets near current SPX price
+// Scores via SPY realized vol + N(d2) digital option model
 
 import { NextRequest, NextResponse } from "next/server";
 import {
-  runDeviationEngine,
   runModelEngine,
   sortByEdge,
   normalizeSparkline,
@@ -38,6 +37,7 @@ async function fetchSafe(url: string, ms = 6000): Promise<any | null> {
   }
 }
 
+// ── SPY daily candles from Polygon ───────────────────────────────────────────
 async function getSPYCandles(days = 20): Promise<Candle[]> {
   const to = new Date();
   const from = new Date();
@@ -55,22 +55,7 @@ async function getSPYCandles(days = 20): Promise<Candle[]> {
   }));
 }
 
-async function getKalshiCandles(ticker: string, limit = 60): Promise<Candle[]> {
-  const url = `${KALSHI_BASE}/markets/${encodeURIComponent(ticker)}/candlesticks?period_interval=1440&limit=${limit}`;
-  const data = await fetchSafe(url);
-  const sticks = data?.candlesticks ?? data?.candles ?? [];
-  if (!Array.isArray(sticks) || sticks.length === 0) return [];
-  return sticks
-    .map((c: any) => {
-      const close = c.yes_ask ?? c.close ?? c.yes_price ?? null;
-      const ts = c.end_period_ts ?? c.ts ?? null;
-      if (close == null || ts == null) return null;
-      return { ts, close: Number(close) } as Candle;
-    })
-    .filter((c): c is Candle => c !== null)
-    .sort((a, b) => a.ts - b.ts);
-}
-
+// ── Kalshi: live quote ────────────────────────────────────────────────────────
 async function getKalshiQuote(ticker: string): Promise<MarketQuote> {
   const data = await fetchSafe(`${KALSHI_BASE}/markets/${encodeURIComponent(ticker)}`);
   const m = data?.market ?? data;
@@ -81,6 +66,112 @@ async function getKalshiQuote(ticker: string): Promise<MarketQuote> {
   };
 }
 
+// ── Discover today's KXINX markets from Kalshi ──────────────────────────────
+interface KalshiMarketRaw {
+  ticker: string;
+  subtitle: string;
+  yes_bid: number | null;
+  yes_ask: number | null;
+  floor_strike: number | null;
+  cap_strike: number | null;
+  strike_type: string;
+}
+
+async function getKXINXMarkets(eventTicker: string): Promise<KalshiMarketRaw[]> {
+  const data = await fetchSafe(
+    `${KALSHI_BASE}/events/${encodeURIComponent(eventTicker)}/markets?limit=50`
+  );
+  return data?.markets ?? [];
+}
+
+// ── Build today's event ticker ────────────────────────────────────────────────
+function getTodayEventTicker(): string {
+  const now = new Date();
+  const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+  const yy = String(now.getUTCFullYear()).slice(2);
+  const mm = months[now.getUTCMonth()];
+  // Advance to next trading day if after 4pm EST (21:00 UTC)
+  const dd = String(now.getUTCDate() + (now.getUTCHours() >= 21 ? 1 : 0)).padStart(2, "0");
+  return `KXINX-${yy}${mm}${dd}H1600`;
+}
+
+// ── Parse strike info from Kalshi market ─────────────────────────────────────
+interface StrikeInfo {
+  strikeLow: number | null;
+  strikeHigh: number | null;
+  label: string;
+}
+
+function parseKalshiStrike(m: KalshiMarketRaw): StrikeInfo {
+  const floor = m.floor_strike != null ? Number(m.floor_strike) : null;
+  const cap = m.cap_strike != null ? Number(m.cap_strike) : null;
+  const type = m.strike_type ?? "";
+
+  // Range bracket: floor ≤ SPX ≤ cap
+  if (type === "between" && floor != null && cap != null) {
+    return {
+      strikeLow: floor,
+      strikeHigh: cap,
+      label: `S&P 500 ${floor.toLocaleString()}–${cap.toLocaleString()} today`,
+    };
+  }
+  // Above cap
+  if ((type === "greater" || type === "above") && cap != null) {
+    return {
+      strikeLow: null,
+      strikeHigh: cap,
+      label: `S&P 500 above ${cap.toLocaleString()} today`,
+    };
+  }
+  // Below floor
+  if ((type === "less" || type === "below") && floor != null) {
+    return {
+      strikeLow: floor,
+      strikeHigh: null,
+      label: `S&P 500 below ${floor.toLocaleString()} today`,
+    };
+  }
+
+  // Fallback: parse from ticker
+  const tMatch = m.ticker.match(/T(\d+(?:\.\d+)?)/);
+  if (tMatch) {
+    const k = Math.ceil(Number(tMatch[1]));
+    return { strikeLow: null, strikeHigh: k, label: `S&P 500 above ${k.toLocaleString()} today` };
+  }
+  const bMatch = m.ticker.match(/B(\d+)/);
+  if (bMatch) {
+    const lo = Number(bMatch[1]);
+    return { strikeLow: lo, strikeHigh: lo + 25, label: `S&P 500 ${lo.toLocaleString()}–${(lo + 25).toLocaleString()} today` };
+  }
+
+  return { strikeLow: null, strikeHigh: null, label: m.subtitle ?? m.ticker };
+}
+
+// ── Select brackets nearest to current SPX price ─────────────────────────────
+// SPY * 10 ≈ SPX. Returns the 5 most relevant markets (2 below, current, 2 above)
+function selectNearestBrackets(
+  markets: KalshiMarketRaw[],
+  spxPrice: number,
+  count = 5
+): KalshiMarketRaw[] {
+  // Score each market by how close its midpoint is to current SPX
+  const scored = markets
+    .map((m) => {
+      const floor = m.floor_strike != null ? Number(m.floor_strike) : null;
+      const cap = m.cap_strike != null ? Number(m.cap_strike) : null;
+      let mid: number;
+      if (floor != null && cap != null) mid = (floor + cap) / 2;
+      else if (cap != null) mid = cap + 25;
+      else if (floor != null) mid = floor - 25;
+      else mid = spxPrice;
+      return { m, dist: Math.abs(mid - spxPrice) };
+    })
+    .sort((a, b) => a.dist - b.dist);
+
+  return scored.slice(0, count).map((s) => s.m);
+}
+
+// ── Hours remaining until 4pm EST ────────────────────────────────────────────
 function hoursUntilClose(): number {
   const now = new Date();
   const closeUTC = new Date(now);
@@ -89,22 +180,7 @@ function hoursUntilClose(): number {
   return Math.max(0.25, Math.min(6.5, diff));
 }
 
-interface StrikeInfo {
-  strikeLow: number | null;
-  strikeHigh: number | null;
-}
-
-function parseStrike(ticker: string): StrikeInfo {
-  const tMatch = ticker.match(/T(\d+(?:\.\d+)?)/);
-  if (tMatch) return { strikeLow: null, strikeHigh: Math.ceil(Number(tMatch[1])) };
-  const bMatch = ticker.match(/B(\d+)/);
-  if (bMatch) {
-    const lo = Number(bMatch[1]);
-    return { strikeLow: lo, strikeHigh: lo + 25 };
-  }
-  return { strikeLow: null, strikeHigh: null };
-}
-
+// ── Scored market type ────────────────────────────────────────────────────────
 export interface ScoredMarket {
   id: string;
   source: "kalshi";
@@ -117,104 +193,11 @@ export interface ScoredMarket {
   result: DeviationResult;
   sparkline: Array<{ ts: number; v: number }>;
   candleSource: string;
+  strikeLow: number | null;
+  strikeHigh: number | null;
 }
 
-type ScoringMode = "model" | "history";
-
-interface MarketDef {
-  id: string;
-  ticker: string;
-  title: string;
-  category: string;
-  closeTime: string | null;
-  url: string;
-  scoringMode: ScoringMode;
-}
-
-function getMarketDefs(): MarketDef[] {
-  const now = new Date();
-  const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
-  const yy = String(now.getUTCFullYear()).slice(2);
-  const mm = months[now.getUTCMonth()];
-  const dd = String(now.getUTCDate() + (now.getUTCHours() >= 21 ? 1 : 0)).padStart(2, "0");
-  const dateStr = `${yy}${mm}${dd}`;
-
-  return [
-    {
-      id: `kalshi:KXINX-${dateStr}H1600-T7249.9999`,
-      ticker: `KXINX-${dateStr}H1600-T7249.9999`,
-      title: "S&P 500 above 7250 today",
-      category: "sp500_level",
-      closeTime: null,
-      url: "https://kalshi.com/markets/kxinx",
-      scoringMode: "model",
-    },
-    {
-      id: `kalshi:KXINX-${dateStr}H1600-B7237`,
-      ticker: `KXINX-${dateStr}H1600-B7237`,
-      title: "S&P 500 7225–7250 today",
-      category: "sp500_range",
-      closeTime: null,
-      url: "https://kalshi.com/markets/kxinx",
-      scoringMode: "model",
-    },
-    {
-      id: `kalshi:KXINX-${dateStr}H1600-B7212`,
-      ticker: `KXINX-${dateStr}H1600-B7212`,
-      title: "S&P 500 7200–7225 today",
-      category: "sp500_range",
-      closeTime: null,
-      url: "https://kalshi.com/markets/kxinx",
-      scoringMode: "model",
-    },
-    {
-      id: "kalshi:KXINXY-26DEC31H1600-B7300",
-      ticker: "KXINXY-26DEC31H1600-B7300",
-      title: "S&P 500 7200–7400 EOY 2026",
-      category: "sp500_range",
-      closeTime: "2026-12-31T21:00:00Z",
-      url: "https://kalshi.com/markets/kxinxy",
-      scoringMode: "history",
-    },
-    {
-      id: "kalshi:KXINXY-26DEC31H1600-B7500",
-      ticker: "KXINXY-26DEC31H1600-B7500",
-      title: "S&P 500 7400–7600 EOY 2026",
-      category: "sp500_range",
-      closeTime: "2026-12-31T21:00:00Z",
-      url: "https://kalshi.com/markets/kxinxy",
-      scoringMode: "history",
-    },
-    {
-      id: "kalshi:KXINXY-26DEC31H1600-B7100",
-      ticker: "KXINXY-26DEC31H1600-B7100",
-      title: "S&P 500 7000–7200 EOY 2026",
-      category: "sp500_range",
-      closeTime: "2026-12-31T21:00:00Z",
-      url: "https://kalshi.com/markets/kxinxy",
-      scoringMode: "history",
-    },
-    {
-      id: "kalshi:KXINXY-26DEC31H1600-T9000",
-      ticker: "KXINXY-26DEC31H1600-T9000",
-      title: "S&P 500 above 9000 EOY 2026",
-      category: "sp500_level",
-      closeTime: "2026-12-31T21:00:00Z",
-      url: "https://kalshi.com/markets/kxinxy",
-      scoringMode: "history",
-    },
-    {
-      id: "kalshi:KXINXY-26DEC31H1600-T4000",
-      ticker: "KXINXY-26DEC31H1600-T4000",
-      title: "S&P 500 below 4000 EOY 2026",
-      category: "sp500_level",
-      closeTime: "2026-12-31T21:00:00Z",
-      url: "https://kalshi.com/markets/kxinxy",
-      scoringMode: "history",
-    },
-  ];
-}
-
+// ── Handler ───────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
     const isDebug = req.nextUrl.searchParams.get("debug") === "1";
@@ -227,47 +210,59 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "POLYGON_API_KEY not set" }, { status: 500 });
     }
 
-    const markets = getMarketDefs();
+    const eventTicker = getTodayEventTicker();
     const hoursLeft = hoursUntilClose();
-    const eoyMarkets = markets.filter((m) => m.scoringMode === "history");
 
-    const [spyCandles, ...rest] = await Promise.all([
+    // Fetch SPY candles + today's KXINX markets in parallel
+    const [spyCandles, rawMarkets] = await Promise.all([
       getSPYCandles(20),
-      ...markets.map((m) => getKalshiQuote(m.ticker)),
-      ...eoyMarkets.map((m) => getKalshiCandles(m.ticker)),
+      getKXINXMarkets(eventTicker),
     ]);
 
-    const quotes = rest.slice(0, markets.length) as MarketQuote[];
-    const eoyCandles = rest.slice(markets.length) as Candle[][];
+    if (spyCandles.length === 0) {
+      return NextResponse.json({ ok: false, error: "No SPY candles from Polygon" }, { status: 500 });
+    }
 
-    let eoyIdx = 0;
-    const scored: ScoredMarket[] = markets.map((m, i) => {
+    const spotSPY = spyCandles[spyCandles.length - 1].close;
+    const spxPrice = spotSPY * 10; // SPY → SPX approximation
+
+    // Select nearest brackets to current SPX
+    const selectedMarkets = selectNearestBrackets(rawMarkets, spxPrice, 5);
+
+    if (selectedMarkets.length === 0) {
+      return NextResponse.json({
+        ok: false,
+        error: `No markets found for event ${eventTicker}`,
+        eventTicker,
+      }, { status: 404 });
+    }
+
+    // Fetch live quotes for selected markets
+    const quotes = await Promise.all(
+      selectedMarkets.map((m) => getKalshiQuote(m.ticker))
+    );
+
+    const sparkline = normalizeSparkline(spyCandles);
+
+    const scored: ScoredMarket[] = selectedMarkets.map((m, i) => {
       const quote = quotes[i];
-      let result: DeviationResult;
-      let sparkline: Array<{ ts: number; v: number }>;
-
-      if (m.scoringMode === "model") {
-        const { strikeLow, strikeHigh } = parseStrike(m.ticker);
-        result = runModelEngine(spyCandles, quote, strikeLow, strikeHigh, hoursLeft);
-        sparkline = normalizeSparkline(spyCandles);
-      } else {
-        const candles = eoyCandles[eoyIdx++];
-        result = runDeviationEngine(candles, quote);
-        sparkline = normalizeSparkline(candles.length > 0 ? candles : spyCandles);
-      }
+      const { strikeLow, strikeHigh, label } = parseKalshiStrike(m);
+      const result = runModelEngine(spyCandles, quote, strikeLow, strikeHigh, hoursLeft);
 
       return {
-        id: m.id,
+        id: `kalshi:${m.ticker}`,
         source: "kalshi",
-        title: m.title,
+        title: label,
         ticker: m.ticker,
-        category: m.category,
-        closeTime: m.closeTime,
-        url: m.url,
+        category: strikeLow != null && strikeHigh != null ? "sp500_range" : "sp500_level",
+        closeTime: null,
+        url: "https://kalshi.com/markets/kxinx",
         quote,
         result,
         sparkline,
-        candleSource: m.scoringMode === "model" ? "polygon-spy-daily" : "kalshi-candles",
+        candleSource: "polygon-spy-daily",
+        strikeLow,
+        strikeHigh,
       };
     });
 
@@ -277,6 +272,8 @@ export async function GET(req: NextRequest) {
       ok: true,
       updatedAt: new Date().toISOString(),
       count: sorted.length,
+      eventTicker,
+      spxPrice: Math.round(spxPrice),
       spyCandleCount: spyCandles.length,
       hoursUntilClose: hoursLeft,
       markets: sorted,
@@ -285,6 +282,7 @@ export async function GET(req: NextRequest) {
           date: new Date(c.ts * 1000).toISOString().slice(0, 10),
           close: c.close,
         })),
+        allMarketCount: rawMarkets.length,
       }),
     };
 
