@@ -184,7 +184,7 @@ function FeatureCard({ href, label, title, desc }: {
 
 const FEATURES = [
   { href: "/risk", label: "Core", title: "50% Drawdown Risk", desc: "Monte Carlo survivability model. See your probability of hitting -50% equity given your sizing and edge." },
-  { href: "/position-risk", label: "Core", title: "Position Risk", desc: "R-based position sizing with multi-leg support. Entry, stop, size — calculated with discipline." },
+  { href: "/risk-engine", label: "Core", title: "Position Risk", desc: "R-based position sizing with multi-leg support. Entry, stop, size — calculated with discipline." },
   { href: "/variance", label: "Core", title: "Variance Simulator", desc: "Run your strategy parameters through 300+ simulations. See realistic drawdowns and losing streaks." },
   { href: "/risk/kill-switch", label: "Protection", title: "Account Kill Switch", desc: "Advisory risk governor. Automatically cuts your allowed risk when drawdown and conditions deteriorate." },
   { href: "/portfolio", label: "Pro", title: "Portfolio Overview", desc: "Discipline across your open book. Exposure heat, drawdown context, and concentration at a glance." },
@@ -221,7 +221,7 @@ export default function Home() {
 
           <div className="flex flex-wrap gap-3 pt-1">
             <Link href="/risk" className="oc-btn oc-btn-primary">Survivability Engine</Link>
-            <Link href="/position-risk" className="oc-btn oc-btn-secondary">Position Risk</Link>
+            <Link href="/risk-engine" className="oc-btn oc-btn-secondary">Position Risk</Link>
           </div>
         </div>
 
