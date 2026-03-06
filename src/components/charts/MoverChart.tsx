@@ -4,7 +4,7 @@
 import * as React from "react";
 import { ResponsiveContainer, AreaChart, Area, Tooltip } from "recharts";
 
-export type MoverPt = { ts: number; v: number };
+export type MoverPt = { ts: number; v: number; raw?: number };
 
 function fmtTime(ts: number) {
   const d = new Date(ts);
@@ -71,7 +71,9 @@ export function MoverChart({
                     <div className="text-white/70">{fmtTime(p.ts)}</div>
                     <div className="mt-1">
                       {label ? <span className="text-white/70">{label}: </span> : null}
-                      <span className="font-medium">{fmtNum(p.v)}</span>
+                      <span className="font-medium">
+                        {p.raw != null ? `$${p.raw.toFixed(2)}` : fmtNum(p.v)}
+                      </span>
                     </div>
                   </div>
                 );

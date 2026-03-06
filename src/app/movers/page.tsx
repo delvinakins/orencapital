@@ -62,13 +62,13 @@ function addDays(d: Date, days: number) {
 }
 
 function normalize0to100(points: Array<{ ts: number; v: number }>) {
-  if (points.length < 2) return points;
+  if (points.length < 2) return points.map(p => ({ ...p, raw: p.v }));
   const vals = points.map((p) => p.v);
   const min = Math.min(...vals);
   const max = Math.max(...vals);
   const span = max - min;
-  if (span <= 0) return points.map((p) => ({ ts: p.ts, v: 50 }));
-  return points.map((p) => ({ ts: p.ts, v: ((p.v - min) / span) * 100 }));
+  if (span <= 0) return points.map((p) => ({ ts: p.ts, v: 50, raw: p.v }));
+  return points.map((p) => ({ ts: p.ts, v: ((p.v - min) / span) * 100, raw: p.v }));
 }
 
 const seriesCache = new Map<string, { ts: number; series: Array<{ ts: number; v: number }> }>();
