@@ -92,12 +92,12 @@ export default function TopNav() {
               </span>
             </Link>
 
-            {/* DESKTOP: Core workflow — in order */}
+            {/* DESKTOP: Core workflow */}
             <div className="hidden lg:flex items-center gap-1 text-sm text-slate-300">
               <NavLink href="/how-it-works" label="How it works" onClick={closeAll} />
-              <NavLink href="/risk"        label="Survivability"   onClick={closeAll} />
-              <NavLink href="/risk-engine" label="Position Risk"   onClick={closeAll} />
-              <NavLink href="/journal"     label="Journal"         onClick={closeAll} />
+              <NavLink href="/risk"         label="Survivability"  onClick={closeAll} />
+              <NavLink href="/risk-engine"  label="Position Risk"  onClick={closeAll} />
+              <NavLink href="/journal"      label="Journal"        onClick={closeAll} />
 
               {/* Tools dropdown */}
               <div className="relative" ref={toolsRef}>
@@ -110,7 +110,7 @@ export default function TopNav() {
                 </button>
 
                 {toolsOpen && (
-                  <div className={`absolute left-0 mt-3 w-60 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
+                  <div className={`absolute left-0 mt-3 w-64 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
                     <div className="px-3 pt-3 pb-1">
                       <div className="text-[10px] tracking-[0.18em] text-foreground/30 px-1 pb-1">RISK MANAGEMENT</div>
                       <MenuItem href="/risk/kill-switch" label="Kill Switch"  sub="Auto risk governor"     onClick={() => setToolsOpen(false)} />
@@ -122,14 +122,15 @@ export default function TopNav() {
 
                     <div className="px-3 pb-3 pt-1">
                       <div className="text-[10px] tracking-[0.18em] text-foreground/30 px-1 pb-1">MARKET DATA</div>
-                      <MenuItem href="/movers"    label="Movers"     sub="Top S&P 500 movers"   onClick={() => setToolsOpen(false)} />
-                      <MenuItem href="/labs/nba"  label="Labs"       sub="Experimental features" onClick={() => setToolsOpen(false)} />
+                      <MenuItem href="/movers"       label="Movers"            sub="Top S&P 500 movers"        onClick={() => setToolsOpen(false)} />
+                      <MenuItem href="/labs/kalshi"  label="Deviation Engine"  sub="Kalshi vs. vol model"      onClick={() => setToolsOpen(false)} />
+                      <MenuItem href="/labs/nba"     label="NBA Watchlist"     sub="Game deviation signals"    onClick={() => setToolsOpen(false)} />
                     </div>
                   </div>
                 )}
               </div>
 
-              <NavLink href="/pricing"      label="Pricing"   onClick={closeAll} />
+              <NavLink href="/pricing" label="Pricing" onClick={closeAll} />
             </div>
           </div>
 
@@ -178,17 +179,17 @@ export default function TopNav() {
                   <div className={`absolute right-0 mt-3 w-56 overflow-hidden rounded-2xl border ${border} ${card} shadow-2xl shadow-black/40`}>
                     <div className="px-3 pt-3 pb-1">
                       <div className="text-[10px] tracking-[0.18em] text-foreground/30 px-1 pb-1">ACCOUNT</div>
-                      <MenuItem href="/account"          label="Settings"  onClick={() => setAcctOpen(false)} />
-                      <MenuItem href="/account/billing"  label="Billing"   onClick={() => setAcctOpen(false)} />
+                      <MenuItem href="/account"         label="Settings" onClick={() => setAcctOpen(false)} />
+                      <MenuItem href="/account/billing" label="Billing"  onClick={() => setAcctOpen(false)} />
                     </div>
 
                     <div className={`my-1 h-px ${border}`} />
 
                     <div className="px-3 pb-3 pt-1">
                       <div className="text-[10px] tracking-[0.18em] text-foreground/30 px-1 pb-1">LEGAL</div>
-                      <MenuItem href="/terms"            label="Terms of Use"      onClick={() => setAcctOpen(false)} />
-                      <MenuItem href="/privacy"          label="Privacy Policy"    onClick={() => setAcctOpen(false)} />
-                      <MenuItem href="/risk-disclosure"  label="Risk Disclosure"   onClick={() => setAcctOpen(false)} />
+                      <MenuItem href="/terms"           label="Terms of Use"    onClick={() => setAcctOpen(false)} />
+                      <MenuItem href="/privacy"         label="Privacy Policy"  onClick={() => setAcctOpen(false)} />
+                      <MenuItem href="/risk-disclosure" label="Risk Disclosure" onClick={() => setAcctOpen(false)} />
                     </div>
 
                     <div className={`my-1 h-px ${border}`} />
@@ -229,22 +230,24 @@ export default function TopNav() {
               <div className="p-3 space-y-0.5">
 
                 <div className="text-[10px] tracking-[0.18em] text-foreground/30 px-2 pt-1 pb-2">CORE WORKFLOW</div>
-                <MobileItem href="/risk"        label="Survivability"  sub="Simulate drawdowns & ruin"    onClick={closeAll} />
-                <MobileItem href="/risk-engine" label="Position Risk"  sub="Size positions structurally"  onClick={closeAll} />
-                <MobileItem href="/journal"     label="Journal"        sub="Track behavior & execution"   onClick={closeAll} />
+                <MobileItem href="/risk"        label="Survivability"  sub="Simulate drawdowns & ruin"   onClick={closeAll} />
+                <MobileItem href="/risk-engine" label="Position Risk"  sub="Size positions structurally" onClick={closeAll} />
+                <MobileItem href="/journal"     label="Journal"        sub="Track behavior & execution"  onClick={closeAll} />
 
                 <div className={`my-2 h-px ${border}`} />
 
                 <div className="text-[10px] tracking-[0.18em] text-foreground/30 px-2 pt-1 pb-2">TOOLS</div>
-                <MobileItem href="/risk/kill-switch" label="Kill Switch"  sub="Auto risk governor"        onClick={closeAll} />
-                <MobileItem href="/variance"         label="Simulator"   sub="Variance & drawdown"        onClick={closeAll} />
-                <MobileItem href="/portfolio"        label="Portfolio"   sub="Position overview"          onClick={closeAll} />
-                <MobileItem href="/movers"           label="Movers"      sub="Top S&P 500 movers"         onClick={closeAll} />
+                <MobileItem href="/risk/kill-switch" label="Kill Switch"       sub="Auto risk governor"        onClick={closeAll} />
+                <MobileItem href="/variance"         label="Simulator"         sub="Variance & drawdown"       onClick={closeAll} />
+                <MobileItem href="/portfolio"        label="Portfolio"         sub="Position overview"         onClick={closeAll} />
+                <MobileItem href="/movers"           label="Movers"            sub="Top S&P 500 movers"        onClick={closeAll} />
+                <MobileItem href="/labs/kalshi"      label="Deviation Engine"  sub="Kalshi vs. vol model"      onClick={closeAll} />
+                <MobileItem href="/labs/nba"         label="NBA Watchlist"     sub="Game deviation signals"    onClick={closeAll} />
 
                 <div className={`my-2 h-px ${border}`} />
 
-                <MobileItem href="/pricing"      label="Pricing"       onClick={closeAll} />
-                <MobileItem href="/how-it-works" label="How it works"  onClick={closeAll} />
+                <MobileItem href="/pricing"      label="Pricing"      onClick={closeAll} />
+                <MobileItem href="/how-it-works" label="How it works" onClick={closeAll} />
                 {!signedIn && <MobileItem href="/login" label="Login" onClick={closeAll} />}
 
               </div>
