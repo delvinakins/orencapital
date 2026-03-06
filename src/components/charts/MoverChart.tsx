@@ -24,12 +24,24 @@ export function MoverChart({
   data,
   label,
   height = 44,
+  positive,
 }: {
   data: MoverPt[];
   label?: string;
   height?: number;
+  /** true = green, false = red, undefined = neutral white */
+  positive?: boolean | null;
 }) {
   const gid = React.useId().replaceAll(":", "");
+
+  const color =
+    positive === true
+      ? "#34d399"   // emerald-400
+      : positive === false
+      ? "#f87171"   // rose-400
+      : "#ffffff";  // neutral
+
+  const stopOpacity = positive === undefined ? 0.18 : 0.28;
 
   return (
     <div className="w-full">
@@ -38,8 +50,8 @@ export function MoverChart({
           <AreaChart data={data} margin={{ left: 0, right: 0, top: 6, bottom: 0 }}>
             <defs>
               <linearGradient id={`g-${gid}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopOpacity={0.25} />
-                <stop offset="100%" stopOpacity={0.0} />
+                <stop offset="0%" stopColor={color} stopOpacity={stopOpacity} />
+                <stop offset="100%" stopColor={color} stopOpacity={0} />
               </linearGradient>
             </defs>
 
@@ -67,8 +79,10 @@ export function MoverChart({
             />
 
             <Area
-              type="stepAfter"
+              type="monotone"
               dataKey="v"
+              stroke={color}
+              strokeWidth={1.5}
               strokeOpacity={0.9}
               fill={`url(#g-${gid})`}
               fillOpacity={1}
