@@ -1,113 +1,141 @@
 // src/app/how-it-works/page.tsx
-
 import Link from "next/link";
+
+const steps = [
+  {
+    number: "01",
+    href: "/risk",
+    cta: "Run survivability analysis",
+    title: "Define your risk structure",
+    description:
+      "Before any trade, you need to know how much you can lose before you blow up. The Survivability engine runs Monte Carlo simulations across thousands of paths to show you expected drawdowns, losing streak probabilities, and long-run ruin risk at your current sizing.",
+    bullets: [
+      "Monte Carlo distribution modeling",
+      "Expected drawdown thresholds",
+      "Psychological ruin probability",
+      "Expectancy analysis (R-based)",
+    ],
+  },
+  {
+    number: "02",
+    href: "/risk-engine",
+    cta: "Build a structured position",
+    title: "Enforce position discipline",
+    description:
+      "The Position Risk engine calculates exact dollar exposure before you enter a trade. You see immediately whether your stop placement and size are aligned with your risk structure — or whether you're overexposed.",
+    bullets: [
+      "Risk per trade (% or fixed dollar)",
+      "Portfolio-level exposure view",
+      "Automatic risk caps under stress",
+      "Capital protection mode",
+    ],
+  },
+  {
+    number: "03",
+    href: "/risk/kill-switch",
+    cta: "Set your kill switch",
+    title: "Protect capital automatically",
+    description:
+      "The Account Kill Switch monitors your drawdown, survivability score, and macro regime in real time. When conditions deteriorate, it automatically scales down your allowed risk per trade — removing the temptation to size the same way in bad conditions.",
+    bullets: [
+      "Drawdown-based risk reduction",
+      "Macro regime multiplier",
+      "Survivability score integration",
+      "Full kill switch at critical thresholds",
+    ],
+  },
+  {
+    number: "04",
+    href: "/journal",
+    cta: "Log a structured trade",
+    title: "Track behavior, not just trades",
+    description:
+      "The Journal connects structure to execution. Every trade is logged with its risk parameters, so you can see whether you're actually following your plan — or whether you're drifting under pressure.",
+    bullets: [
+      "Structured trade logging",
+      "Behavioral pattern tracking",
+      "Position-level review",
+      "Risk discipline scoring",
+    ],
+  },
+];
 
 export default function HowItWorksPage() {
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto max-w-4xl px-4 py-16 space-y-16">
+      <div className="mx-auto max-w-4xl px-4 sm:px-6 py-16 sm:py-24">
 
-        {/* Hero */}
-        <section className="space-y-6 text-center">
-          <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight">
-            Trade with Structure.
-            <br />
-            <span className="text-[color:var(--accent)]">
-              Survive Long Enough to Win.
-            </span>
+        {/* Header */}
+        <div className="mb-16 sm:mb-20">
+          <div className="text-xs tracking-[0.22em] text-foreground/40 mb-4">HOW IT WORKS</div>
+          <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight leading-tight mb-5">
+            Trade with structure.<br />
+            <span className="text-[color:var(--accent)]">Survive long enough to win.</span>
           </h1>
-
-          <p className="text-lg text-foreground/70 max-w-2xl mx-auto">
-            Most traders fail because they size incorrectly.
-            Oren Capital forces structural discipline before you put capital at risk.
+          <p className="text-lg text-foreground/60 max-w-2xl leading-relaxed">
+            Most traders fail because they size incorrectly under pressure. Oren Capital
+            forces structural discipline before capital goes at risk.
           </p>
+        </div>
 
-          <Link
-            href="/risk"
-            className="inline-flex items-center justify-center rounded-xl bg-[color:var(--accent)] px-6 py-3 text-sm font-semibold text-black hover:opacity-90 transition"
-          >
-            Start Here
-          </Link>
-        </section>
+        {/* Steps */}
+        <div className="space-y-0">
+          {steps.map((step, i) => (
+            <div
+              key={step.number}
+              className="group grid grid-cols-1 sm:grid-cols-[80px_1fr] gap-6 sm:gap-10 py-10 border-b border-[color:var(--border)] last:border-0"
+            >
+              {/* Step number */}
+              <div className="flex sm:flex-col items-center sm:items-start gap-3 sm:gap-2 pt-1">
+                <span className="text-3xl font-bold tabular-nums text-[color:var(--accent)]/30 group-hover:text-[color:var(--accent)]/60 transition-colors">
+                  {step.number}
+                </span>
+              </div>
 
-        {/* Step 1 */}
-        <section className="space-y-4">
-          <h2 className="text-2xl font-semibold">1. Define Your Risk Structure</h2>
-          <p className="text-foreground/70">
-            Use the Survivability engine to simulate drawdowns, losing streaks,
-            and long-term distribution outcomes before risking real money.
-          </p>
+              {/* Content */}
+              <div className="space-y-4">
+                <h2 className="text-xl font-semibold tracking-tight">{step.title}</h2>
+                <p className="text-sm text-foreground/65 leading-relaxed max-w-2xl">
+                  {step.description}
+                </p>
 
-          <ul className="list-disc pl-6 space-y-2 text-foreground/70">
-            <li>Monte Carlo distribution modeling</li>
-            <li>Expected drawdown thresholds</li>
-            <li>Psychological ruin probability</li>
-            <li>Expectancy analysis (R-based)</li>
-          </ul>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {step.bullets.map((b) => (
+                    <div key={b} className="flex items-start gap-2.5 text-sm text-foreground/55">
+                      <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--accent)]/50" />
+                      {b}
+                    </div>
+                  ))}
+                </div>
 
-          <Link href="/risk" className="text-[color:var(--accent)] font-medium hover:underline">
-            Run survivability analysis →
-          </Link>
-        </section>
+                <Link
+                  href={step.href}
+                  className="inline-flex items-center gap-2 text-sm font-medium text-[color:var(--accent)] hover:opacity-80 transition-opacity mt-1"
+                >
+                  {step.cta}
+                  <span className="text-xs">→</span>
+                </Link>
+              </div>
+            </div>
+          ))}
+        </div>
 
-        {/* Step 2 */}
-        <section className="space-y-4">
-          <h2 className="text-2xl font-semibold">2. Enforce Position Discipline</h2>
-          <p className="text-foreground/70">
-            The Position Risk engine calculates exact dollar exposure before entry.
-            You see whether your structure is aligned — or reckless.
-          </p>
-
-          <ul className="list-disc pl-6 space-y-2 text-foreground/70">
-            <li>Risk per trade (percent or fixed dollar)</li>
-            <li>Portfolio-level exposure</li>
-            <li>Automatic risk caps (when survivability degrades)</li>
-            <li>Capital protection mode under stress</li>
-          </ul>
-
-          <Link href="/risk-engine" className="text-[color:var(--accent)] font-medium hover:underline">
-            Build a structured position →
-          </Link>
-        </section>
-
-        {/* Step 3 */}
-        <section className="space-y-4">
-          <h2 className="text-2xl font-semibold">3. Track Behavior, Not Just Trades</h2>
-          <p className="text-foreground/70">
-            The Journal connects structure to execution.
-            Discipline compounds. Emotion destroys.
-          </p>
-
-          <ul className="list-disc pl-6 space-y-2 text-foreground/70">
-            <li>Snapshot-based journaling</li>
-            <li>Behavioral pattern tracking</li>
-            <li>Position-level review</li>
-            <li>Structured reflection</li>
-          </ul>
-
-          <Link href="/journal" className="text-[color:var(--accent)] font-medium hover:underline">
-            Log a structured trade →
-          </Link>
-        </section>
-
-        {/* Final CTA */}
-        <section className="space-y-6 text-center pt-10 border-t border-[color:var(--border)]">
-          <h2 className="text-2xl font-semibold">
+        {/* Bottom CTA */}
+        <div className="mt-16 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-8 text-center space-y-4">
+          <h2 className="text-2xl font-semibold tracking-tight">
             Capital survival is not optional.
           </h2>
-
-          <p className="text-foreground/70 max-w-xl mx-auto">
-            Markets do not care about conviction.
-            They reward structure and punish overexposure.
+          <p className="text-sm text-foreground/60 max-w-md mx-auto">
+            Markets don't care about conviction. They reward structure and punish overexposure.
+            Start with your risk structure.
           </p>
-
           <Link
             href="/risk"
-            className="inline-flex items-center justify-center rounded-xl bg-[color:var(--accent)] px-6 py-3 text-sm font-semibold text-black hover:opacity-90 transition"
+            className="inline-flex items-center justify-center rounded-xl bg-[color:var(--accent)] px-6 py-3 text-sm font-semibold text-black hover:opacity-90 transition mt-2"
           >
-            Begin With Risk Structure
+            Begin with Survivability
           </Link>
-        </section>
+        </div>
 
       </div>
     </main>

@@ -160,8 +160,8 @@ export default function PrivacyPage() {
               </div>
               <p>
                 To exercise any of these rights, contact us at{" "}
-                <a href="mailto:support@orencapital.com" className="text-[color:var(--accent)] hover:underline">
-                  support@orencapital.com
+                <a href="mailto:hq@orencapital.com" className="text-[color:var(--accent)] hover:underline">
+                  hq@orencapital.com
                 </a>.
               </p>
             </div>
@@ -180,8 +180,8 @@ export default function PrivacyPage() {
                 Consumer Privacy Act, including the right to know what personal information we
                 collect and the right to request deletion. We do not sell personal information.
                 To submit a CCPA request, contact us at{" "}
-                <a href="mailto:support@orencapital.com" className="text-[color:var(--accent)] hover:underline">
-                  support@orencapital.com
+                <a href="mailto:hq@orencapital.com" className="text-[color:var(--accent)] hover:underline">
+                  hq@orencapital.com
                 </a>.
               </p>
             </div>
@@ -227,7 +227,7 @@ export default function PrivacyPage() {
             <div className="text-xs text-foreground/50">Oren Analytics LLC · California, United States</div>
           </div>
           <a
-            href="mailto:support@orencapital.com"
+            href="mailto:hq@orencapital.com"
             className="oc-btn oc-btn-primary text-sm shrink-0"
           >
             Contact Support

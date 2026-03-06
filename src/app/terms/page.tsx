@@ -204,7 +204,7 @@ export default function TermsPage() {
             <div className="text-xs text-foreground/50">Oren Analytics LLC · California, United States</div>
           </div>
           <a
-            href="mailto:support@orencapital.com"
+            href="mailto:hq@orencapital.com"
             className="oc-btn oc-btn-primary text-sm shrink-0"
           >
             Contact Support
