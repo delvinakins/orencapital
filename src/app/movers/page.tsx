@@ -81,7 +81,7 @@ async function fetch5mSeriesReal(key: string, symbol: string) {
 
   const today = new Date();
   const from = yyyyMmDd(addDays(today, -7));
-  const to = yyyyMmDd(today);
+  const to   = yyyyMmDd(today);
   const url =
     `https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(symbol)}` +
     `/range/5/minute/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${key}`;
@@ -102,9 +102,9 @@ async function fetch5mSeriesReal(key: string, symbol: string) {
 }
 
 function fallbackTapeFromDay(day: any) {
-  const now = Date.now();
+  const now  = Date.now();
   const base = day?.o ?? day?.c ?? 100;
-  const low = day?.l ?? base * 0.985;
+  const low  = day?.l ?? base * 0.985;
   const high = day?.h ?? base * 1.015;
   const close = day?.c ?? base;
   const anchors = [base, low, (low + high) / 2, high, (high + close) / 2, close];
@@ -132,7 +132,7 @@ export default async function MoversPage() {
     userError = "Movers are temporarily unavailable.";
   } else {
     try {
-      const sp500 = await getSp500();
+      const sp500    = await getSp500();
       const snapshot = await fetchSnapshots(key);
       const dayBySymbol = new Map<string, any>();
 
@@ -143,13 +143,13 @@ export default async function MoversPage() {
           dayBySymbol.set(t.ticker, day);
           const { o: open, c: close, h: high, l: low } = day;
           const changePct = open && close ? (close - open) / open : null;
-          const rangePct = open && high && low ? (high - low) / open : null;
+          const rangePct  = open && high && low ? (high - low) / open : null;
           return {
             symbol: t.ticker,
             price: close ?? null,
             changePct,
             rangePct,
-            dayVolTag: pctTag(rangePct),
+            dayVolTag:        pctTag(rangePct),
             structuralRiskTag: structuralTag(changePct, rangePct),
           };
         });
@@ -172,17 +172,24 @@ export default async function MoversPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 pb-16 pt-6 sm:px-6">
-      <div className="mb-4">
-        <h1 className="text-xl font-semibold text-white">Movers</h1>
-        <p className="mt-1 text-sm text-white/60">Top 10 S&amp;P 500 movers.</p>
+    <div className="mx-auto w-full max-w-6xl px-4 pb-16 pt-10 sm:px-6">
+      <div className="mb-6">
+        <div className="text-xs tracking-[0.22em] text-foreground/40 mb-4">MARKET DATA</div>
+        <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
+          <span className="relative inline-block">
+            <span className="relative z-10 text-[color:var(--accent)]">Movers</span>
+            <span aria-hidden className="absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-90" />
+            <span aria-hidden className="absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-10" />
+          </span>
+        </h1>
+        <p className="mt-4 text-sm text-foreground/60">Top 10 S&amp;P 500 movers.</p>
       </div>
 
-      {userError ? (
-        <div className="mb-4 rounded-2xl border border-white/10 bg-black/30 p-4 text-sm text-white/70">
+      {userError && (
+        <div className="mb-6 rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-4 text-sm text-foreground/70">
           {userError}
         </div>
-      ) : null}
+      )}
 
       <MoversTable initialRows={rows} />
     </div>
