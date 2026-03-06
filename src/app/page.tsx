@@ -92,9 +92,9 @@ const STACK = [
 
 const STATUS = [
   { label: "NBA Edge Record", value: "16–11", sub: "33 games graded" },
-  { label: "Cron Jobs", value: "Daily", sub: "nba-grader 9am PT" },
-  { label: "Supabase Region", value: "us-west-2", sub: "CapitalGrid" },
-  { label: "Auto-refresh", value: "60s", sub: "/movers live feed" },
+  { label: "Models Graded", value: "33", sub: "season 2025–26" },
+  { label: "Data Latency", value: "Real-time", sub: "market feeds" },
+  { label: "Live Tools", value: "7", sub: "across the platform" },
 ];
 
 const TAG_STYLES: Record<Feature["tag"], string> = {
