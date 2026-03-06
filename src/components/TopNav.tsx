@@ -94,6 +94,7 @@ export default function TopNav() {
 
             {/* DESKTOP: Core workflow — in order */}
             <div className="hidden lg:flex items-center gap-1 text-sm text-slate-300">
+              <NavLink href="/how-it-works" label="How it works" onClick={closeAll} />
               <NavLink href="/risk"        label="Survivability"   onClick={closeAll} />
               <NavLink href="/risk-engine" label="Position Risk"   onClick={closeAll} />
               <NavLink href="/journal"     label="Journal"         onClick={closeAll} />
