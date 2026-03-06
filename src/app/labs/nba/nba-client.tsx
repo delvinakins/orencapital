@@ -16,78 +16,51 @@ type LiveMeta =
     }
   | undefined;
 
-/**
- * ✅ FIXED TOOLTIP (NOT TRAPPED)
- * - Renders tooltip in a portal at document.body (so it can't trap hover inside card)
- * - Opens on hover (desktop) + click/tap (mobile)
- * - Closes on mouse leave, click outside, or Escape
- * - Positions above/below with viewport clamping
- */
+// ─── Portal tooltip (unchanged logic) ────────────────────────────────────────
 function InfoTip({ content }: { content: React.ReactNode }) {
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const tipRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-
-  const [pos, setPos] = useState<{ top: number; left: number; placement: "top" | "bottom" }>({
-    top: 0,
-    left: 0,
-    placement: "top",
-  });
+  const [pos, setPos] = useState<{ top: number; left: number; placement: "top" | "bottom" }>({ top: 0, left: 0, placement: "top" });
 
   useEffect(() => setMounted(true), []);
-
   const close = () => setOpen(false);
   const toggle = () => setOpen((v) => !v);
 
   function computePosition() {
     const btn = btnRef.current;
     if (!btn) return;
-
     const r = btn.getBoundingClientRect();
     const vw = window.innerWidth || 0;
     const vh = window.innerHeight || 0;
-
-    const TIP_W = 288; // w-72
+    const TIP_W = 288;
     const TIP_H_EST = 120;
-
     const spaceTop = r.top;
     const spaceBottom = vh - r.bottom;
-
-    const placement: "top" | "bottom" =
-      spaceTop >= TIP_H_EST + 12 ? "top" : spaceBottom >= TIP_H_EST + 12 ? "bottom" : "top";
-
+    const placement: "top" | "bottom" = spaceTop >= TIP_H_EST + 12 ? "top" : spaceBottom >= TIP_H_EST + 12 ? "bottom" : "top";
     const rawLeft = r.left + r.width / 2 - TIP_W / 2;
     const left = Math.max(12, Math.min(vw - TIP_W - 12, rawLeft));
-
     const top = placement === "top" ? Math.max(12, r.top - 10) : Math.min(vh - 12, r.bottom + 10);
-
     setPos({ top, left, placement });
   }
 
   useLayoutEffect(() => {
     if (!open) return;
     computePosition();
-
     const onResize = () => computePosition();
     const onScroll = () => computePosition();
-
     window.addEventListener("resize", onResize);
     window.addEventListener("scroll", onScroll, true);
     return () => {
       window.removeEventListener("resize", onResize);
       window.removeEventListener("scroll", onScroll, true);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   useEffect(() => {
     if (!open) return;
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
     const onDown = (e: MouseEvent | TouchEvent) => {
       const t = e.target as Node | null;
       if (!t) return;
@@ -95,11 +68,9 @@ function InfoTip({ content }: { content: React.ReactNode }) {
       if (tipRef.current?.contains(t)) return;
       close();
     };
-
     document.addEventListener("keydown", onKey);
     document.addEventListener("mousedown", onDown);
     document.addEventListener("touchstart", onDown, { passive: true });
-
     return () => {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("mousedown", onDown);
@@ -118,29 +89,17 @@ function InfoTip({ content }: { content: React.ReactNode }) {
         onMouseLeave={() => setOpen(false)}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          toggle();
-        }}
-        onTouchStart={(e) => {
-          e.stopPropagation();
-          toggle();
-        }}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggle(); }}
+        onTouchStart={(e) => { e.stopPropagation(); toggle(); }}
       >
         i
       </button>
-
       {mounted && open
         ? createPortal(
             <div
               ref={tipRef}
               className="fixed z-[9999] w-72 rounded-xl border border-white/15 bg-[#111] p-3 text-xs text-foreground/75 shadow-xl"
-              style={{
-                left: pos.left,
-                top: pos.top,
-                transform: pos.placement === "top" ? "translateY(-100%)" : "translateY(0)",
-              }}
+              style={{ left: pos.left, top: pos.top, transform: pos.placement === "top" ? "translateY(-100%)" : "translateY(0)" }}
               onMouseEnter={() => setOpen(true)}
               onMouseLeave={() => setOpen(false)}
             >
@@ -153,7 +112,7 @@ function InfoTip({ content }: { content: React.ReactNode }) {
   );
 }
 
-// ─── Tip content components ──────────────────────────────────────────────────
+// ─── Tip content ──────────────────────────────────────────────────────────────
 function MoveGapTipContent() {
   return (
     <div className="space-y-1.5">
@@ -169,8 +128,8 @@ function OrenEdgeTipContent() {
   return (
     <div className="space-y-1.5">
       <div className="font-semibold text-foreground">Oren edge</div>
-      <div>A pregame lean versus the consensus closing line.</div>
-      <div>Right (green) = home looks undervalued. Left (amber) = home looks overvalued.</div>
+      <div>Pregame lean versus the consensus closing line. Based on exponential rank-to-rating model.</div>
+      <div>Arrow points toward the leaned team. Larger pt value = stronger lean.</div>
       <div className="text-foreground/50">Watchlist only. Not a bet signal.</div>
     </div>
   );
@@ -212,21 +171,14 @@ function makeStubIndex() {
     const spread = [-8, -6, -4, -2, 0, 2, 4, 6][i % 8];
     return {
       gameId: `stub-${i}`,
-      state: {
-        period: (i % 4) + 1,
-        secondsRemainingInPeriod: (i * 37) % 720,
-        scoreDiff: ((i * 13) % 20) - 10,
-      },
-      market: {
-        closingHomeSpread: spread,
-        liveHomeSpread: spread + (((i * 17) % 10) - 5) * 0.2,
-      },
+      state: { period: (i % 4) + 1, secondsRemainingInPeriod: (i * 37) % 720, scoreDiff: ((i * 13) % 20) - 10 },
+      market: { closingHomeSpread: spread, liveHomeSpread: spread + (((i * 17) % 10) - 5) * 0.2 },
     };
   });
   return buildDistributionIndex(samples);
 }
 
-// ─── Utilities ───────────────────────────────────────────────────────────────
+// ─── Utilities ────────────────────────────────────────────────────────────────
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
@@ -265,10 +217,8 @@ function safeNum(x: any): number | null {
 }
 
 function getLiveScore(g: any): { away: number | null; home: number | null } {
-  const away =
-    safeInt(g?.awayScore) ?? safeInt(g?.away_score) ?? safeInt(g?.score?.away) ?? safeInt(g?.away?.score) ?? null;
-  const home =
-    safeInt(g?.homeScore) ?? safeInt(g?.home_score) ?? safeInt(g?.score?.home) ?? safeInt(g?.home?.score) ?? null;
+  const away = safeInt(g?.awayScore) ?? safeInt(g?.away_score) ?? safeInt(g?.score?.away) ?? safeInt(g?.away?.score) ?? null;
+  const home = safeInt(g?.homeScore) ?? safeInt(g?.home_score) ?? safeInt(g?.score?.home) ?? safeInt(g?.home?.score) ?? null;
   return { away, home };
 }
 
@@ -365,126 +315,18 @@ function confluenceTone(score: number | null): "neutral" | "low" | "mid" | "high
   return "neutral";
 }
 
-// ─── Badges & pills ──────────────────────────────────────────────────────────
-function ConfluenceBadge({ score }: { score: number | null }) {
-  const tone = confluenceTone(score);
-  const cls =
-    tone === "high"
-      ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
-      : tone === "mid"
-      ? "border-amber-400/25 bg-amber-400/10 text-amber-200"
-      : tone === "low"
-      ? "border-white/10 bg-white/5 text-foreground/80"
-      : "border-white/10 bg-black/20 text-foreground/40";
-  const label = score == null ? "—" : score >= 55 ? "HIGH" : score >= 25 ? "WATCH" : score >= 10 ? "LOW" : "—";
-
-  return (
-    <div className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", cls)}>
-      <span className="tabular-nums font-semibold">{score == null ? "—" : score}</span>
-      <span className="text-[10px] tracking-wide opacity-75">{label}</span>
-    </div>
-  );
-}
-
-function ConfirmedBadge({ on }: { on: boolean }) {
-  return (
-    <div
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs",
-        on
-          ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
-          : "border-white/10 bg-black/20 text-foreground/40"
-      )}
-    >
-      <span className={cn("inline-block h-1.5 w-1.5 rounded-full", on ? "bg-[color:var(--accent)]" : "bg-white/20")} />
-      <span className="text-[10px] tracking-wide">{on ? "CONFIRMED" : "—"}</span>
-    </div>
-  );
-}
-
-function OrenEdgeBar({ v }: { v: number | null }) {
-  if (v == null || !Number.isFinite(v)) return <div className="h-1.5 w-full rounded-full bg-white/10" />;
-  const x = clamp(v, -3, 3);
-  const pct = ((x + 3) / 6) * 100;
-  const leftPct = Math.min(pct, 50);
-  const rightPct = Math.max(pct, 50);
-
-  return (
-    <div className="relative h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
-      <div className="absolute inset-y-0 left-1/2 w-px bg-white/25" />
-      {x >= 0 ? (
-        <div className="absolute inset-y-0 bg-[color:var(--accent)]/65" style={{ left: "50%", width: `${rightPct - 50}%` }} />
-      ) : (
-        <div className="absolute inset-y-0 bg-amber-400/60" style={{ left: `${leftPct}%`, width: `${50 - leftPct}%` }} />
-      )}
-    </div>
-  );
-}
-
-function Pill({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "live" | "pregame" | "final" }) {
-  const cls =
-    tone === "live"
-      ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
-      : tone === "final"
-      ? "border-white/10 bg-white/5 text-foreground/75"
-      : "border-white/10 bg-black/20 text-foreground/60";
-
-  return <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs", cls)}>{children}</span>;
-}
-
-type ScoreMark = "hit" | "miss" | "push" | "na";
-
-function ScoreMarkBadge({ mark }: { mark: ScoreMark }) {
-  const cls =
-    mark === "hit"
-      ? "border-[color:var(--accent)]/25 bg-[color:var(--accent)]/10 text-[color:var(--accent)]"
-      : mark === "miss"
-      ? "border-amber-400/25 bg-amber-400/10 text-amber-200"
-      : mark === "push"
-      ? "border-white/10 bg-white/5 text-foreground/80"
-      : "border-white/10 bg-black/20 text-foreground/40";
-  const label = mark === "hit" ? "✓" : mark === "miss" ? "✗" : mark === "push" ? "PUSH" : "—";
-
-  return (
-    <div className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", cls)}>
-      <span className="font-semibold">{label}</span>
-      <span className="text-[10px] tracking-wide opacity-75">SCORE</span>
-    </div>
-  );
-}
-
-// ─── Score line ──────────────────────────────────────────────────────────────
+// ─── Team helpers ─────────────────────────────────────────────────────────────
 const NBA_ABBR: Record<string, string> = {
-  "atlanta hawks": "ATL",
-  "boston celtics": "BOS",
-  "brooklyn nets": "BKN",
-  "charlotte hornets": "CHA",
-  "chicago bulls": "CHI",
-  "cleveland cavaliers": "CLE",
-  "dallas mavericks": "DAL",
-  "denver nuggets": "DEN",
-  "detroit pistons": "DET",
-  "golden state warriors": "GSW",
-  "houston rockets": "HOU",
-  "indiana pacers": "IND",
-  "los angeles clippers": "LAC",
-  "los angeles lakers": "LAL",
-  "memphis grizzlies": "MEM",
-  "miami heat": "MIA",
-  "milwaukee bucks": "MIL",
-  "minnesota timberwolves": "MIN",
-  "new orleans pelicans": "NOP",
-  "new york knicks": "NYK",
-  "oklahoma city thunder": "OKC",
-  "orlando magic": "ORL",
-  "philadelphia 76ers": "PHI",
-  "phoenix suns": "PHX",
-  "portland trail blazers": "POR",
-  "sacramento kings": "SAC",
-  "san antonio spurs": "SAS",
-  "toronto raptors": "TOR",
-  "utah jazz": "UTA",
-  "washington wizards": "WAS",
+  "atlanta hawks": "ATL", "boston celtics": "BOS", "brooklyn nets": "BKN",
+  "charlotte hornets": "CHA", "chicago bulls": "CHI", "cleveland cavaliers": "CLE",
+  "dallas mavericks": "DAL", "denver nuggets": "DEN", "detroit pistons": "DET",
+  "golden state warriors": "GSW", "houston rockets": "HOU", "indiana pacers": "IND",
+  "los angeles clippers": "LAC", "los angeles lakers": "LAL", "memphis grizzlies": "MEM",
+  "miami heat": "MIA", "milwaukee bucks": "MIL", "minnesota timberwolves": "MIN",
+  "new orleans pelicans": "NOP", "new york knicks": "NYK", "oklahoma city thunder": "OKC",
+  "orlando magic": "ORL", "philadelphia 76ers": "PHI", "phoenix suns": "PHX",
+  "portland trail blazers": "POR", "sacramento kings": "SAC", "san antonio spurs": "SAS",
+  "toronto raptors": "TOR", "utah jazz": "UTA", "washington wizards": "WAS",
 };
 
 function teamAbbr(name: string): string {
@@ -503,19 +345,97 @@ function teamDisplayName(name: string): string {
   return k.replace(/\b\w/g, (c: string) => c.toUpperCase());
 }
 
-function ScoreLine({
-  awayTeam,
+// ─── Badges & UI components ───────────────────────────────────────────────────
+function ConfluenceBadge({ score }: { score: number | null }) {
+  const tone = confluenceTone(score);
+  const cls =
+    tone === "high" ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" :
+    tone === "mid"  ? "border-amber-400/30 bg-amber-500/10 text-amber-200" :
+    tone === "low"  ? "border-white/10 bg-white/5 text-foreground/70" :
+                     "border-white/10 bg-black/20 text-foreground/35";
+  const label = score == null ? "—" : score >= 55 ? "HIGH" : score >= 25 ? "WATCH" : score >= 10 ? "LOW" : "—";
+  return (
+    <div className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", cls)}>
+      <span className="tabular-nums font-semibold">{score == null ? "—" : score}</span>
+      <span className="text-[10px] tracking-wide opacity-75">{label}</span>
+    </div>
+  );
+}
+
+function ConfirmedBadge({ on }: { on: boolean }) {
+  return (
+    <div className={cn(
+      "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs",
+      on ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" : "border-white/10 bg-black/20 text-foreground/35"
+    )}>
+      <span className={cn("inline-block h-1.5 w-1.5 rounded-full", on ? "bg-emerald-400" : "bg-white/20")} />
+      <span className="text-[10px] tracking-wide">{on ? "CONFIRMED" : "—"}</span>
+    </div>
+  );
+}
+
+/**
+ * Directional lean indicator — replaces the bar.
+ * Shows which team the model leans toward + magnitude in pts.
+ * Color: emerald ≥3pt, amber 1.5–3pt, muted <1.5pt
+ */
+function OrenEdgeLean({
+  v,
   homeTeam,
-  awayScore,
-  homeScore,
+  awayTeam,
 }: {
-  awayTeam: string;
+  v: number | null;
   homeTeam: string;
-  awayScore: number | null;
-  homeScore: number | null;
+  awayTeam: string;
+}) {
+  if (v == null || !Number.isFinite(v) || v === 0) {
+    return <span className="text-sm text-white/30 tabular-nums">—</span>;
+  }
+
+  const abs = Math.abs(v);
+  const leansHome = v > 0;
+  const leanedAbbr = leansHome ? teamAbbr(homeTeam) : teamAbbr(awayTeam);
+
+  const color =
+    abs >= 3.0 ? "text-emerald-300" :
+    abs >= 1.5 ? "text-amber-300" :
+                 "text-white/50";
+
+  const ptsLabel = `${abs.toFixed(1)}pt`;
+
+  return (
+    <div className={cn("flex items-center gap-1 font-semibold text-sm tabular-nums", color)}>
+      {!leansHome && <span className="opacity-70">←</span>}
+      <span>{leanedAbbr}</span>
+      {leansHome && <span className="opacity-70">→</span>}
+      <span className={cn("text-[11px] font-normal ml-0.5", color, "opacity-60")}>{ptsLabel}</span>
+    </div>
+  );
+}
+
+type ScoreMark = "hit" | "miss" | "push" | "na";
+
+function ScoreMarkBadge({ mark }: { mark: ScoreMark }) {
+  const cls =
+    mark === "hit"  ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" :
+    mark === "miss" ? "border-rose-400/30 bg-rose-500/10 text-rose-200" :
+    mark === "push" ? "border-white/10 bg-white/5 text-foreground/70" :
+                     "border-white/10 bg-black/20 text-foreground/35";
+  const label = mark === "hit" ? "✓" : mark === "miss" ? "✗" : mark === "push" ? "PUSH" : "—";
+  return (
+    <div className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", cls)}>
+      <span className="font-semibold">{label}</span>
+      <span className="text-[10px] tracking-wide opacity-75">SCORE</span>
+    </div>
+  );
+}
+
+// ─── Score line ────────────────────────────────────────────────────────────────
+function ScoreLine({ awayTeam, homeTeam, awayScore, homeScore }: {
+  awayTeam: string; homeTeam: string; awayScore: number | null; homeScore: number | null;
 }) {
   const hasScore = typeof awayScore === "number" && typeof homeScore === "number";
-  if (!hasScore) return <div className="mt-2 text-xs text-foreground/40">Score unavailable</div>;
+  if (!hasScore) return <div className="mt-2 text-xs text-foreground/35">Score unavailable</div>;
 
   const awayWin = (awayScore ?? 0) > (homeScore ?? 0);
   const homeWin = (homeScore ?? 0) > (awayScore ?? 0);
@@ -525,7 +445,7 @@ function ScoreLine({
     const fullName = teamDisplayName(name);
     const logo = teamLogoUrl(name);
     return (
-      <div className={cn("flex items-center justify-between gap-3", isWinner ? "text-foreground" : "text-foreground/60")}>
+      <div className={cn("flex items-center justify-between gap-3", isWinner ? "text-foreground" : "text-foreground/55")}>
         <div className="flex min-w-0 items-center gap-2.5">
           {logo ? (
             <img src={logo} alt={`${abbr} logo`} className="h-5 w-5 flex-none rounded object-contain" loading="lazy" />
@@ -533,9 +453,9 @@ function ScoreLine({
             <div className="h-5 w-5 flex-none rounded bg-white/5" />
           )}
           <span className="font-semibold tracking-wide text-sm">{abbr}</span>
-          <span className="hidden sm:inline text-xs text-foreground/40 truncate">{fullName}</span>
+          <span className="hidden sm:inline text-xs text-foreground/35 truncate">{fullName}</span>
         </div>
-        <span className={cn("tabular-nums font-bold text-base", isWinner ? "text-foreground" : "text-foreground/60")}>{score}</span>
+        <span className={cn("tabular-nums font-bold text-base", isWinner ? "text-foreground" : "text-foreground/55")}>{score}</span>
       </div>
     );
   };
@@ -549,7 +469,7 @@ function ScoreLine({
   );
 }
 
-// ─── Game phase helpers ──────────────────────────────────────────────────────
+// ─── Phase helpers ─────────────────────────────────────────────────────────────
 function derivePhaseAndLive(g: any): { phase: "pregame" | "live" | "final" | "unknown"; isLive: boolean } {
   const raw = String(g?.phase ?? "").toLowerCase().trim();
   const period = safeInt(g?.period);
@@ -569,7 +489,7 @@ function inSignalWindow(period: number | null, secondsRemaining: number | null):
   return false;
 }
 
-// ─── Scoreboard persistence ──────────────────────────────────────────────────
+// ─── Scoreboard persistence ────────────────────────────────────────────────────
 type ScoreRecord = { gameId: string; dateKeyPT: string; mark: Exclude<ScoreMark, "na">; ts: number };
 type ScoreboardState = { version: 1; records: Record<string, ScoreRecord> };
 type GlobalTotals = { hits: number; misses: number; push: number; hitRate: number | null };
@@ -624,36 +544,39 @@ function computeOrenAtsScoreMark(args: {
   return sign(orenEdgePts) > 0 === ats > 0 ? "hit" : "miss";
 }
 
-// ─── Row type ────────────────────────────────────────────────────────────────
+// ─── Row type ─────────────────────────────────────────────────────────────────
 type Row = {
-  key: string;
-  gameId: string;
-  awayTeam: string;
-  homeTeam: string;
-  awayScore: number | null;
-  homeScore: number | null;
-  matchup: string;
-  clock: string;
-  current: string;
-  close: string;
-  phase: "pregame" | "live" | "final" | "unknown";
-  isLive: boolean;
-  period: number | null;
-  secondsRemaining: number | null;
-  moveGapPts: number | null;
-  moveGapText: string;
-  moveGapMode: "model" | "raw" | "none";
+  key: string; gameId: string;
+  awayTeam: string; homeTeam: string;
+  awayScore: number | null; homeScore: number | null;
+  matchup: string; clock: string; current: string; close: string;
+  phase: "pregame" | "live" | "final" | "unknown"; isLive: boolean;
+  period: number | null; secondsRemaining: number | null;
+  moveGapPts: number | null; moveGapText: string; moveGapMode: "model" | "raw" | "none";
   absZ: number | null;
-  orenEdgePts: number | null;
-  orenEdgeText: string;
-  confluence: number | null;
-  confirmed: boolean;
-  scoreMark: ScoreMark;
+  orenEdgePts: number | null; orenEdgeText: string;
+  confluence: number | null; confirmed: boolean; scoreMark: ScoreMark;
 };
 
 type DayAgg = { hit: number; miss: number; push: number };
 
-// ─── Main component ──────────────────────────────────────────────────────────
+// ─── StatusPill ────────────────────────────────────────────────────────────────
+function StatusPill({ children, variant = "neutral" }: {
+  children: React.ReactNode;
+  variant?: "neutral" | "live" | "accent";
+}) {
+  const cls =
+    variant === "live"   ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" :
+    variant === "accent" ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" :
+                          "border-white/10 bg-white/5 text-white/60";
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium tracking-wide", cls)}>
+      {children}
+    </span>
+  );
+}
+
+// ─── Main component ────────────────────────────────────────────────────────────
 export default function NbaClient() {
   const [games, setGames] = useState<GameClockState[]>([]);
   const [loading, setLoading] = useState(true);
@@ -679,13 +602,10 @@ export default function NbaClient() {
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => {
-    setScoreboard(safeReadScoreboard());
-  }, []);
+  useEffect(() => { setScoreboard(safeReadScoreboard()); }, []);
 
   const headerDate = useMemo(() => formatTodayPT(), [nowTick]);
 
-  // distributions
   useEffect(() => {
     (async () => {
       try {
@@ -704,15 +624,11 @@ export default function NbaClient() {
     })();
   }, []);
 
-  // oren rankings
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch("/api/labs/nba/oren-score?season=2025-2026", { cache: "no-store" });
-        if (!res.headers.get("content-type")?.includes("application/json")) {
-          setOrenStatus("missing");
-          return;
-        }
+        if (!res.headers.get("content-type")?.includes("application/json")) { setOrenStatus("missing"); return; }
         const json: any = await res.json().catch(() => null);
         if (json?.ok && json?.map) {
           setOrenMap(json.map as Record<string, number>);
@@ -724,9 +640,7 @@ export default function NbaClient() {
         } else {
           setOrenStatus("missing");
         }
-      } catch {
-        setOrenStatus("missing");
-      }
+      } catch { setOrenStatus("missing"); }
     })();
   }, []);
 
@@ -735,44 +649,25 @@ export default function NbaClient() {
     try {
       const res = await fetch("/api/labs/nba/live-games", { cache: "no-store" });
       if (!res.headers.get("content-type")?.includes("application/json")) {
-        setGames([]);
-        setMeta(undefined);
-        setLoadError("Unable to load games right now.");
-        setLoading(false);
-        return;
+        setGames([]); setMeta(undefined); setLoadError("Unable to load games right now."); setLoading(false); return;
       }
       const json: any = await res.json().catch(() => null);
       if (json?.ok && Array.isArray(json.items)) {
-        setGames(json.items);
-        setMeta(json.meta as LiveMeta);
-        setLoading(false);
+        setGames(json.items); setMeta(json.meta as LiveMeta); setLoading(false);
       } else {
-        setMeta(undefined);
-        setLoadError("Live feed is offline right now.");
-        setLoading(false);
+        setMeta(undefined); setLoadError("Live feed is offline right now."); setLoading(false);
       }
-    } catch {
-      setMeta(undefined);
-      setLoadError("Unable to load games right now.");
-      setLoading(false);
-    }
+    } catch { setMeta(undefined); setLoadError("Unable to load games right now."); setLoading(false); }
   }
 
   async function loadGlobalTotals() {
     try {
       setGlobalStatus((s) => (s === "ok" ? "ok" : "loading"));
-      const res = await fetch(
-        `/api/labs/nba/scoreboard/global?season=2025-2026&league=nba&sport=basketball&_t=${Date.now()}`,
-        { cache: "no-store" }
-      );
+      const res = await fetch(`/api/labs/nba/scoreboard/global?season=2025-2026&league=nba&sport=basketball&_t=${Date.now()}`, { cache: "no-store" });
       const json: any = res.headers.get("content-type")?.includes("application/json") ? await res.json().catch(() => null) : null;
-      if (json?.ok && json?.totals) {
-        setGlobalTotals(json.totals as GlobalTotals);
-        setGlobalStatus("ok");
-      } else setGlobalStatus("missing");
-    } catch {
-      setGlobalStatus("missing");
-    }
+      if (json?.ok && json?.totals) { setGlobalTotals(json.totals as GlobalTotals); setGlobalStatus("ok"); }
+      else setGlobalStatus("missing");
+    } catch { setGlobalStatus("missing"); }
   }
 
   async function syncGlobalScoreboard() {
@@ -782,25 +677,13 @@ export default function NbaClient() {
         if (Number.isFinite(last) && Date.now() - last < 6 * 60 * 60 * 1000) return;
         window.localStorage.setItem(SCOREBOARD_SYNC_LAST_KEY, String(Date.now()));
       }
-      await fetch(
-        `/api/labs/nba/scoreboard/sync?season=2025-2026&league=nba&sport=basketball&_t=${Date.now()}`,
-        { method: "POST", cache: "no-store" }
-      ).catch(() => null);
+      await fetch(`/api/labs/nba/scoreboard/sync?season=2025-2026&league=nba&sport=basketball&_t=${Date.now()}`, { method: "POST", cache: "no-store" }).catch(() => null);
       await loadGlobalTotals();
     } catch {}
   }
 
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 60_000);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-    loadGlobalTotals();
-    const t = setInterval(loadGlobalTotals, 3 * 60_000);
-    return () => clearInterval(t);
-  }, []);
+  useEffect(() => { load(); const t = setInterval(load, 60_000); return () => clearInterval(t); }, []);
+  useEffect(() => { loadGlobalTotals(); const t = setInterval(loadGlobalTotals, 3 * 60_000); return () => clearInterval(t); }, []);
 
   const updatedAtLabel = useMemo(() => formatUpdatedAtPT(meta?.updatedAt), [meta?.updatedAt]);
   const isStale = Boolean(meta?.stale);
@@ -816,20 +699,14 @@ export default function NbaClient() {
       const secondsRemaining = safeInt(g?.secondsRemaining);
 
       const clock =
-        phase === "final"
-          ? "Final"
-          : phase === "pregame" || period == null || period === 0
-          ? "Pregame"
-          : secondsRemaining == null
-          ? `P${period} • —`
-          : `P${period} • ${Math.floor(secondsRemaining / 60)}:${String(secondsRemaining % 60).padStart(2, "0")}`;
+        phase === "final" ? "Final" :
+        phase === "pregame" || period == null || period === 0 ? "Pregame" :
+        secondsRemaining == null ? `P${period} • —` :
+        `P${period} • ${Math.floor(secondsRemaining / 60)}:${String(secondsRemaining % 60).padStart(2, "0")}`;
 
       const currentRounded = roundToHalf(g?.liveSpreadHome);
       const closeRounded = roundToHalf(g?.closingSpreadHome);
-      const currentLabel = formatSpread(currentRounded, 1);
-      const closeLabel = formatSpread(closeRounded, 1);
       const closeNum = typeof closeRounded === "number" ? closeRounded : null;
-
       const liveNum = safeNum(g?.liveSpreadHome);
       const closeNum2 = safeNum(g?.closingSpreadHome);
       const rawMove = liveNum != null && closeNum2 != null ? liveNum - closeNum2 : null;
@@ -842,86 +719,43 @@ export default function NbaClient() {
         const result: any = computeDeviation(g, { spreadIndex });
         const modelGap = result && Number.isFinite(result.dislocationPts) ? (result.dislocationPts as number) : null;
         absZ = result && Number.isFinite(result.absZ) ? (result.absZ as number) : null;
-        if (modelGap != null) {
-          moveGapPts = modelGap;
-          moveGapMode = "model";
-        } else if (rawMove != null) {
-          moveGapPts = rawMove;
-          moveGapMode = "raw";
-        }
+        if (modelGap != null) { moveGapPts = modelGap; moveGapMode = "model"; }
+        else if (rawMove != null) { moveGapPts = rawMove; moveGapMode = "raw"; }
       }
 
-      const orenEdgePts = computeOrenEdgePts({
-        homeTeam,
-        awayTeam,
-        closingSpreadHome: closeNum,
-        rankMap: orenMap,
-        params: orenParams,
-      });
-
+      const orenEdgePts = computeOrenEdgePts({ homeTeam, awayTeam, closingSpreadHome: closeNum, rankMap: orenMap, params: orenParams });
       const confluence = computeConfluenceScore({ orenEdgePts, moveGapPts, isLive });
 
       let confirmed = false;
-      if (
-        isLive &&
-        moveGapMode === "model" &&
-        moveGapPts != null &&
-        absZ != null &&
-        absZ >= 1.0 &&
-        inSignalWindow(period, secondsRemaining) &&
-        orenEdgePts != null &&
-        Number.isFinite(orenEdgePts) &&
-        rawMove != null
-      ) {
+      if (isLive && moveGapMode === "model" && moveGapPts != null && absZ != null && absZ >= 1.0 &&
+          inSignalWindow(period, secondsRemaining) && orenEdgePts != null && Number.isFinite(orenEdgePts) && rawMove != null) {
         const so = sign(orenEdgePts);
         const sm = sign(moveGapPts);
         const sr = sign(rawMove);
         const aligned = so !== 0 && so === sm && so === sr;
         const stillRoom = Math.abs(rawMove) < Math.abs(orenEdgePts) * 1.2;
-
         const key = String(g.gameId ?? `${awayTeam}-${homeTeam}`);
         const history = readingsRef.current.get(key) ?? [];
         const prev = history.length > 0 ? history[history.length - 1] : null;
         const persists = !!prev && now - prev.t >= 60_000 && sign(prev.moveGapPts) === sign(moveGapPts) && prev.absZ >= 1.0;
-
         confirmed = aligned && stillRoom && persists;
       }
 
       return {
         key: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
         gameId: String(g.gameId ?? `${awayTeam}-${homeTeam}`),
-        awayTeam,
-        homeTeam,
-        awayScore: s.away,
-        homeScore: s.home,
-        matchup: `${awayTeam} @ ${homeTeam}`,
-        clock,
-        current: currentLabel,
-        close: closeLabel,
-        phase,
-        isLive,
-        period,
-        secondsRemaining,
-        moveGapPts,
-        moveGapText: moveGapPts == null ? "—" : formatSigned(moveGapPts, 1),
-        moveGapMode,
-        absZ,
-        orenEdgePts,
-        orenEdgeText: orenEdgePts == null ? "—" : formatSigned(orenEdgePts, 1),
-        confluence,
-        confirmed,
-        scoreMark: computeOrenAtsScoreMark({
-          phase,
-          awayScore: s.away,
-          homeScore: s.home,
-          closingHomeSpread: closeNum,
-          orenEdgePts,
-        }),
+        awayTeam, homeTeam, awayScore: s.away, homeScore: s.home,
+        matchup: `${awayTeam} @ ${homeTeam}`, clock,
+        current: formatSpread(currentRounded, 1), close: formatSpread(closeRounded, 1),
+        phase, isLive, period, secondsRemaining,
+        moveGapPts, moveGapText: moveGapPts == null ? "—" : formatSigned(moveGapPts, 1), moveGapMode,
+        absZ, orenEdgePts, orenEdgeText: orenEdgePts == null ? "—" : formatSigned(orenEdgePts, 1),
+        confluence, confirmed,
+        scoreMark: computeOrenAtsScoreMark({ phase, awayScore: s.away, homeScore: s.home, closingHomeSpread: closeNum, orenEdgePts }),
       };
     });
 
     const phaseRank = (r: Row) => ({ live: 0, pregame: 1, unknown: 2, final: 3 }[r.phase] ?? 2);
-
     computed.sort((a, b) => {
       const rd = phaseRank(a) - phaseRank(b);
       if (rd !== 0) return rd;
@@ -930,19 +764,15 @@ export default function NbaClient() {
       if (cd !== 0) return cd;
       return a.matchup.localeCompare(b.matchup);
     });
-
     return computed;
   }, [games, spreadIndex, orenMap, orenParams]);
 
-  // persist finals locally
   useEffect(() => {
     if (typeof window === "undefined") return;
     const dateKey = meta?.dateKeyPT ? String(meta.dateKeyPT) : dateKeyPTNow();
-
     setScoreboard((prev: ScoreboardState) => {
       const next: ScoreboardState = { version: 1, records: { ...(prev.records || {}) } };
       let changed = false;
-
       for (const r of rows) {
         if (r.phase !== "final" || r.scoreMark === "na") continue;
         if (!next.records[r.gameId]) {
@@ -950,20 +780,16 @@ export default function NbaClient() {
           changed = true;
         }
       }
-
       if (changed) safeWriteScoreboard(next);
       return next;
     });
   }, [rows, meta]);
 
-  // sync global scoreboard
   useEffect(() => {
     if (Object.values(scoreboard.records || {}).length === 0) return;
     syncGlobalScoreboard();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scoreboard]);
 
-  // reading history for "confirmed"
   useEffect(() => {
     const now = Date.now();
     for (const r of rows) {
@@ -984,7 +810,6 @@ export default function NbaClient() {
     const pushes = recs.filter((r: ScoreRecord) => r.mark === "push").length;
     const graded = hits + misses;
     const p = graded > 0 ? hits / graded : null;
-
     const byDay = new Map<string, DayAgg>();
     for (const r of recs) {
       const k = r.dateKeyPT || "—";
@@ -994,7 +819,6 @@ export default function NbaClient() {
       else cur.push++;
       byDay.set(k, cur);
     }
-
     const days = Array.from(byDay.entries()).sort((a, b) => a[0].localeCompare(b[0])).slice(-7).reverse();
     return { hits, misses, pushes, graded, p, days };
   }, [scoreboard]);
@@ -1004,138 +828,147 @@ export default function NbaClient() {
     return { hits: globalTotals.hits, misses: globalTotals.misses, pushes: globalTotals.push, p: globalTotals.hitRate };
   }, [globalTotals]);
 
-  // ─── Render ────────────────────────────────────────────────────────────────
+  // ─── Render ──────────────────────────────────────────────────────────────────
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto max-w-5xl space-y-6 px-4 py-12 sm:px-6">
-        {/* Header */}
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex items-center rounded-full border border-[color:var(--border)] bg-[color:var(--card)] px-3 py-1 text-xs text-foreground/70">
-              Labs · NBA
-            </div>
-            <Pill tone="neutral">{isStale ? "Snapshot" : "Live feed"}</Pill>
+      <div className="mx-auto max-w-5xl px-4 sm:px-6 py-10 sm:py-16 space-y-6">
 
-            {liveCount > 0 ? (
-              <Pill tone="live">
-                <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />
-                {liveCount} live
-              </Pill>
-            ) : (
-              <Pill>0 live</Pill>
-            )}
+        {/* Header — matches movers/Kalshi pattern */}
+        <header className="space-y-4">
+          <div className="text-xs tracking-[0.22em] text-foreground/40">LABS · NBA</div>
+          <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
+            <span className="relative inline-block">
+              <span className="relative z-10 text-[color:var(--accent)]">NBA Deviation Watchlist</span>
+              <span aria-hidden className="absolute inset-x-0 -bottom-1 h-[2px] rounded-full bg-[color:var(--accent)] opacity-90" />
+              <span aria-hidden className="absolute inset-x-0 -bottom-1 h-[10px] rounded-full bg-[color:var(--accent)] opacity-10" />
+            </span>
+          </h1>
+          <p className="text-sm text-foreground/55 max-w-xl">
+            {headerDate} · Confluence = alignment · Confirmed = alignment + right window + model move + persistence
+          </p>
+        </header>
 
-            <Pill>Index: {indexSource === "remote" ? "Market" : "Stub"}</Pill>
-            <Pill>Oren: {orenStatus === "loading" ? "Loading" : orenStatus === "missing" ? "Missing" : "Ready"}</Pill>
-            {updatedAtLabel && <span className="text-xs text-foreground/40">Updated {updatedAtLabel} PT</span>}
-          </div>
-
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-5xl">NBA Deviation Watchlist</h1>
-            <p className="mt-2 text-sm text-foreground/55">
-              {headerDate} · Confluence = alignment · Confirmed = alignment + right window + model move + persistence
-            </p>
-          </div>
+        {/* Status pills */}
+        <div className="flex flex-wrap items-center gap-2">
+          {liveCount > 0 ? (
+            <StatusPill variant="live">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              {liveCount} live
+            </StatusPill>
+          ) : (
+            <StatusPill>0 live</StatusPill>
+          )}
+          <StatusPill>{isStale ? "Snapshot" : "Live feed"}</StatusPill>
+          <StatusPill>Index: {indexSource === "remote" ? "Market" : "Stub"}</StatusPill>
+          <StatusPill>
+            Oren: {orenStatus === "loading" ? "Loading" : orenStatus === "missing" ? "Missing" : "Ready"}
+          </StatusPill>
+          {updatedAtLabel && (
+            <span className="text-xs text-foreground/35">refreshed {updatedAtLabel} PT</span>
+          )}
         </div>
 
         {/* Scoreboard */}
-        <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 space-y-4">
+        <section className="rounded-2xl border border-white/10 bg-black/30 p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="text-sm font-medium">Oren Edge Scoreboard</div>
-              <div className="text-xs text-foreground/45 mt-0.5">Finals only · Oren edge sign vs ATS result</div>
+              <div className="text-xs tracking-[0.18em] text-foreground/40 mb-1">SCOREBOARD</div>
+              <div className="text-sm font-medium text-foreground">Oren Edge</div>
+              <div className="text-xs text-foreground/40 mt-0.5">Finals only · Edge sign vs ATS result</div>
             </div>
-
-            <div className="flex flex-wrap items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
               {[
-                { label: "Hits", val: scoreSummary.hits },
-                { label: "Miss", val: scoreSummary.misses },
-                { label: "Push", val: scoreSummary.pushes },
-              ].map(({ label, val }) => (
-                <Pill key={label}>
+                { label: "Hits", val: scoreSummary.hits, cls: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" },
+                { label: "Miss", val: scoreSummary.misses, cls: "border-rose-400/30 bg-rose-500/10 text-rose-200" },
+                { label: "Push", val: scoreSummary.pushes, cls: "border-white/10 bg-white/5 text-white/60" },
+              ].map(({ label, val, cls }) => (
+                <span key={label} className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", cls)}>
                   <span className="tabular-nums font-semibold">{val}</span>
-                  <span className="text-foreground/50">{label}</span>
-                </Pill>
+                  <span className="opacity-60">{label}</span>
+                </span>
               ))}
-              <Pill>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/60">
                 <span className="tabular-nums font-semibold">{formatPct(scoreSummary.p)}</span>
-                <span className="text-foreground/50">Hit rate</span>
-              </Pill>
+                <span className="opacity-60">Hit rate</span>
+              </span>
             </div>
           </div>
 
+          {/* Global row */}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-3">
-            <div className="text-xs text-foreground/45">
+            <div className="text-xs text-foreground/40">
               Global ·{" "}
-              <span className="text-foreground/30">
+              <span className="text-foreground/25">
                 {globalStatus === "loading" ? "Loading…" : globalStatus === "missing" ? "Unavailable" : "Synced"}
               </span>
             </div>
-            <div className="flex flex-wrap items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
               {[
-                { label: "Hits", val: globalSummary?.hits },
-                { label: "Miss", val: globalSummary?.misses },
-                { label: "Push", val: globalSummary?.pushes },
-              ].map(({ label, val }) => (
-                <Pill key={label}>
+                { label: "Hits", val: globalSummary?.hits, cls: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" },
+                { label: "Miss", val: globalSummary?.misses, cls: "border-rose-400/30 bg-rose-500/10 text-rose-200" },
+                { label: "Push", val: globalSummary?.pushes, cls: "border-white/10 bg-white/5 text-white/60" },
+              ].map(({ label, val, cls }) => (
+                <span key={label} className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", cls)}>
                   <span className="tabular-nums font-semibold">{val ?? "—"}</span>
-                  <span className="text-foreground/50">{label}</span>
-                </Pill>
+                  <span className="opacity-60">{label}</span>
+                </span>
               ))}
-              <Pill>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/60">
                 <span className="tabular-nums font-semibold">{formatPct(globalSummary?.p ?? null)}</span>
-                <span className="text-foreground/50">Hit rate</span>
-              </Pill>
-
+                <span className="opacity-60">Hit rate</span>
+              </span>
               <button
                 type="button"
                 onClick={syncGlobalScoreboard}
-                className="rounded-xl border border-[color:var(--border)] bg-white/5 px-3 py-1.5 text-xs font-medium text-foreground/70 hover:bg-white/10 hover:text-foreground transition-colors"
+                className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/60 hover:bg-white/10 hover:text-white transition-colors"
               >
                 Sync
               </button>
             </div>
           </div>
 
+          {/* Day grid */}
           {scoreSummary.days.length > 0 ? (
             <div className="grid gap-2 sm:grid-cols-3 border-t border-white/8 pt-3">
               {scoreSummary.days.map(([day, v]: [string, DayAgg]) => {
                 const graded = v.hit + v.miss;
                 const p = graded > 0 ? v.hit / graded : null;
+                const pct = formatPct(p);
+                const pctColor = p == null ? "text-white/40" : p >= 0.6 ? "text-emerald-300" : p >= 0.4 ? "text-white/70" : "text-rose-300";
                 return (
-                  <div key={day} className="rounded-xl border border-white/8 bg-black/10 px-3.5 py-3">
-                    <div className="text-[10px] text-foreground/40 tracking-wide uppercase">{day}</div>
-                    <div className="mt-1 flex items-center justify-between gap-2">
+                  <div key={day} className="rounded-xl border border-white/8 bg-black/20 px-3.5 py-3">
+                    <div className="text-[10px] text-foreground/35 tracking-wide uppercase mb-1">{day}</div>
+                    <div className="flex items-center justify-between gap-2">
                       <span className="text-sm">
-                        <span className="font-semibold">{v.hit}</span>
-                        <span className="text-foreground/40">–</span>
-                        <span className="font-semibold">{v.miss}</span>
-                        {v.push > 0 && <span className="text-xs text-foreground/40 ml-1">({v.push}p)</span>}
+                        <span className="font-semibold text-emerald-300">{v.hit}</span>
+                        <span className="text-white/30 mx-1">–</span>
+                        <span className="font-semibold text-rose-300">{v.miss}</span>
+                        {v.push > 0 && <span className="text-xs text-white/30 ml-1">({v.push}p)</span>}
                       </span>
-                      <span className="tabular-nums text-sm font-semibold">{formatPct(p)}</span>
+                      <span className={cn("tabular-nums text-sm font-semibold", pctColor)}>{pct}</span>
                     </div>
                   </div>
                 );
               })}
             </div>
           ) : (
-            <div className="text-xs text-foreground/40 border-t border-white/8 pt-3">No graded finals saved yet on this device.</div>
+            <div className="text-xs text-foreground/35 border-t border-white/8 pt-3">No graded finals saved yet on this device.</div>
           )}
-        </div>
+        </section>
 
         {/* Games */}
-        <section className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5">
+        <section>
           {loading ? (
-            <div className="text-sm text-foreground/50">Loading…</div>
+            <div className="text-sm text-foreground/40 px-1">Loading games…</div>
           ) : rows.length === 0 ? (
-            <div className="space-y-1 text-sm text-foreground/60">
+            <div className="rounded-2xl border border-white/10 bg-black/30 p-6 space-y-1 text-sm text-foreground/50">
               <div>{loadError ?? "Live feed is offline right now."}</div>
-              <div className="text-xs text-foreground/40">If you checked after hours, the last snapshot will appear once it exists.</div>
+              <div className="text-xs text-foreground/30">If you checked after hours, the last snapshot will appear once it exists.</div>
             </div>
           ) : (
-            <div className="space-y-5">
+            <div className="space-y-3">
               {/* Legend */}
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-foreground/50 border-b border-white/8 pb-4">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-foreground/40 pb-2">
                 {[
                   { label: "Confirmed", content: <ConfirmedTipContent /> },
                   { label: "Confluence", content: <ConfluenceTipContent /> },
@@ -1151,40 +984,46 @@ export default function NbaClient() {
               </div>
 
               {/* Game cards */}
-              <div className="grid gap-3">
-                {rows.map((r: Row) => {
-                  const cTone = confluenceTone(r.confluence);
-                  const ring =
-                    r.confirmed
-                      ? "ring-1 ring-[color:var(--accent)]/35"
-                      : cTone === "high"
-                      ? "ring-1 ring-[color:var(--accent)]/20"
-                      : cTone === "mid"
-                      ? "ring-1 ring-amber-400/15"
-                      : "";
+              {rows.map((r: Row) => {
+                const cTone = confluenceTone(r.confluence);
+                const leftBarColor =
+                  r.confirmed ? "bg-emerald-400" :
+                  r.isLive    ? "bg-emerald-400/60" :
+                  r.phase === "final" ? "bg-white/15" :
+                                "bg-white/8";
 
-                  return (
-                    <div
-                      key={r.key}
-                      className={cn(
-                        "rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-4",
-                        r.isLive && "bg-[color:var(--accent)]/5",
-                        ring
-                      )}
-                      style={r.isLive ? { boxShadow: "inset 0 0 0 1px rgba(43,203,119,0.08)" } : undefined}
-                    >
+                return (
+                  <div
+                    key={r.key}
+                    className={cn(
+                      "flex gap-3 rounded-2xl border border-white/10 bg-black/30 p-4 transition-colors hover:bg-white/[0.02]",
+                      r.confirmed && "bg-emerald-500/[0.03]",
+                      cTone === "high" && !r.confirmed && "bg-emerald-500/[0.02]",
+                    )}
+                  >
+                    {/* Left color bar */}
+                    <div className={cn("w-1 self-stretch rounded-full flex-none", leftBarColor)} />
+
+                    {/* Card body */}
+                    <div className="flex-1 min-w-0">
+                      {/* Top row: matchup + badges */}
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-base font-semibold text-foreground">
+                            <span className="text-base font-semibold">
                               {teamAbbr(r.awayTeam)} @ {teamAbbr(r.homeTeam)}
                             </span>
-                            <Pill tone={r.phase === "live" ? "live" : r.phase === "final" ? "final" : "pregame"}>
-                              {r.isLive && <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--accent)]" />}
+                            <span className={cn(
+                              "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                              r.phase === "live"  ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-300" :
+                              r.phase === "final" ? "border-white/10 bg-white/5 text-white/50" :
+                                                   "border-white/10 bg-white/5 text-white/50"
+                            )}>
+                              {r.isLive && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />}
                               {r.phase === "live" ? "LIVE" : r.phase === "final" ? "FINAL" : "PRE"}
-                            </Pill>
+                            </span>
                           </div>
-                          <div className="mt-0.5 text-xs text-foreground/45">
+                          <div className="mt-0.5 text-xs text-foreground/35">
                             {r.awayTeam} @ {r.homeTeam} · {r.clock}
                           </div>
                         </div>
@@ -1202,52 +1041,59 @@ export default function NbaClient() {
                         </div>
                       </div>
 
+                      {/* Score line */}
                       <ScoreLine awayTeam={r.awayTeam} homeTeam={r.homeTeam} awayScore={r.awayScore} homeScore={r.homeScore} />
 
+                      {/* Metric boxes */}
                       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                        <div className="rounded-xl border border-white/8 bg-black/10 px-3.5 py-3">
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="text-[10px] text-foreground/45 uppercase tracking-wide">Move gap</span>
+                        {/* Move gap */}
+                        <div className="rounded-xl border border-white/8 bg-black/20 px-3 py-2.5">
+                          <div className="flex items-center justify-between gap-1 mb-1.5">
+                            <span className="text-[10px] text-foreground/40 uppercase tracking-wide">Move gap</span>
                             <InfoTip content={<MoveGapTipContent />} />
                           </div>
-                          <div className="mt-1.5 flex items-baseline gap-2">
+                          <div className="flex items-baseline gap-1.5">
                             <span className="tabular-nums text-lg font-semibold">{r.moveGapText}</span>
                             {r.isLive && r.moveGapMode !== "none" && (
-                              <span className="text-[10px] text-foreground/35">{r.moveGapMode}</span>
+                              <span className="text-[10px] text-foreground/30">{r.moveGapMode}</span>
                             )}
                           </div>
                         </div>
 
-                        <div className="rounded-xl border border-white/8 bg-black/10 px-3.5 py-3">
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="text-[10px] text-foreground/45 uppercase tracking-wide">Current</span>
+                        {/* Current */}
+                        <div className="rounded-xl border border-white/8 bg-black/20 px-3 py-2.5">
+                          <div className="flex items-center justify-between gap-1 mb-1.5">
+                            <span className="text-[10px] text-foreground/40 uppercase tracking-wide">Current</span>
                             <InfoTip content={<CurrentLineTipContent />} />
                           </div>
-                          <div className="mt-1.5 tabular-nums text-lg font-semibold">{r.current}</div>
+                          <span className="tabular-nums text-lg font-semibold">{r.current}</span>
                         </div>
 
-                        <div className="rounded-xl border border-white/8 bg-black/10 px-3.5 py-3">
-                          <span className="text-[10px] text-foreground/45 uppercase tracking-wide">Close</span>
-                          <div className="mt-1.5 tabular-nums text-lg font-semibold">{r.close}</div>
+                        {/* Close */}
+                        <div className="rounded-xl border border-white/8 bg-black/20 px-3 py-2.5">
+                          <div className="mb-1.5">
+                            <span className="text-[10px] text-foreground/40 uppercase tracking-wide">Close</span>
+                          </div>
+                          <span className="tabular-nums text-lg font-semibold">{r.close}</span>
                         </div>
 
-                        <div className="rounded-xl border border-white/8 bg-black/10 px-3.5 py-3">
-                          <div className="flex items-center justify-between gap-1">
-                            <span className="text-[10px] text-foreground/45 uppercase tracking-wide">Oren edge</span>
+                        {/* Oren edge — directional lean */}
+                        <div className="rounded-xl border border-white/8 bg-black/20 px-3 py-2.5">
+                          <div className="flex items-center justify-between gap-1 mb-1.5">
+                            <span className="text-[10px] text-foreground/40 uppercase tracking-wide">Oren edge</span>
                             <InfoTip content={<OrenEdgeTipContent />} />
                           </div>
-                          <div className="mt-2">
-                            <OrenEdgeBar v={r.orenEdgePts} />
-                          </div>
-                          <div className="mt-1.5 tabular-nums text-xs text-foreground/55">{r.orenEdgeText}</div>
+                          <OrenEdgeLean v={r.orenEdgePts} homeTeam={r.homeTeam} awayTeam={r.awayTeam} />
                         </div>
                       </div>
 
-                      <div className="mt-2.5 text-[10px] text-foreground/35 tracking-wide">Watchlist only · Not a bet signal</div>
+                      <div className="mt-2 text-[10px] text-foreground/25 tracking-wide">
+                        Watchlist only · Not a bet signal
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
