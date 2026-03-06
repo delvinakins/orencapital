@@ -1,13 +1,17 @@
 // src/app/api/cron/nba-grader/route.ts
 //
 // Vercel cron: runs nightly at 9:00 AM PT (17:00 UTC)
-// Calls /api/labs/nba/live-games to get last night's finals (live source),
-// grades Oren Edge vs ATS, upserts to nba_edge_scoreboard. Idempotent.
+// Calls providers directly (no self-HTTP), grades Oren Edge vs ATS,
+// upserts to nba_edge_scoreboard. Idempotent.
 //
 // Manual run: GET /api/cron/nba-grader?secret=<CRON_SECRET>
+// Backfill:   GET /api/cron/nba-grader?secret=<CRON_SECRET>&date=2026-03-05
 
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { fetchApiSportsScores } from "@/lib/labs/nba/providers/scores-apisports";
+import { fetchTheOddsApiSpreads } from "@/lib/labs/nba/providers/odds-theoddsapi";
+import { makeMatchKey, canonicalTeamName } from "@/lib/labs/nba/providers/normalize";
 
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -45,25 +49,23 @@ function grade(
   return (edge > 0) === (ats > 0) ? "hit" : "miss";
 }
 
-// Fetch yesterday's finals from the live-games route (the real live source)
-async function fetchFinals(baseUrl: string, dateKeyPT: string): Promise<any[]> {
-  const url = `${baseUrl}/api/labs/nba/live-games?dateKeyPT=${dateKeyPT}`;
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`live-games fetch failed: ${res.status}`);
-  const json = await res.json();
-  return (json?.items ?? []).filter(
-    (g: any) => g.phase === "final" && g.homeScore != null && g.awayScore != null
-  );
-}
-
 function yesterdayPT(): string {
-  const now = new Date();
-  // Subtract 1 day, then format as YYYY-MM-DD in PT
-  const d = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const d = new Date(Date.now() - 24 * 60 * 60 * 1000);
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Los_Angeles",
     year: "numeric", month: "2-digit", day: "2-digit",
   }).format(d);
+}
+
+function toNum(x: unknown): number | null {
+  if (typeof x === "number" && Number.isFinite(x)) return x;
+  if (typeof x === "string") { const n = Number(x); if (Number.isFinite(n)) return n; }
+  return null;
+}
+
+function roundHalf(n: number | null): number | null {
+  if (n == null) return null;
+  return Math.round(n * 2) / 2;
 }
 
 export async function GET(req: Request) {
@@ -79,6 +81,7 @@ export async function GET(req: Request) {
   try {
     const sb = getSupabase();
     const season = "2025-2026";
+    const dateKey = url.searchParams.get("date") ?? yesterdayPT();
 
     // ── 1. Load Oren params ───────────────────────────────────────────────────
     const { data: p, error: pErr } = await sb
@@ -93,51 +96,100 @@ export async function GET(req: Request) {
     const rankMap: Record<string, number> = {};
     for (const r of ranks ?? []) rankMap[r.team.toLowerCase().trim()] = Number(r.rank);
 
-    // ── 3. Fetch yesterday's finals from live-games ───────────────────────────
-    // Use the request origin so this works in both prod and preview deployments
-    const baseUrl = `${url.protocol}//${url.host}`;
-    const dateKey = url.searchParams.get("date") ?? yesterdayPT();
-    const finals = await fetchFinals(baseUrl, dateKey);
+    // ── 3. Fetch scores + odds directly from providers ────────────────────────
+    const [scores, odds] = await Promise.all([
+      fetchApiSportsScores(),
+      fetchTheOddsApiSpreads(),
+    ]);
+
+    // Build closing line map from odds (keyed by game_key)
+    const closingMap = new Map<string, number>();
+    for (const o of odds as any[]) {
+      const dk = String(o?.laDateKey ?? "").trim();
+      if (dk !== dateKey) continue;
+      const away = canonicalTeamName(String(o?.awayTeam ?? "").trim());
+      const home = canonicalTeamName(String(o?.homeTeam ?? "").trim());
+      if (!away || !home) continue;
+      const spread = roundHalf(toNum(o?.liveHomeSpread));
+      if (spread != null) closingMap.set(makeMatchKey(away, home, dk), spread);
+    }
+
+    // Also load from nba_closing_lines for any games where odds didn't have spread
+    const potentialKeys = (scores as any[])
+      .filter((s: any) => String(s?.laDateKey ?? "").trim() === dateKey)
+      .map((s: any) => {
+        const away = canonicalTeamName(String(s?.awayTeam ?? "").trim());
+        const home = canonicalTeamName(String(s?.homeTeam ?? "").trim());
+        return away && home ? makeMatchKey(away, home, dateKey) : null;
+      })
+      .filter(Boolean) as string[];
+
+    if (potentialKeys.length > 0) {
+      const { data: lines } = await sb
+        .from("nba_closing_lines").select("game_key,closing_home_spread").in("game_key", potentialKeys);
+      for (const l of lines ?? []) {
+        if (!closingMap.has(l.game_key)) {
+          const v = roundHalf(toNum(l.closing_home_spread));
+          if (v != null) closingMap.set(l.game_key, v);
+        }
+      }
+    }
+
+    // ── 4. Filter finals for target date ──────────────────────────────────────
+    const finals = (scores as any[]).filter((s: any) => {
+      const dk = String(s?.laDateKey ?? "").trim();
+      if (dk !== dateKey) return false;
+      const status = String(s?.status ?? "").toLowerCase();
+      const isFinal = status.includes("final") || status.includes("finished") || status.includes("ended");
+      return isFinal && s?.homeScore != null && s?.awayScore != null;
+    });
 
     if (!finals.length) {
       return NextResponse.json({ ok: true, graded: 0, skipped: 0, message: `No finals for ${dateKey}` });
     }
 
-    const gameIds = finals.map((g: any) => g.gameId as string);
+    // ── 5. Already-graded games ───────────────────────────────────────────────
+    const gameIds = finals.map((s: any) => {
+      const away = canonicalTeamName(String(s?.awayTeam ?? "").trim());
+      const home = canonicalTeamName(String(s?.homeTeam ?? "").trim());
+      return makeMatchKey(away, home, dateKey);
+    });
 
-    // ── 4. Already-graded games ───────────────────────────────────────────────
     const { data: done } = await sb
       .from("nba_edge_scoreboard").select("game_id").in("game_id", gameIds);
     const doneSet = new Set((done ?? []).map((r: any) => r.game_id));
 
-    // ── 5. Grade ──────────────────────────────────────────────────────────────
+    // ── 6. Grade and upsert ───────────────────────────────────────────────────
     const upserts: any[] = [];
     let skipped = 0;
 
-    for (const g of finals) {
-      if (doneSet.has(g.gameId)) { skipped++; continue; }
+    for (const s of finals) {
+      const away = canonicalTeamName(String(s?.awayTeam ?? "").trim());
+      const home = canonicalTeamName(String(s?.homeTeam ?? "").trim());
+      const gameId = makeMatchKey(away, home, dateKey);
 
-      // live-games already attaches closingSpreadHome
-      const closingHome = g.closingSpreadHome != null ? Number(g.closingSpreadHome) : null;
+      if (doneSet.has(gameId)) { skipped++; continue; }
+
+      const closingHome = closingMap.get(gameId);
       if (closingHome == null) { skipped++; continue; }
 
-      const edge = computeEdge(g.homeTeam, g.awayTeam, closingHome, rankMap, params);
+      const edge = computeEdge(home, away, closingHome, rankMap, params);
       if (edge == null) { skipped++; continue; }
 
-      const mark = grade(Number(g.homeScore), Number(g.awayScore), closingHome, edge);
+      const mark = grade(Number(s.homeScore), Number(s.awayScore), closingHome, edge);
       if (!mark) { skipped++; continue; }
 
       upserts.push({
-        game_id:             g.gameId,
+        game_id:             gameId,
         season,
         league:              "nba",
         sport:               "basketball",
-        date_key_pt:         (g.gameId as string).split("|")[0] ?? "",
+        date_key_pt:         dateKey,
         mark,
         closing_home_spread: closingHome,
         oren_edge_pts:       edge,
-        final_home_score:    Number(g.homeScore),
-        final_away_score:    Number(g.awayScore),
+        final_home_score:    Number(s.homeScore),
+        final_away_score:    Number(s.awayScore),
         ts:                  Date.now(),
         updated_at:          new Date().toISOString(),
       });
