@@ -1,11 +1,12 @@
 // src/app/api/labs/kalshi/deviation/route.ts
-// Oren Deviation Engine
-// Candle history: Polygon.io SPX daily closes (already integrated)
-// Live quotes: Kalshi KXINX / KXINXY markets
+// Oren Deviation Engine V2
+// Daily KXINX markets: scored via SPY realized vol + N(d2) digital option model
+// EOY KXINXY markets: scored via Kalshi candle history + EWMA baseline
 
 import { NextRequest, NextResponse } from "next/server";
 import {
   runDeviationEngine,
+  runModelEngine,
   sortByEdge,
   normalizeSparkline,
   type Candle,
@@ -37,30 +38,39 @@ async function fetchSafe(url: string, ms = 6000): Promise<any | null> {
   }
 }
 
-// ── Polygon: SPX daily closes ────────────────────────────────────────────────
-async function getSPXCandles(days = 15): Promise<Candle[]> {
-  // Request 2x window to account for weekends/holidays, then trim to `days`
+async function getSPYCandles(days = 20): Promise<Candle[]> {
   const to = new Date();
   const from = new Date();
   from.setDate(from.getDate() - days * 2);
-
   const fromStr = from.toISOString().slice(0, 10);
   const toStr = to.toISOString().slice(0, 10);
-
   const url =
     `${POLYGON_BASE}/v2/aggs/ticker/SPY/range/1/day/${fromStr}/${toStr}` +
     `?adjusted=true&sort=asc&limit=${days * 2}&apiKey=${POLYGON_KEY}`;
-
   const data = await fetchSafe(url);
   if (!Array.isArray(data?.results) || data.results.length === 0) return [];
-
   return data.results.slice(-days).map((bar: any) => ({
-    ts: Math.floor(bar.t / 1000), // Polygon returns ms timestamps
+    ts: Math.floor(bar.t / 1000),
     close: bar.c,
   }));
 }
 
-// ── Kalshi: live quote ──────────────────────────────────────────────────────
+async function getKalshiCandles(ticker: string, limit = 60): Promise<Candle[]> {
+  const url = `${KALSHI_BASE}/markets/${encodeURIComponent(ticker)}/candlesticks?period_interval=1440&limit=${limit}`;
+  const data = await fetchSafe(url);
+  const sticks = data?.candlesticks ?? data?.candles ?? [];
+  if (!Array.isArray(sticks) || sticks.length === 0) return [];
+  return sticks
+    .map((c: any) => {
+      const close = c.yes_ask ?? c.close ?? c.yes_price ?? null;
+      const ts = c.end_period_ts ?? c.ts ?? null;
+      if (close == null || ts == null) return null;
+      return { ts, close: Number(close) } as Candle;
+    })
+    .filter((c): c is Candle => c !== null)
+    .sort((a, b) => a.ts - b.ts);
+}
+
 async function getKalshiQuote(ticker: string): Promise<MarketQuote> {
   const data = await fetchSafe(`${KALSHI_BASE}/markets/${encodeURIComponent(ticker)}`);
   const m = data?.market ?? data;
@@ -71,10 +81,33 @@ async function getKalshiQuote(ticker: string): Promise<MarketQuote> {
   };
 }
 
-// ── Scored market type ──────────────────────────────────────────────────────
+function hoursUntilClose(): number {
+  const now = new Date();
+  const closeUTC = new Date(now);
+  closeUTC.setUTCHours(21, 0, 0, 0);
+  const diff = (closeUTC.getTime() - now.getTime()) / (1000 * 60 * 60);
+  return Math.max(0.25, Math.min(6.5, diff));
+}
+
+interface StrikeInfo {
+  strikeLow: number | null;
+  strikeHigh: number | null;
+}
+
+function parseStrike(ticker: string): StrikeInfo {
+  const tMatch = ticker.match(/T(\d+(?:\.\d+)?)/);
+  if (tMatch) return { strikeLow: null, strikeHigh: Math.ceil(Number(tMatch[1])) };
+  const bMatch = ticker.match(/B(\d+)/);
+  if (bMatch) {
+    const lo = Number(bMatch[1]);
+    return { strikeLow: lo, strikeHigh: lo + 25 };
+  }
+  return { strikeLow: null, strikeHigh: null };
+}
+
 export interface ScoredMarket {
   id: string;
-  source: "kalshi" | "polymarket";
+  source: "kalshi";
   title: string;
   ticker: string;
   category: string;
@@ -86,8 +119,19 @@ export interface ScoredMarket {
   candleSource: string;
 }
 
-// ── Curated Kalshi markets ──────────────────────────────────────────────────
-function getCuratedMarkets() {
+type ScoringMode = "model" | "history";
+
+interface MarketDef {
+  id: string;
+  ticker: string;
+  title: string;
+  category: string;
+  closeTime: string | null;
+  url: string;
+  scoringMode: ScoringMode;
+}
+
+function getMarketDefs(): MarketDef[] {
   const now = new Date();
   const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
   const yy = String(now.getUTCFullYear()).slice(2);
@@ -103,6 +147,7 @@ function getCuratedMarkets() {
       category: "sp500_level",
       closeTime: null,
       url: "https://kalshi.com/markets/kxinx",
+      scoringMode: "model",
     },
     {
       id: `kalshi:KXINX-${dateStr}H1600-B7237`,
@@ -111,6 +156,7 @@ function getCuratedMarkets() {
       category: "sp500_range",
       closeTime: null,
       url: "https://kalshi.com/markets/kxinx",
+      scoringMode: "model",
     },
     {
       id: `kalshi:KXINX-${dateStr}H1600-B7212`,
@@ -119,6 +165,7 @@ function getCuratedMarkets() {
       category: "sp500_range",
       closeTime: null,
       url: "https://kalshi.com/markets/kxinx",
+      scoringMode: "model",
     },
     {
       id: "kalshi:KXINXY-26DEC31H1600-B7300",
@@ -127,6 +174,7 @@ function getCuratedMarkets() {
       category: "sp500_range",
       closeTime: "2026-12-31T21:00:00Z",
       url: "https://kalshi.com/markets/kxinxy",
+      scoringMode: "history",
     },
     {
       id: "kalshi:KXINXY-26DEC31H1600-B7500",
@@ -135,6 +183,7 @@ function getCuratedMarkets() {
       category: "sp500_range",
       closeTime: "2026-12-31T21:00:00Z",
       url: "https://kalshi.com/markets/kxinxy",
+      scoringMode: "history",
     },
     {
       id: "kalshi:KXINXY-26DEC31H1600-B7100",
@@ -143,6 +192,7 @@ function getCuratedMarkets() {
       category: "sp500_range",
       closeTime: "2026-12-31T21:00:00Z",
       url: "https://kalshi.com/markets/kxinxy",
+      scoringMode: "history",
     },
     {
       id: "kalshi:KXINXY-26DEC31H1600-T9000",
@@ -151,6 +201,7 @@ function getCuratedMarkets() {
       category: "sp500_level",
       closeTime: "2026-12-31T21:00:00Z",
       url: "https://kalshi.com/markets/kxinxy",
+      scoringMode: "history",
     },
     {
       id: "kalshi:KXINXY-26DEC31H1600-T4000",
@@ -159,11 +210,11 @@ function getCuratedMarkets() {
       category: "sp500_level",
       closeTime: "2026-12-31T21:00:00Z",
       url: "https://kalshi.com/markets/kxinxy",
+      scoringMode: "history",
     },
   ];
 }
 
-// ── Handler ─────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
     const isDebug = req.nextUrl.searchParams.get("debug") === "1";
@@ -173,27 +224,41 @@ export async function GET(req: NextRequest) {
     }
 
     if (!POLYGON_KEY) {
-      return NextResponse.json(
-        { ok: false, error: "POLYGON_API_KEY env var not set" },
-        { status: 500 }
-      );
+      return NextResponse.json({ ok: false, error: "POLYGON_API_KEY not set" }, { status: 500 });
     }
 
-    const [spxCandles, ...quoteResults] = await Promise.all([
-      getSPXCandles(15),
-      ...getCuratedMarkets().map((m) => getKalshiQuote(m.ticker)),
+    const markets = getMarketDefs();
+    const hoursLeft = hoursUntilClose();
+    const eoyMarkets = markets.filter((m) => m.scoringMode === "history");
+
+    const [spyCandles, ...rest] = await Promise.all([
+      getSPYCandles(20),
+      ...markets.map((m) => getKalshiQuote(m.ticker)),
+      ...eoyMarkets.map((m) => getKalshiCandles(m.ticker)),
     ]);
 
-    const markets = getCuratedMarkets();
+    const quotes = rest.slice(0, markets.length) as MarketQuote[];
+    const eoyCandles = rest.slice(markets.length) as Candle[][];
 
+    let eoyIdx = 0;
     const scored: ScoredMarket[] = markets.map((m, i) => {
-      const quote = quoteResults[i];
-      const result = runDeviationEngine(spxCandles, quote);
-      const sparkline = normalizeSparkline(spxCandles);
+      const quote = quotes[i];
+      let result: DeviationResult;
+      let sparkline: Array<{ ts: number; v: number }>;
+
+      if (m.scoringMode === "model") {
+        const { strikeLow, strikeHigh } = parseStrike(m.ticker);
+        result = runModelEngine(spyCandles, quote, strikeLow, strikeHigh, hoursLeft);
+        sparkline = normalizeSparkline(spyCandles);
+      } else {
+        const candles = eoyCandles[eoyIdx++];
+        result = runDeviationEngine(candles, quote);
+        sparkline = normalizeSparkline(candles.length > 0 ? candles : spyCandles);
+      }
 
       return {
         id: m.id,
-        source: "kalshi" as const,
+        source: "kalshi",
         title: m.title,
         ticker: m.ticker,
         category: m.category,
@@ -202,7 +267,7 @@ export async function GET(req: NextRequest) {
         quote,
         result,
         sparkline,
-        candleSource: "polygon-spx-daily",
+        candleSource: m.scoringMode === "model" ? "polygon-spy-daily" : "kalshi-candles",
       };
     });
 
@@ -212,20 +277,18 @@ export async function GET(req: NextRequest) {
       ok: true,
       updatedAt: new Date().toISOString(),
       count: sorted.length,
-      candleCount: spxCandles.length,
+      spyCandleCount: spyCandles.length,
+      hoursUntilClose: hoursLeft,
       markets: sorted,
       ...(isDebug && {
-        candles: spxCandles.map((c) => ({
+        spyCandles: spyCandles.map((c) => ({
           date: new Date(c.ts * 1000).toISOString().slice(0, 10),
           close: c.close,
         })),
       }),
     };
 
-    if (!isDebug) {
-      cache = { ts: Date.now(), data: response };
-    }
-
+    if (!isDebug) cache = { ts: Date.now(), data: response };
     return NextResponse.json(response);
   } catch (err: any) {
     return NextResponse.json(
