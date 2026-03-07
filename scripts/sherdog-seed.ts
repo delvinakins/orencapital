@@ -6,11 +6,14 @@
 // computes the fighter's Elo from scratch by replaying their career chronologically,
 // using each opponent's *current* DB Elo as the counterpart.
 //
-// Usage:
+// Usage (single):
 //   npx tsx scripts/sherdog-seed.ts "Islam Makhachev"
 //   npx tsx scripts/sherdog-seed.ts "https://www.sherdog.com/fighter/Islam-Makhachev-76836"
 //   npx tsx scripts/sherdog-seed.ts --dry-run "Losene Keita"
-//   npx tsx scripts/sherdog-seed.ts --help
+//
+// Usage (bulk card seed):
+//   npx tsx scripts/sherdog-seed.ts "Fighter 1" "Fighter 2" "Fighter 3" ...
+//   npx tsx scripts/sherdog-seed.ts --dry-run "Max Holloway" "Charles Oliveira" "Caio Borralho"
 //
 // Env (auto-loaded from .env.local):
 //   SUPABASE_URL
@@ -182,31 +185,18 @@ function classifyStyle(fights: number, ko_wins: number, sub_wins: number): strin
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-async function main() {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes("--dry-run") || args.includes("--preview");
-  const input = args.find((a) => !a.startsWith("--"));
-
-  if (!input || args.includes("--help")) {
-    console.log(`Usage: npx tsx scripts/sherdog-seed.ts [--dry-run] "Fighter Name"`);
-    console.log(`       npx tsx scripts/sherdog-seed.ts [--dry-run] "https://www.sherdog.com/fighter/..."` );
-    process.exit(input ? 0 : 1);
-  }
-
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!dryRun && (!supabaseUrl || !supabaseKey)) {
-    console.error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set (or in .env.local)");
-    process.exit(1);
-  }
-
+async function seedOne(
+  input: string,
+  dryRun: boolean,
+  sb: ReturnType<typeof createClient> | null
+): Promise<boolean> {
   // Resolve fighter URL
   let url: string;
   if (input.startsWith("http")) {
     url = input;
   } else {
     const found = await findFighterUrl(input);
-    if (!found) { console.error(`Fighter not found on Sherdog: "${input}"`); process.exit(1); }
+    if (!found) { console.error(`  Fighter not found on Sherdog: "${input}"`); return false; }
     url = found;
     await delay(600);
   }
@@ -214,16 +204,15 @@ async function main() {
   const { name, dob, fights } = await scrapeFighter(url);
 
   if (fights.length === 0) {
-    console.log("No gradeable fights found. Nothing to seed.");
-    process.exit(0);
+    console.log("  No gradeable fights found. Skipping.");
+    return false;
   }
 
   // Load opponents' current Elo from DB for accurate calculation
   const opponentNames = [...new Set(fights.map((f) => f.opponent))];
   const opponentElos = new Map<string, number>();
 
-  if (!dryRun && supabaseUrl && supabaseKey) {
-    const sb = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+  if (sb) {
     const { data } = await sb
       .from("ufc_fighter_ratings")
       .select("fighter_name, elo")
@@ -233,7 +222,7 @@ async function main() {
     }
   }
 
-  const getOpponentElo = (name: string) => opponentElos.get(name) ?? DEFAULT_ELO;
+  const getOpponentElo = (n: string) => opponentElos.get(n) ?? DEFAULT_ELO;
 
   // Replay career chronologically from scratch
   let elo = DEFAULT_ELO;
@@ -271,32 +260,68 @@ async function main() {
   if (dob) console.log(`  DOB: ${dob}`);
 
   if (dryRun) {
-    console.log("\n[DRY RUN] Nothing written. Remove --dry-run to seed.");
-    return;
+    console.log("  [DRY RUN] Nothing written.");
+    return true;
   }
 
-  // Upsert to Supabase
-  const sb = createClient(supabaseUrl!, supabaseKey!, { auth: { persistSession: false } });
   const dbName = name.toLowerCase().trim();
-
-  const { error } = await sb.from("ufc_fighter_ratings").upsert({
-    fighter_name:    dbName,
-    elo:             finalElo,
-    fights:          fights_count,
+  const { error } = await sb!.from("ufc_fighter_ratings").upsert({
+    fighter_name: dbName,
+    elo:          finalElo,
+    fights:       fights_count,
     wins,
     ko_wins,
     sub_wins,
     style,
     ...(dob ? { dob } : {}),
-    updated_at:      new Date().toISOString(),
+    updated_at:   new Date().toISOString(),
   }, { onConflict: "fighter_name" });
 
   if (error) {
-    console.error("Supabase upsert failed:", error.message);
+    console.error(`  Supabase upsert failed: ${error.message}`);
+    return false;
+  }
+
+  console.log(`  Seeded: ${dbName} → ${finalElo} Elo (${fights_count}F / ${wins}W / ${style})`);
+  return true;
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const dryRun = args.includes("--dry-run") || args.includes("--preview");
+  const inputs = args.filter((a) => !a.startsWith("--"));
+
+  if (inputs.length === 0 || args.includes("--help")) {
+    console.log(`Usage: npx tsx scripts/sherdog-seed.ts [--dry-run] "Fighter 1" ["Fighter 2" ...]`);
+    process.exit(inputs.length ? 0 : 1);
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!dryRun && (!supabaseUrl || !supabaseKey)) {
+    console.error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set (or in .env.local)");
     process.exit(1);
   }
 
-  console.log(`\nSeeded: ${dbName} → ${finalElo} Elo (${fights_count}F / ${wins}W / ${style})`);
+  const sb = (!dryRun && supabaseUrl && supabaseKey)
+    ? createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } })
+    : null;
+
+  if (dryRun) console.log("--- DRY RUN ---\n");
+
+  let ok = 0, failed = 0;
+
+  for (let i = 0; i < inputs.length; i++) {
+    if (inputs.length > 1) console.log(`\n[${i + 1}/${inputs.length}] ${inputs[i]}`);
+    const success = await seedOne(inputs[i], dryRun, sb);
+    if (success) ok++; else failed++;
+    // Polite delay between fighters when doing bulk seeding
+    if (i < inputs.length - 1) await delay(800);
+  }
+
+  if (inputs.length > 1) {
+    console.log(`\n=== Done: ${ok} seeded, ${failed} failed ===`);
+  }
 }
 
 main().catch((e) => { console.error("Fatal:", e?.message ?? e); process.exit(1); });
