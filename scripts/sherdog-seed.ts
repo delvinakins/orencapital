@@ -217,7 +217,7 @@ async function seedOne(
       .from("ufc_fighter_ratings")
       .select("fighter_name, elo")
       .in("fighter_name", opponentNames);
-    for (const row of data ?? []) {
+    for (const row of (data ?? []) as { fighter_name: string; elo: number }[]) {
       opponentElos.set(row.fighter_name, Number(row.elo));
     }
   }
