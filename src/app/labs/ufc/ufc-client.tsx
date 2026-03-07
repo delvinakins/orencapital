@@ -434,17 +434,15 @@ function FightCard({ fight }: { fight: FightItem }) {
           isFav={!f1Fav}
         />
 
-        {/* OCR lean — shown when model and market pick different winners */}
-        {ocrDisagreesWithMarket && ocrLeanPct >= 0.52 && (
-          <div className="mt-2.5 flex items-center gap-2 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2">
-            <span className="text-[10px] text-foreground/40 uppercase tracking-wide flex-none">OCR lean</span>
-            <span className="text-sm font-semibold text-foreground/90">{ocrLeanName}</span>
-            <span className="text-xs text-foreground/40 tabular-nums">{formatPct(ocrFavF1 ? fight.fighter1OcrProb : fight.fighter2OcrProb)}</span>
-            {ocrDisagreesWithMarket && hasSignal && (
-              <span className="ml-auto text-[10px] text-rose-300/70">market disagrees</span>
-            )}
-          </div>
-        )}
+        {/* OCR lean — always shown so the model's pick is immediately clear */}
+        <div className="mt-2.5 flex items-center gap-2 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2">
+          <span className="text-[10px] text-foreground/40 uppercase tracking-wide flex-none">OCR lean</span>
+          <span className="text-sm font-semibold text-foreground/90">{ocrLeanName}</span>
+          <span className="text-xs text-foreground/40 tabular-nums">{formatPct(ocrFavF1 ? fight.fighter1OcrProb : fight.fighter2OcrProb)}</span>
+          {ocrDisagreesWithMarket && hasSignal && (
+            <span className="ml-auto text-[10px] text-rose-300/70">market disagrees</span>
+          )}
+        </div>
 
         {/* OCR detail boxes */}
         <div className="mt-3 grid grid-cols-2 gap-2">
