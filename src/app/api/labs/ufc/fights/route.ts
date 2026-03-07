@@ -143,10 +143,26 @@ function ageAtDate(dob: string | null, atIso: string | null): number | null {
 const TTL_MS = 5 * 60_000;
 let cache: { at: number; data: FightItem[] } | null = null;
 
+/** Canonical name for deduplication — resolves alias if one exists, else normalizes. */
+function resolveCanonical(name: string): string {
+  const norm = normalizeName(name);
+  return NAME_ALIASES[norm] ?? norm;
+}
+
 async function getFights(): Promise<FightItem[]> {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.data;
 
-  const fights = await fetchMmaOdds();
+  const rawFights = await fetchMmaOdds();
+
+  // Deduplicate fights where the same matchup appears under different name spellings
+  // (e.g. "Sumudaerji Sumudaerji" and "Su Mudaerji" are the same fighter).
+  const seenPairs = new Set<string>();
+  const fights = rawFights.filter((f) => {
+    const key = [resolveCanonical(f.fighter1), resolveCanonical(f.fighter2)].sort().join("|");
+    if (seenPairs.has(key)) return false;
+    seenPairs.add(key);
+    return true;
+  });
 
   const allNames = fights.flatMap((f) => [f.fighter1.toLowerCase(), f.fighter2.toLowerCase()]);
   const ratingsMap = await getRatingsMap([...new Set(allNames)]);
