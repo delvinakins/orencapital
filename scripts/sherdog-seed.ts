@@ -296,7 +296,7 @@ async function main() {
     process.exit(inputs.length ? 0 : 1);
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!dryRun && (!supabaseUrl || !supabaseKey)) {
     console.error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set (or in .env.local)");

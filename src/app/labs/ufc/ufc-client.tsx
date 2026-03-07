@@ -376,8 +376,13 @@ function FightCard({ fight }: { fight: FightItem }) {
       ? Math.max(Math.abs(fight.fighter1HypeTax), Math.abs(fight.fighter2HypeTax))
       : null;
 
-  const hasSignal    = topHypeTax != null && topHypeTax >= 0.05;
-  const strongSignal = topHypeTax != null && topHypeTax >= 0.10;
+  // Never flag a signal against a heavy market favorite (-400 or worse)
+  const isHeavyFav =
+    (fight.fighter1AmericanOdds != null && fight.fighter1AmericanOdds <= -400) ||
+    (fight.fighter2AmericanOdds != null && fight.fighter2AmericanOdds <= -400);
+
+  const hasSignal    = topHypeTax != null && topHypeTax >= 0.05 && !isHeavyFav;
+  const strongSignal = topHypeTax != null && topHypeTax >= 0.10 && !isHeavyFav;
 
   const isGraded = fight.outcome != null;
 
@@ -578,7 +583,14 @@ export default function UfcClient() {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(f);
     }
-    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+    // Within each group: graded fights first, then ungraded
+    for (const group of groups.values()) {
+      group.sort((a, b) => (b.outcome != null ? 1 : 0) - (a.outcome != null ? 1 : 0));
+    }
+    // Sort groups ascending by date, show only current card + next
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(0, 2);
   }, [fights]);
 
   const signalCount = useMemo(
