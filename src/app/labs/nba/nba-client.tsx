@@ -733,12 +733,21 @@ export default function NbaClient() {
     });
 
     const phaseRank = (r: Row) => ({ live: 0, pregame: 1, unknown: 2, final: 3 }[r.phase] ?? 2);
+    const tipoffMs = (r: Row) => r.tipoffIso ? Date.parse(r.tipoffIso) : Infinity;
     computed.sort((a, b) => {
       const rd = phaseRank(a) - phaseRank(b);
       if (rd !== 0) return rd;
-      if (a.confirmed !== b.confirmed) return a.confirmed ? -1 : 1;
-      const cd = (b.confluence ?? -1) - (a.confluence ?? -1);
-      if (cd !== 0) return cd;
+      // Live: confirmed first, then confluence, then tipoff
+      if (a.phase === "live") {
+        if (a.confirmed !== b.confirmed) return a.confirmed ? -1 : 1;
+        const cd = (b.confluence ?? -1) - (a.confluence ?? -1);
+        if (cd !== 0) return cd;
+      }
+      // Pregame + final: chronological by tipoff
+      if (a.phase !== "live") {
+        const td = tipoffMs(a) - tipoffMs(b);
+        if (td !== 0) return td;
+      }
       return a.matchup.localeCompare(b.matchup);
     });
     return computed;
