@@ -4,6 +4,8 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "re
 import { createPortal } from "react-dom";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+type FighterStyle = "ko_artist" | "grappler" | "balanced";
+
 type FightItem = {
   fightId: string;
   commenceTimeIso: string | null;
@@ -16,10 +18,14 @@ type FightItem = {
   fighter2MarketProb: number | null;
   fighter1Elo: number;
   fighter2Elo: number;
-  fighter1EloProb: number;
-  fighter2EloProb: number;
+  fighter1OcrProb: number;
+  fighter2OcrProb: number;
   fighter1EloFights: number;
   fighter2EloFights: number;
+  fighter1Style: FighterStyle;
+  fighter2Style: FighterStyle;
+  fighter1Age: number | null;
+  fighter2Age: number | null;
   fighter1HypeTax: number | null;
   fighter2HypeTax: number | null;
 };
@@ -39,10 +45,6 @@ function formatAmericanOdds(v: number | null): string {
   return v > 0 ? `+${v}` : String(v);
 }
 
-function formatElo(v: number): string {
-  return Math.round(v).toString();
-}
-
 function formatHypeTax(v: number | null): string {
   if (v == null || !Number.isFinite(v)) return "—";
   const pct = (v * 100).toFixed(1);
@@ -53,15 +55,17 @@ function formatEventDate(iso: string | null): string {
   if (!iso) return "TBD";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "TBD";
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(d) + " ET";
+  return (
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).format(d) + " ET"
+  );
 }
 
 function formatDateGroup(iso: string | null): string {
@@ -82,14 +86,33 @@ function isoDateKey(iso: string | null): string {
   return iso.slice(0, 10);
 }
 
-// ─── Hype tax tone ─────────────────────────────────────────────────────────────
-type HypeTone = "overpriced" | "underpriced" | "neutral";
+function hypeTaxColor(v: number | null): string {
+  if (v == null || !Number.isFinite(v)) return "text-foreground/40";
+  if (v >= 0.05)  return "text-rose-300";
+  if (v <= -0.05) return "text-emerald-300";
+  return "text-foreground/40";
+}
 
-function hypeTone(v: number | null): HypeTone {
-  if (v == null || !Number.isFinite(v)) return "neutral";
-  if (v >= 0.05) return "overpriced";  // market overprices by 5+pp
-  if (v <= -0.05) return "underpriced";
-  return "neutral";
+// ─── Style badge ──────────────────────────────────────────────────────────────
+function StyleBadge({ style }: { style: FighterStyle }) {
+  if (style === "balanced") return null;
+  const cls =
+    style === "ko_artist"
+      ? "border-rose-400/25 bg-rose-500/10 text-rose-300"
+      : "border-blue-400/25 bg-blue-500/10 text-blue-300";
+  const label = style === "ko_artist" ? "KO Artist" : "Grappler";
+  return (
+    <span className={cn("inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium", cls)}>
+      {label}
+    </span>
+  );
+}
+
+// ─── Age warning dot ──────────────────────────────────────────────────────────
+function AgeWarning({ age }: { age: number | null }) {
+  if (age == null || age < 33) return null;
+  const cls = age >= 36 ? "text-rose-300/70" : "text-amber-300/70";
+  return <span className={cn("text-[10px] tabular-nums", cls)}>{age}y</span>;
 }
 
 // ─── Portal tooltip ───────────────────────────────────────────────────────────
@@ -114,10 +137,8 @@ function InfoTip({ content }: { content: React.ReactNode }) {
     const vh = window.innerHeight || 0;
     const TIP_W = 288;
     const TIP_H_EST = 120;
-    const spaceTop = r.top;
-    const spaceBottom = vh - r.bottom;
     const placement: "top" | "bottom" =
-      spaceTop >= TIP_H_EST + 12 ? "top" : spaceBottom >= TIP_H_EST + 12 ? "bottom" : "top";
+      r.top >= TIP_H_EST + 12 ? "top" : vh - r.bottom >= TIP_H_EST + 12 ? "bottom" : "top";
     const rawLeft = r.left + r.width / 2 - TIP_W / 2;
     const left = Math.max(12, Math.min(vw - TIP_W - 12, rawLeft));
     const top =
@@ -199,24 +220,29 @@ function InfoTip({ content }: { content: React.ReactNode }) {
 }
 
 // ─── Tip content ──────────────────────────────────────────────────────────────
-function HypeTaxTipContent() {
+function OcrTipContent() {
   return (
     <div className="space-y-1.5">
-      <div className="font-semibold text-foreground">Hype tax</div>
-      <div>Market-implied probability minus Elo-implied probability, in percentage points.</div>
-      <div>Positive = market overprices this fighter relative to Elo history.</div>
-      <div>Negative = market underprices this fighter.</div>
-      <div className="text-foreground/50">Watchlist only. Not a bet signal.</div>
+      <div className="font-semibold text-foreground">Oren Combat Rating (OCR)</div>
+      <div>Win probability from three combined signals:</div>
+      <div className="pl-2 space-y-1 text-foreground/60">
+        <div><span className="text-foreground/80">Base Elo</span> — finish-quality K-factor: KO/TKO=40, Sub=36, Split=20</div>
+        <div><span className="text-foreground/80">Age curve</span> — peak window 27–31. Decline after 33, steep after 35.</div>
+        <div><span className="text-foreground/80">Style matchup</span> — grapplers +50 effective Elo vs non-KO artists. KO artists +30 general edge.</div>
+      </div>
+      <div className="text-foreground/50">Fighters without history default to 1500 (50/50).</div>
     </div>
   );
 }
 
-function EloTipContent() {
+function HypeTaxTipContent() {
   return (
     <div className="space-y-1.5">
-      <div className="font-semibold text-foreground">Elo rating</div>
-      <div>Standard Elo rating seeded from historical UFC fight results. Baseline: 1500 for fighters without history.</div>
-      <div className="text-foreground/50">Low fight count = high uncertainty.</div>
+      <div className="font-semibold text-foreground">Hype tax</div>
+      <div>Market-implied probability minus OCR-implied probability, in percentage points.</div>
+      <div className="text-rose-300/80">Positive = market overprices fighter vs combat history.</div>
+      <div className="text-emerald-300/80">Negative = market underprices fighter.</div>
+      <div className="text-foreground/50">Watchlist only. Not a bet signal.</div>
     </div>
   );
 }
@@ -230,55 +256,69 @@ function MarketProbTipContent() {
   );
 }
 
+function StyleTipContent() {
+  return (
+    <div className="space-y-1.5">
+      <div className="font-semibold text-foreground">Style classification</div>
+      <div className="space-y-1 text-foreground/60">
+        <div><span className="text-rose-300">KO Artist</span> — KO/TKO rate ≥ 50% (min 5 fights). +30 effective Elo edge.</div>
+        <div><span className="text-blue-300">Grappler</span> — TD accuracy ≥ 45% + ground control ≥ 35%, or sub rate ≥ 40%. +50 Elo edge vs non-KO artists.</div>
+      </div>
+      <div className="text-foreground/50">Requires seeded UFCStats grappling data to activate.</div>
+    </div>
+  );
+}
+
+// ─── Status pill ──────────────────────────────────────────────────────────────
+function StatusPill({ children, variant = "neutral" }: {
+  children: React.ReactNode;
+  variant?: "neutral" | "accent";
+}) {
+  const cls =
+    variant === "accent"
+      ? "border-rose-400/30 bg-rose-500/10 text-rose-200"
+      : "border-white/10 bg-white/5 text-white/60";
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium tracking-wide", cls)}>
+      {children}
+    </span>
+  );
+}
+
 // ─── Fighter row ──────────────────────────────────────────────────────────────
 function FighterRow({
-  name,
-  americanOdds,
-  marketProb,
-  eloProb,
-  elo,
-  eloFights,
-  hypeTaxVal,
-  isFav,
+  name, americanOdds, marketProb, ocrProb,
+  elo, eloFights, style, age, hypeTaxVal, isFav,
 }: {
   name: string;
   americanOdds: number | null;
   marketProb: number | null;
-  eloProb: number;
+  ocrProb: number;
   elo: number;
   eloFights: number;
+  style: FighterStyle;
+  age: number | null;
   hypeTaxVal: number | null;
   isFav: boolean;
 }) {
-  const tone = hypeTone(hypeTaxVal);
-  const hypeCls =
-    tone === "overpriced"
-      ? "text-rose-300"
-      : tone === "underpriced"
-      ? "text-emerald-300"
-      : "text-foreground/40";
-
   return (
-    <div className="flex items-center justify-between gap-2 py-2">
-      {/* Name + fav indicator */}
-      <div className="flex items-center gap-2 min-w-0">
-        <div
-          className={cn(
-            "h-1.5 w-1.5 rounded-full flex-none",
-            isFav ? "bg-white/60" : "bg-white/20"
-          )}
-        />
+    <div className="flex items-center justify-between gap-2 py-2.5">
+      {/* Name + badges */}
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        <div className={cn("h-1.5 w-1.5 rounded-full flex-none", isFav ? "bg-white/60" : "bg-white/20")} />
         <span className={cn("font-semibold text-sm truncate", isFav ? "text-foreground" : "text-foreground/70")}>
           {name}
         </span>
+        <StyleBadge style={style} />
+        <AgeWarning age={age} />
         {eloFights === 0 && (
-          <span className="text-[10px] text-foreground/30 flex-none">new</span>
+          <span className="text-[10px] text-foreground/25 flex-none">no history</span>
         )}
       </div>
 
-      {/* Stats */}
-      <div className="flex items-center gap-4 flex-none text-xs tabular-nums">
-        <div className="text-right">
+      {/* Stats grid */}
+      <div className="flex items-center gap-3 sm:gap-4 flex-none text-xs tabular-nums">
+        <div className="text-right hidden sm:block">
           <div className="text-[10px] text-foreground/35 mb-0.5">Odds</div>
           <div className="font-medium">{formatAmericanOdds(americanOdds)}</div>
         </div>
@@ -287,12 +327,12 @@ function FighterRow({
           <div className="font-medium">{formatPct(marketProb)}</div>
         </div>
         <div className="text-right">
-          <div className="text-[10px] text-foreground/35 mb-0.5">Elo%</div>
-          <div className="font-medium">{formatPct(eloProb)}</div>
+          <div className="text-[10px] text-foreground/35 mb-0.5">OCR%</div>
+          <div className="font-medium">{formatPct(ocrProb)}</div>
         </div>
-        <div className="text-right min-w-[52px]">
+        <div className="text-right min-w-[58px]">
           <div className="text-[10px] text-foreground/35 mb-0.5">Hype tax</div>
-          <div className={cn("font-semibold", hypeCls)}>{formatHypeTax(hypeTaxVal)}</div>
+          <div className={cn("font-semibold", hypeTaxColor(hypeTaxVal))}>{formatHypeTax(hypeTaxVal)}</div>
         </div>
       </div>
     </div>
@@ -308,47 +348,57 @@ function FightCard({ fight }: { fight: FightItem }) {
       ? Math.max(Math.abs(fight.fighter1HypeTax), Math.abs(fight.fighter2HypeTax))
       : null;
 
-  const hasSignal = topHypeTax != null && topHypeTax >= 0.05;
+  const hasSignal   = topHypeTax != null && topHypeTax >= 0.05;
+  const strongSignal = topHypeTax != null && topHypeTax >= 0.10;
 
-  const leftBarColor = hasSignal
-    ? topHypeTax! >= 0.1
-      ? "bg-rose-400/80"
-      : "bg-rose-400/40"
+  const ageDiff = fight.fighter1Age != null && fight.fighter2Age != null
+    ? Math.abs(fight.fighter1Age - fight.fighter2Age) : null;
+  const olderAge = fight.fighter1Age != null && fight.fighter2Age != null
+    ? Math.max(fight.fighter1Age, fight.fighter2Age) : null;
+  const hasAgeWarning = ageDiff != null && ageDiff >= 5 && olderAge != null && olderAge >= 33;
+
+  const leftBarColor = strongSignal
+    ? "bg-rose-400/80"
+    : hasSignal
+    ? "bg-rose-400/35"
     : "bg-white/8";
 
   return (
-    <div
-      className={cn(
-        "flex gap-3 rounded-2xl border border-white/10 bg-black/30 p-4 transition-colors hover:bg-white/[0.02]",
-        hasSignal && "bg-rose-500/[0.02]"
-      )}
-    >
-      {/* Left color bar */}
+    <div className={cn(
+      "flex gap-3 rounded-2xl border border-white/10 bg-black/30 p-4 transition-colors hover:bg-white/[0.02]",
+      hasSignal && "bg-rose-500/[0.02]"
+    )}>
       <div className={cn("w-1 self-stretch rounded-full flex-none", leftBarColor)} />
 
-      {/* Card body */}
       <div className="flex-1 min-w-0">
         {/* Header */}
         <div className="flex items-start justify-between gap-2 mb-1">
-          <div>
+          <div className="min-w-0">
             <div className="text-base font-semibold">
               {fight.fighter1} <span className="text-foreground/30 font-normal">vs</span> {fight.fighter2}
             </div>
-            <div className="text-xs text-foreground/35 mt-0.5">
+            <div className="mt-0.5 text-xs text-foreground/35">
               {formatEventDate(fight.commenceTimeIso)}
             </div>
           </div>
-          {hasSignal && (
-            <div className="flex items-center gap-1.5 flex-none">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/30 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-300">
-                HYPE GAP
+
+          <div className="flex flex-col items-end gap-1.5 flex-none">
+            {hasSignal && (
+              <div className="flex items-center gap-1.5">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/30 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-300">
+                  HYPE GAP
+                </span>
+                <InfoTip content={<HypeTaxTipContent />} />
+              </div>
+            )}
+            {hasAgeWarning && (
+              <span className="inline-flex items-center rounded-full border border-amber-400/20 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-300/80">
+                Age gap {ageDiff}y
               </span>
-              <InfoTip content={<HypeTaxTipContent />} />
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        {/* Divider */}
         <div className="h-px bg-white/8 my-2" />
 
         {/* Fighter rows */}
@@ -356,9 +406,11 @@ function FightCard({ fight }: { fight: FightItem }) {
           name={fight.fighter1}
           americanOdds={fight.fighter1AmericanOdds}
           marketProb={fight.fighter1MarketProb}
-          eloProb={fight.fighter1EloProb}
+          ocrProb={fight.fighter1OcrProb}
           elo={fight.fighter1Elo}
           eloFights={fight.fighter1EloFights}
+          style={fight.fighter1Style}
+          age={fight.fighter1Age}
           hypeTaxVal={fight.fighter1HypeTax}
           isFav={f1Fav}
         />
@@ -367,27 +419,31 @@ function FightCard({ fight }: { fight: FightItem }) {
           name={fight.fighter2}
           americanOdds={fight.fighter2AmericanOdds}
           marketProb={fight.fighter2MarketProb}
-          eloProb={fight.fighter2EloProb}
+          ocrProb={fight.fighter2OcrProb}
           elo={fight.fighter2Elo}
           eloFights={fight.fighter2EloFights}
+          style={fight.fighter2Style}
+          age={fight.fighter2Age}
           hypeTaxVal={fight.fighter2HypeTax}
           isFav={!f1Fav}
         />
 
-        {/* Elo details row */}
+        {/* OCR detail boxes */}
         <div className="mt-3 grid grid-cols-2 gap-2">
-          {[
+          {([
             { name: fight.fighter1, elo: fight.fighter1Elo, fights: fight.fighter1EloFights },
             { name: fight.fighter2, elo: fight.fighter2Elo, fights: fight.fighter2EloFights },
-          ].map(({ name, elo, fights }) => (
+          ] as const).map(({ name, elo, fights }) => (
             <div key={name} className="rounded-xl border border-white/8 bg-black/20 px-3 py-2.5">
               <div className="flex items-center justify-between gap-1 mb-1">
-                <span className="text-[10px] text-foreground/40 uppercase tracking-wide truncate">{name.split(" ").pop()}</span>
-                <InfoTip content={<EloTipContent />} />
+                <span className="text-[10px] text-foreground/40 uppercase tracking-wide truncate">
+                  {name.split(" ").slice(-1)[0]}
+                </span>
+                <InfoTip content={<OcrTipContent />} />
               </div>
               <div className="flex items-baseline gap-1.5">
-                <span className="tabular-nums text-lg font-semibold">{formatElo(elo)}</span>
-                <span className="text-[10px] text-foreground/30">Elo</span>
+                <span className="tabular-nums text-lg font-semibold">{Math.round(elo)}</span>
+                <span className="text-[10px] text-foreground/30">OCR</span>
                 {fights > 0 && (
                   <span className="text-[10px] text-foreground/25 ml-auto">{fights}F</span>
                 )}
@@ -404,28 +460,10 @@ function FightCard({ fight }: { fight: FightItem }) {
   );
 }
 
-// ─── Status pill ──────────────────────────────────────────────────────────────
-function StatusPill({ children, variant = "neutral" }: {
-  children: React.ReactNode;
-  variant?: "neutral" | "live" | "accent";
-}) {
-  const cls =
-    variant === "live"
-      ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-      : variant === "accent"
-      ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-      : "border-white/10 bg-white/5 text-white/60";
-  return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium tracking-wide", cls)}>
-      {children}
-    </span>
-  );
-}
-
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function UfcClient() {
-  const [fights, setFights] = useState<FightItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [fights, setFights]     = useState<FightItem[]>([]);
+  const [loading, setLoading]   = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
 
@@ -463,16 +501,17 @@ export default function UfcClient() {
     if (!updatedAt) return null;
     const d = new Date(updatedAt);
     if (Number.isNaN(d.getTime())) return null;
-    return new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/New_York",
-      month: "short",
-      day: "2-digit",
-      hour: "numeric",
-      minute: "2-digit",
-    }).format(d) + " ET";
+    return (
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        month: "short",
+        day: "2-digit",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(d) + " ET"
+    );
   }, [updatedAt]);
 
-  // Group fights by date
   const grouped = useMemo(() => {
     const groups = new Map<string, FightItem[]>();
     for (const f of fights) {
@@ -499,7 +538,6 @@ export default function UfcClient() {
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-5xl px-4 sm:px-6 py-10 sm:py-16 space-y-6">
 
-        {/* Header */}
         <header className="space-y-4">
           <div className="text-xs tracking-[0.22em] text-foreground/40">LABS · UFC</div>
           <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">
@@ -510,42 +548,48 @@ export default function UfcClient() {
             </span>
           </h1>
           <p className="text-sm text-foreground/55 max-w-xl">
-            Market-implied win probability vs Elo-implied probability. Hype gap = market overprices fighter relative to historical results.
+            Oren Combat Rating (OCR) vs market-implied probability. Flags fighters the market overprices relative to combat history, age curve, and style matchup.
           </p>
         </header>
 
-        {/* Status pills */}
         <div className="flex flex-wrap items-center gap-2">
           <StatusPill>{fights.length} fights</StatusPill>
           {signalCount > 0 && (
-            <StatusPill variant="accent">{signalCount} hype gap{signalCount !== 1 ? "s" : ""}</StatusPill>
+            <StatusPill variant="accent">
+              {signalCount} hype gap{signalCount !== 1 ? "s" : ""}
+            </StatusPill>
           )}
           {updatedAtLabel && (
             <span className="text-xs text-foreground/35">refreshed {updatedAtLabel}</span>
           )}
         </div>
 
-        {/* Legend */}
         {!loading && fights.length > 0 && (
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-foreground/40 pb-1">
             {[
+              { label: "OCR%", content: <OcrTipContent /> },
               { label: "Hype tax", content: <HypeTaxTipContent /> },
-              { label: "Elo", content: <EloTipContent /> },
               { label: "Mkt%", content: <MarketProbTipContent /> },
+              { label: "Style", content: <StyleTipContent /> },
             ].map(({ label, content }) => (
               <div key={label} className="flex items-center gap-1.5">
                 <span>{label}</span>
                 <InfoTip content={content} />
               </div>
             ))}
-            <div className="flex items-center gap-1.5">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-rose-400/60" />
-              <span>Hype gap ≥ 5pp</span>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-rose-400/70" />
+                <span>Hype gap ≥ 5pp</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-amber-300/60">Age gap</span>
+                <span>≥ 5y + fighter 33+</span>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Fight cards grouped by date */}
         <section>
           {loading ? (
             <div className="text-sm text-foreground/40 px-1">Loading fights…</div>
