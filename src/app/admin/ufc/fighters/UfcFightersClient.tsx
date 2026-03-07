@@ -16,7 +16,7 @@ const WEIGHT_CLASSES = [
   "Women's Bantamweight",
 ];
 
-type FighterStyle = "ko_artist" | "grappler" | "balanced";
+type FighterStyle = "ko_artist" | "grappler" | "striker" | "complete" | "balanced";
 
 type FighterRow = {
   name: string;
@@ -35,6 +35,8 @@ const subtle = "bg-black/10";
 
 const STYLE_LABELS: Record<FighterStyle, string> = {
   ko_artist: "KO Artist",
+  striker:   "Striker",
+  complete:  "Complete Fighter",
   grappler:  "Grappler",
   balanced:  "Balanced",
 };

@@ -1,1 +1,7 @@
-{"crons":[{"path":"/api/cron/nba-grader","schedule":"0 17 * * *"}]}
+{
+  "crons": [
+    {"path": "/api/cron/nba-grader",         "schedule": "0 17 * * *"},
+    {"path": "/api/cron/ufc-rankings-sync",  "schedule": "0 1 * * 2"}
+  ]
+}
+

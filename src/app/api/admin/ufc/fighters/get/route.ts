@@ -19,7 +19,7 @@ type DefaultFighter = { name: string; rank: number; style: "ko_artist" | "grappl
 
 const DEFAULT_FIGHTERS: Record<string, DefaultFighter[]> = {
   "Heavyweight": [
-    { name: "Jon Jones",          rank: 0,  style: "grappler"  },
+    { name: "Jon Jones",          rank: 0,  style: "complete"  },
     { name: "Stipe Miocic",       rank: 1,  style: "balanced"  },
     { name: "Tom Aspinall",       rank: 2,  style: "ko_artist" },
     { name: "Ciryl Gane",         rank: 3,  style: "balanced"  },
@@ -84,7 +84,7 @@ const DEFAULT_FIGHTERS: Record<string, DefaultFighter[]> = {
     { name: "Jalin Turner",       rank: 10, style: "ko_artist" },
   ],
   "Featherweight": [
-    { name: "Ilia Topuria",       rank: 0,  style: "ko_artist" },
+    { name: "Ilia Topuria",       rank: 0,  style: "complete"  },
     { name: "Alexander Volkanovski", rank: 1, style: "grappler" },
     { name: "Max Holloway",       rank: 2,  style: "ko_artist" },
     { name: "Brian Ortega",       rank: 3,  style: "grappler"  },
@@ -122,7 +122,7 @@ const DEFAULT_FIGHTERS: Record<string, DefaultFighter[]> = {
     { name: "Alex Perez",         rank: 9,  style: "balanced"  },
   ],
   "Women's Strawweight": [
-    { name: "Zhang Weili",        rank: 0,  style: "grappler"  },
+    { name: "Zhang Weili",        rank: 0,  style: "complete"  },
     { name: "Yan Xiaonan",        rank: 1,  style: "balanced"  },
     { name: "Amanda Lemos",       rank: 2,  style: "ko_artist" },
     { name: "Marina Rodriguez",   rank: 3,  style: "ko_artist" },
@@ -134,7 +134,7 @@ const DEFAULT_FIGHTERS: Record<string, DefaultFighter[]> = {
     { name: "Liang Na",           rank: 9,  style: "balanced"  },
   ],
   "Women's Flyweight": [
-    { name: "Valentina Shevchenko", rank: 0, style: "balanced" },
+    { name: "Valentina Shevchenko", rank: 0, style: "complete" },
     { name: "Alexa Grasso",       rank: 1,  style: "grappler"  },
     { name: "Taila Santos",       rank: 2,  style: "balanced"  },
     { name: "Viviane Araujo",     rank: 3,  style: "ko_artist" },

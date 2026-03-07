@@ -48,7 +48,7 @@ export async function POST(req: Request) {
         if (!name) return null;
 
         const elo = clamp(num(f?.elo, 1500), 500, 3000);
-        const style = ["ko_artist", "grappler", "balanced"].includes(f?.style)
+        const style = ["ko_artist", "grappler", "striker", "complete", "balanced"].includes(f?.style)
           ? f.style
           : "balanced";
         const dob = typeof f?.dob === "string" && f.dob.trim() ? f.dob.trim() : null;

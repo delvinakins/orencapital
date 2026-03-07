@@ -4,7 +4,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "re
 import { createPortal } from "react-dom";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type FighterStyle = "ko_artist" | "grappler" | "balanced";
+type FighterStyle = "ko_artist" | "grappler" | "striker" | "complete" | "balanced";
 
 type FightItem = {
   fightId: string;
@@ -94,16 +94,19 @@ function hypeTaxColor(v: number | null): string {
 }
 
 // ─── Style badge ──────────────────────────────────────────────────────────────
+const STYLE_CONFIG: Partial<Record<FighterStyle, { cls: string; label: string }>> = {
+  ko_artist: { cls: "border-rose-400/25 bg-rose-500/10 text-rose-300",     label: "KO Artist" },
+  grappler:  { cls: "border-blue-400/25 bg-blue-500/10 text-blue-300",      label: "Grappler"  },
+  striker:   { cls: "border-amber-400/25 bg-amber-500/10 text-amber-300",   label: "Striker"   },
+  complete:  { cls: "border-violet-400/25 bg-violet-500/10 text-violet-300", label: "Complete"  },
+};
+
 function StyleBadge({ style }: { style: FighterStyle }) {
-  if (style === "balanced") return null;
-  const cls =
-    style === "ko_artist"
-      ? "border-rose-400/25 bg-rose-500/10 text-rose-300"
-      : "border-blue-400/25 bg-blue-500/10 text-blue-300";
-  const label = style === "ko_artist" ? "KO Artist" : "Grappler";
+  const config = STYLE_CONFIG[style];
+  if (!config) return null;
   return (
-    <span className={cn("inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium", cls)}>
-      {label}
+    <span className={cn("inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium", config.cls)}>
+      {config.label}
     </span>
   );
 }
@@ -224,13 +227,8 @@ function OcrTipContent() {
   return (
     <div className="space-y-1.5">
       <div className="font-semibold text-foreground">Oren Combat Rating (OCR)</div>
-      <div>Win probability from three combined signals:</div>
-      <div className="pl-2 space-y-1 text-foreground/60">
-        <div><span className="text-foreground/80">Base Elo</span> — finish-quality K-factor: KO/TKO=40, Sub=36, Split=20</div>
-        <div><span className="text-foreground/80">Age curve</span> — peak window 27–31. Decline after 33, steep after 35.</div>
-        <div><span className="text-foreground/80">Style matchup</span> — grapplers +50 effective Elo vs non-KO artists. KO artists +30 general edge.</div>
-      </div>
-      <div className="text-foreground/50">Fighters without history default to 1500 (50/50).</div>
+      <div>Proprietary win probability built from each fighter's complete UFC fight history, peak-age modeling, and style dynamics.</div>
+      <div className="text-foreground/50">Fighters without recorded history default to 50/50.</div>
     </div>
   );
 }
@@ -259,12 +257,13 @@ function MarketProbTipContent() {
 function StyleTipContent() {
   return (
     <div className="space-y-1.5">
-      <div className="font-semibold text-foreground">Style classification</div>
+      <div className="font-semibold text-foreground">Fighter style</div>
       <div className="space-y-1 text-foreground/60">
-        <div><span className="text-rose-300">KO Artist</span> — KO/TKO rate ≥ 50% (min 5 fights). +30 effective Elo edge.</div>
-        <div><span className="text-blue-300">Grappler</span> — TD accuracy ≥ 45% + ground control ≥ 35%, or sub rate ≥ 40%. +50 Elo edge vs non-KO artists.</div>
+        <div><span className="text-rose-300">KO Artist</span> — finishes fights with strikes</div>
+        <div><span className="text-blue-300">Grappler</span> — dominates on the mat, submissions</div>
+        <div><span className="text-amber-300">Striker</span> — elite striking volume and output</div>
+        <div><span className="text-violet-300">Complete</span> — elite across all phases of MMA</div>
       </div>
-      <div className="text-foreground/50">Requires seeded UFCStats grappling data to activate.</div>
     </div>
   );
 }
@@ -435,11 +434,10 @@ function FightCard({ fight }: { fight: FightItem }) {
             { name: fight.fighter2, elo: fight.fighter2Elo, fights: fight.fighter2EloFights },
           ] as const).map(({ name, elo, fights }) => (
             <div key={name} className="rounded-xl border border-white/8 bg-black/20 px-3 py-2.5">
-              <div className="flex items-center justify-between gap-1 mb-1">
+              <div className="mb-1">
                 <span className="text-[10px] text-foreground/40 uppercase tracking-wide truncate">
                   {name.split(" ").slice(-1)[0]}
                 </span>
-                <InfoTip content={<OcrTipContent />} />
               </div>
               <div className="flex items-baseline gap-1.5">
                 <span className="tabular-nums text-lg font-semibold">{Math.round(elo)}</span>

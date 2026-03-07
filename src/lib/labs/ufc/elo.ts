@@ -33,7 +33,7 @@ export const K_BY_METHOD: Record<FinishMethod, number> = {
 };
 
 // ─── Fighter style ────────────────────────────────────────────────────────────
-export type FighterStyle = "ko_artist" | "grappler" | "balanced";
+export type FighterStyle = "ko_artist" | "grappler" | "striker" | "complete" | "balanced";
 
 /**
  * Classify a fighter's style from accumulated stats.
@@ -102,6 +102,7 @@ export function styleMatchupBonus(
   if (!fighterStyle || !opponentStyle) return 0;
   if (fighterStyle === "grappler" && opponentStyle !== "ko_artist") return 50;
   if (fighterStyle === "ko_artist") return 30;
+  if (fighterStyle === "striker" && opponentStyle !== "grappler") return 15;
   return 0;
 }
 
