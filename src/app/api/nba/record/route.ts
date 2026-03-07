@@ -12,7 +12,8 @@ export const revalidate = 3600; // cache for 1 hour
 export async function GET() {
   const { data, error } = await supabase
     .from("nba_edge_scoreboard")
-    .select("mark");
+    .select("mark")
+    .eq("is_backfill", false); // exclude manually backfilled games
 
   if (error || !data) {
     return NextResponse.json({ error: "Failed to fetch record" }, { status: 500 });
