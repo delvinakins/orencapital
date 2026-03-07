@@ -15,7 +15,7 @@ function eloFromRank(rank: number): number {
   return Math.round(1680 - (rank - 1) * 11);
 }
 
-type DefaultFighter = { name: string; rank: number; style: "ko_artist" | "grappler" | "balanced" };
+type DefaultFighter = { name: string; rank: number; style: "ko_artist" | "grappler" | "striker" | "complete" | "balanced" };
 
 const DEFAULT_FIGHTERS: Record<string, DefaultFighter[]> = {
   "Heavyweight": [
