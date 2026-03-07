@@ -33,12 +33,14 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cheerio": "^1.2.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "sharp": "^0.34.5",
     "supabase": "^2.76.12",
     "tailwindcss": "^4",
     "to-ico": "^1.1.5",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }
