@@ -66,6 +66,12 @@ function supabaseOrNull() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
+// Normalize a fighter name for lookup: lowercase, strip trailing period.
+// Handles "Raul Rosas Jr" (odds API) matching "raul rosas jr." (DB).
+function normalizeName(name: string): string {
+  return name.toLowerCase().trim().replace(/\.+$/, "");
+}
+
 async function getRatingsMap(names: string[]): Promise<Map<string, FighterRow>> {
   const map = new Map<string, FighterRow>();
   if (names.length === 0) return map;
@@ -73,15 +79,25 @@ async function getRatingsMap(names: string[]): Promise<Map<string, FighterRow>> 
   const sb = supabaseOrNull();
   if (!sb) return map;
 
+  // Include trailing-period variants so "Raul Rosas Jr" also queries "raul rosas jr."
+  const querySet = new Set<string>();
+  for (const name of names) {
+    const n = name.toLowerCase().trim();
+    querySet.add(n);
+    querySet.add(n.endsWith(".") ? n.slice(0, -1) : n + ".");
+  }
+
   const { data, error } = await sb
     .from("ufc_fighter_ratings")
     .select("fighter_name, elo, fights, wins, ko_wins, sub_wins, td_accuracy, td_defense, ground_ctrl_pct, style, dob")
-    .in("fighter_name", names.map((n) => n.toLowerCase()));
+    .in("fighter_name", Array.from(querySet));
 
   if (error || !Array.isArray(data)) return map;
 
   for (const row of data as FighterRow[]) {
+    // Index by both exact DB name and normalized name so either lookup hits
     map.set(row.fighter_name.toLowerCase(), row);
+    map.set(normalizeName(row.fighter_name), row);
   }
 
   return map;
@@ -127,8 +143,8 @@ async function getFights(): Promise<FightItem[]> {
   });
 
   const items: FightItem[] = fights.map((f) => {
-    const r1 = ratingsMap.get(f.fighter1.toLowerCase()) ?? defaultRow(f.fighter1);
-    const r2 = ratingsMap.get(f.fighter2.toLowerCase()) ?? defaultRow(f.fighter2);
+    const r1 = ratingsMap.get(f.fighter1.toLowerCase()) ?? ratingsMap.get(normalizeName(f.fighter1)) ?? defaultRow(f.fighter1);
+    const r2 = ratingsMap.get(f.fighter2.toLowerCase()) ?? ratingsMap.get(normalizeName(f.fighter2)) ?? defaultRow(f.fighter2);
 
     const elo1 = Number(r1.elo);
     const elo2 = Number(r2.elo);
