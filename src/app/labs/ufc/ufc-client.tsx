@@ -226,9 +226,8 @@ function InfoTip({ content }: { content: React.ReactNode }) {
 function OcrTipContent() {
   return (
     <div className="space-y-1.5">
-      <div className="font-semibold text-foreground">Oren Combat Rating (OCR)</div>
-      <div>Proprietary win probability built from each fighter's complete UFC fight history, peak-age modeling, and style dynamics.</div>
-      <div className="text-foreground/50">Fighters without recorded history default to 50/50.</div>
+      <div className="font-semibold text-foreground">Oren Combat Rating</div>
+      <div>Oren's model win probability based on each fighter's full UFC career.</div>
     </div>
   );
 }
@@ -237,10 +236,9 @@ function HypeTaxTipContent() {
   return (
     <div className="space-y-1.5">
       <div className="font-semibold text-foreground">Hype tax</div>
-      <div>Market-implied probability minus OCR-implied probability, in percentage points.</div>
-      <div className="text-rose-300/80">Positive = market overprices fighter vs combat history.</div>
-      <div className="text-emerald-300/80">Negative = market underprices fighter.</div>
-      <div className="text-foreground/50">Watchlist only. Not a bet signal.</div>
+      <div>How far the betting line is from what the model thinks.</div>
+      <div className="text-rose-300/80">Positive = fighter is overhyped by the market.</div>
+      <div className="text-emerald-300/80">Negative = fighter is undervalued by the market.</div>
     </div>
   );
 }
@@ -248,8 +246,8 @@ function HypeTaxTipContent() {
 function MarketProbTipContent() {
   return (
     <div className="space-y-1.5">
-      <div className="font-semibold text-foreground">Market prob</div>
-      <div>Consensus implied win probability from US bookmakers (includes vig). Averaged across available lines.</div>
+      <div className="font-semibold text-foreground">Market %</div>
+      <div>What the sportsbooks say each fighter's chances are, averaged across major US books.</div>
     </div>
   );
 }
@@ -261,7 +259,7 @@ function StyleTipContent() {
       <div className="space-y-1 text-foreground/60">
         <div><span className="text-rose-300">KO Artist</span> — finishes fights with strikes</div>
         <div><span className="text-blue-300">Grappler</span> — dominates on the mat, submissions</div>
-        <div><span className="text-amber-300">Striker</span> — elite striking volume and output</div>
+        <div><span className="text-amber-300">Striker</span> — high-volume, elite striking output</div>
         <div><span className="text-violet-300">Complete</span> — elite across all phases of MMA</div>
       </div>
     </div>
