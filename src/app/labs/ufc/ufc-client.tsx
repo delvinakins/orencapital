@@ -379,12 +379,6 @@ function FightCard({ fight }: { fight: FightItem }) {
   const hasSignal    = topHypeTax != null && topHypeTax >= 0.05;
   const strongSignal = topHypeTax != null && topHypeTax >= 0.10;
 
-  const ageDiff = fight.fighter1Age != null && fight.fighter2Age != null
-    ? Math.abs(fight.fighter1Age - fight.fighter2Age) : null;
-  const olderAge = fight.fighter1Age != null && fight.fighter2Age != null
-    ? Math.max(fight.fighter1Age, fight.fighter2Age) : null;
-  const hasAgeWarning = ageDiff != null && ageDiff >= 5 && olderAge != null && olderAge >= 33;
-
   const isGraded = fight.outcome != null;
 
   const leftBarColor = isGraded
@@ -425,12 +419,7 @@ function FightCard({ fight }: { fight: FightItem }) {
                   <InfoTip content={<HypeTaxTipContent />} />
                 </div>
               )}
-              {hasAgeWarning && (
-                <span className="inline-flex items-center rounded-full border border-amber-400/20 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-300/80">
-                  Age gap {ageDiff}y
-                </span>
-              )}
-            </div>
+              </div>
           </div>
 
           <div className="h-px bg-white/8 my-2" />
@@ -647,15 +636,9 @@ export default function UfcClient() {
                 <InfoTip content={content} />
               </div>
             ))}
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1.5">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-rose-400/70" />
-                <span>Hype gap ≥ 5pp</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-amber-300/60">Age gap</span>
-                <span>≥ 5y + fighter 33+</span>
-              </div>
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-rose-400/70" />
+              <span>Hype gap ≥ 5pp</span>
             </div>
           </div>
         )}
