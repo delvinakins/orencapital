@@ -28,6 +28,8 @@ type LiveGameItem = {
   liveMoneylineHome: number | null;
   liveMoneylineAway: number | null;
 
+  tipoffIso: string | null;
+
   phase: Phase;
 };
 
@@ -348,6 +350,7 @@ async function pollProviders(now: Date, requestedDateKeyPT: string | null): Prom
 
   const oddsByKey = new Map<string, number | null>();
   const oddsByMatch = new Map<string, number | null>();
+  const tipoffMap = new Map<string, string>();
 
   for (const o of odds) {
     const match = `${o.awayTeam}@${o.homeTeam}`;
@@ -355,6 +358,11 @@ async function pollProviders(now: Date, requestedDateKeyPT: string | null): Prom
 
     const dk = o.laDateKey ?? "";
     if (dk && allowedSetForProviders.has(dk)) oddsByKey.set(`${dk}|${match}`, roundHalf(toNum(o.liveHomeSpread)) ?? null);
+
+    if (o.commenceTimeIso) {
+      const gameKey = makeMatchKey(o.awayTeam, o.homeTeam, dk);
+      tipoffMap.set(gameKey, o.commenceTimeIso);
+    }
   }
 
   const items: LiveGameItem[] = [];
@@ -396,6 +404,7 @@ async function pollProviders(now: Date, requestedDateKeyPT: string | null): Prom
       closingSpreadHome: null,
       liveMoneylineHome: ml?.home ?? null,
       liveMoneylineAway: ml?.away ?? null,
+      tipoffIso: tipoffMap.get(gameKey) ?? null,
       phase,
     });
   }
@@ -424,6 +433,7 @@ async function pollProviders(now: Date, requestedDateKeyPT: string | null): Prom
         closingSpreadHome: null,
         liveMoneylineHome: ml?.home ?? null,
         liveMoneylineAway: ml?.away ?? null,
+        tipoffIso: o.commenceTimeIso ?? null,
         phase: "pregame",
       });
     }

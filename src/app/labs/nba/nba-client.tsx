@@ -519,6 +519,19 @@ function computeOrenAtsScoreMark(args: {
   return sign(orenEdgePts) > 0 === ats > 0 ? "hit" : "miss";
 }
 
+function formatTipoff(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString("en-US", {
+      timeZone: "America/New_York",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }) + " ET";
+  } catch {
+    return iso;
+  }
+}
+
 // ─── Row type ─────────────────────────────────────────────────────────────────
 type Row = {
   key: string; gameId: string;
@@ -531,6 +544,7 @@ type Row = {
   absZ: number | null;
   orenEdgePts: number | null; orenEdgeText: string;
   confluence: number | null; confirmed: boolean; scoreMark: ScoreMark;
+  tipoffIso: string | null;
 };
 
 
@@ -712,6 +726,7 @@ export default function NbaClient() {
         phase, isLive, period, secondsRemaining,
         moveGapPts, moveGapText: moveGapPts == null ? "—" : formatSigned(moveGapPts, 1), moveGapMode,
         absZ, orenEdgePts, orenEdgeText: orenEdgePts == null ? "—" : formatSigned(orenEdgePts, 1),
+        tipoffIso: (g as any)?.tipoffIso ?? null,
         confluence, confirmed,
         scoreMark: computeOrenAtsScoreMark({ phase, awayScore: s.away, homeScore: s.home, closingHomeSpread: closeNum, orenEdgePts }),
       };
@@ -893,7 +908,7 @@ export default function NbaClient() {
                             </span>
                           </div>
                           <div className="mt-0.5 text-xs text-foreground/35">
-                            {r.awayTeam} @ {r.homeTeam} · {r.clock}
+                            {r.awayTeam} @ {r.homeTeam} · {r.phase === "pregame" && r.tipoffIso ? formatTipoff(r.tipoffIso) : r.clock}
                           </div>
                         </div>
 
