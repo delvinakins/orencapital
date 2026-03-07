@@ -561,7 +561,7 @@ export default function UfcClient() {
             </span>
           </h1>
           <p className="text-sm text-foreground/55 max-w-xl">
-            Oren Combat Rating (OCR) vs market-implied probability. Flags fighters the market overprices relative to combat history, age curve, and style matchup.
+            Where the model and the market disagree on a fighter's chances.
           </p>
         </header>
 
