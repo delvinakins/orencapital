@@ -43,7 +43,7 @@ export async function GET(req: Request) {
     // params (safe defaults)
     const { data: pRow, error: perr } = await svc
       .from("nba_oren_params")
-      .select("a, k, s")
+      .select("a, k, s, t, n")
       .eq("season", season)
       .maybeSingle();
 
@@ -60,6 +60,8 @@ export async function GET(req: Request) {
       A: Number((pRow as any)?.a ?? 10),
       k: Number((pRow as any)?.k ?? 0.12),
       S: Number((pRow as any)?.s ?? 1.0),
+      T: Number((pRow as any)?.t ?? 10),
+      N: Number((pRow as any)?.n ?? 2),
     };
 
     return NextResponse.json({

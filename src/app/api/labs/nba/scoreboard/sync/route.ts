@@ -39,7 +39,7 @@ function computeOrenEdgePts(args: {
   awayTeam: string;
   closingSpreadHome: number;
   rankMap: Record<string, number>;
-  params: { A: number; k: number; S: number };
+  params: { A: number; k: number; S: number; T: number; N: number };
 }): number | null {
   const { homeTeam, awayTeam, closingSpreadHome, rankMap, params } = args;
 
@@ -49,9 +49,14 @@ function computeOrenEdgePts(args: {
 
   const homeRating = orenRating(homeRank, params.A, params.k);
   const awayRating = orenRating(awayRank, params.A, params.k);
+  const ratingDiff = homeRating - awayRating;
 
-  const impliedSpreadHome = params.S * (homeRating - awayRating);
-  return impliedSpreadHome - closingSpreadHome;
+  const isBigHomeFav = closingSpreadHome <= -params.T;
+  const isEliteHome  = homeRank <= params.N;
+
+  return (isBigHomeFav || isEliteHome)
+    ? params.S * ratingDiff - closingSpreadHome
+    : params.S * ratingDiff + closingSpreadHome;
 }
 
 function dateKeyFromGameId(gameId: string): string | null {
@@ -110,6 +115,8 @@ export async function POST(req: Request) {
   const A = num(orenJson?.params?.A) ?? 10;
   const k = num(orenJson?.params?.k) ?? 0.12;
   const S = num(orenJson?.params?.S) ?? 1.0;
+  const T = num(orenJson?.params?.T) ?? 10;
+  const N = num(orenJson?.params?.N) ?? 2;
 
   if (!rankMap) {
     return jsonError(500, "Oren score map missing.", {
@@ -157,7 +164,7 @@ export async function POST(req: Request) {
       awayTeam,
       closingSpreadHome: close,
       rankMap,
-      params: { A, k, S },
+      params: { A, k, S, T, N },
     });
     if (edge == null || !Number.isFinite(edge)) continue;
 
@@ -205,6 +212,7 @@ export async function POST(req: Request) {
     .eq("season", season)
     .eq("league", league)
     .eq("sport", sport)
+    .eq("is_backfill", false)
     .limit(200000);
 
   if (readErr) return jsonError(500, "Supabase read failed.", readErr.message);

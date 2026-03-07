@@ -43,6 +43,7 @@ export async function GET(req: Request) {
     .eq("season", season)
     .eq("league", league)
     .eq("sport", sport)
+    .eq("is_backfill", false)
     .limit(200000);
 
   if (error) return jsonError(500, "Supabase read failed.", error.message);

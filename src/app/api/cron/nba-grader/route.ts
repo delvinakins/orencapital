@@ -29,12 +29,21 @@ function computeEdge(
   awayTeam: string,
   closingHome: number,
   rankMap: Record<string, number>,
-  params: { A: number; k: number; S: number }
+  params: { A: number; k: number; S: number; T: number; N: number }
 ): number | null {
   const hr = rankMap[homeTeam.toLowerCase().trim()];
   const ar = rankMap[awayTeam.toLowerCase().trim()];
   if (!hr || !ar) return null;
-  return params.S * (orenRating(hr, params.A, params.k) - orenRating(ar, params.A, params.k)) - closingHome;
+  const ratingDiff = orenRating(hr, params.A, params.k) - orenRating(ar, params.A, params.k);
+  // Two cases where we trust the ranking + market signal directly (old formula):
+  //   1. Big home favourite (spread >= T): public + venue consensus is strong.
+  //   2. Elite home team (homeRank <= N): top-ranked teams always lean HOME at home.
+  // All other games: corrected formula — compare model's implied margin vs market.
+  const isBigHomeFav  = closingHome <= -params.T;
+  const isEliteHome   = hr <= params.N;
+  return (isBigHomeFav || isEliteHome)
+    ? params.S * ratingDiff - closingHome
+    : params.S * ratingDiff + closingHome;
 }
 
 function grade(
@@ -85,9 +94,9 @@ export async function GET(req: Request) {
 
     // ── 1. Load Oren params ───────────────────────────────────────────────────
     const { data: p, error: pErr } = await sb
-      .from("nba_oren_params").select("a,k,s").eq("season", season).single();
+      .from("nba_oren_params").select("a,k,s,t").eq("season", season).single();
     if (pErr || !p) throw new Error("Oren params unavailable");
-    const params = { A: Number(p.a), k: Number(p.k), S: Number(p.s) };
+    const params = { A: Number(p.a), k: Number(p.k), S: Number(p.s), T: Number((p as any).t ?? 10), N: Number((p as any).n ?? 2) };
 
     // ── 2. Load rankings ──────────────────────────────────────────────────────
     const { data: ranks, error: rErr } = await sb

@@ -7,7 +7,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export const revalidate = 3600; // cache for 1 hour
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   const { data, error } = await supabase
