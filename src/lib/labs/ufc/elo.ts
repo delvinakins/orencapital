@@ -69,21 +69,29 @@ export function classifyStyle(stats: {
 // ─── Age adjustment (applied at matchup time, NOT stored in base Elo) ─────────
 /**
  * Returns an Elo point delta to add to effectiveElo based on fighter age.
- * Peak window: 27–31 → 0 adjustment.
- * Declines above 33 and below 25.
+ * Peak window: 27–33 → 0 adjustment.
  *
- * Values are conservative — the base Elo already partially encodes a fighter's
- * prime performance. This modifier captures current form vs historical record.
+ * The base Elo already reflects a fighter's recent performance, so this
+ * modifier is intentionally modest — it captures residual decline risk
+ * not yet visible in results, not a sweeping re-rating of the fighter.
+ *
+ * Tiers:
+ *   <25        → -10  (inexperienced, physically not yet peak)
+ *   25–26      →  -5  (approaching prime)
+ *   27–33      →   0  (prime window)
+ *   34–36      → -15  (early decline; still competitive at elite level)
+ *   37–39      → -30  (meaningful physical decline)
+ *   40+        → -30 − (age−39)×12  (steep late-career decline)
  */
 export function eloAgeAdjustment(age: number | null): number {
   if (age == null || !Number.isFinite(age)) return 0;
 
-  if (age >= 27 && age <= 31) return 0;        // peak window
-  if (age >= 25 && age < 27)  return -5;        // pre-peak, close to prime
-  if (age >= 32 && age <= 33) return -15;       // early decline
-  if (age >= 34 && age <= 35) return -35;       // mid decline
-  if (age > 35)               return Math.round(-35 - (age - 35) * 20); // steep late decline
-  return -15;                                    // very young (<25)
+  if (age >= 27 && age <= 33) return 0;
+  if (age >= 25 && age < 27)  return -5;
+  if (age >= 34 && age <= 36) return -15;
+  if (age >= 37 && age <= 39) return -30;
+  if (age > 39)               return Math.round(-30 - (age - 39) * 12);
+  return -10;  // very young (<25)
 }
 
 // ─── Style matchup bonus (applied at matchup time) ────────────────────────────
