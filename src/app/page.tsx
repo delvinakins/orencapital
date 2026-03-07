@@ -80,9 +80,9 @@ const PRINCIPLES = [
 ];
 
 
-const STATUS = [
-  { label: "NBA Edge Record", value: "16–11", sub: "33 games graded" },
-  { label: "Models Graded", value: "33", sub: "season 2025–26" },
+type StatusRow = { label: string; value: string; sub: string };
+
+const STATIC_STATUS: StatusRow[] = [
   { label: "Data Latency", value: "Real-time", sub: "market feeds" },
   { label: "Live Tools", value: "7", sub: "across the platform" },
 ];
@@ -136,9 +136,24 @@ function FadeIn({
 // ── Page ─────────────────────────────────────────────────
 
 export default function Home() {
+  const [record, setRecord] = useState<{ wins: number; losses: number; total: number } | null>(null);
+
   useEffect(() => {
     trackEvent("home_view", { page: "/" });
+    // Fetch live NBA record
+    fetch("/api/nba/record")
+      .then((r) => r.json())
+      .then((d) => { if (d?.wins != null) setRecord(d); })
+      .catch(() => {});
   }, []);
+
+  const recordStr = record ? `${record.wins}–${record.losses}` : "—";
+  const gamesStr = record ? `${record.total} games graded` : "loading…";
+
+  const STATUS: StatusRow[] = [
+    { label: "NBA Edge Record", value: recordStr, sub: gamesStr },
+    ...STATIC_STATUS,
+  ];
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -281,7 +296,7 @@ export default function Home() {
               About
             </div>
             <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight mb-10">
-              Built by traders. For traders.
+              Built by a trader. For traders.
             </h2>
           </FadeIn>
 
@@ -289,7 +304,7 @@ export default function Home() {
             <FadeIn delay={0.06}>
               <div className="space-y-4 text-sm text-foreground/60 leading-relaxed">
                 <p>
-                  Oren Capital was built by real traders and sports fanatics. The same instincts that make betting markets
+                  Oren Capital was built by a real trader. The same instincts that make betting markets
                   interesting — edge, variance, expected value — apply directly to how
                   you should be managing risk in your trading account.
                 </p>

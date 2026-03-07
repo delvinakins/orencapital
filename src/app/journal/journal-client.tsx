@@ -493,7 +493,7 @@ export default function JournalClient() {
         <div className="mb-4 flex items-end justify-between gap-4">
           <div>
             <div className="text-base font-semibold tracking-tight">Log a trade</div>
-            <div className="mt-1 text-[15px] text-foreground/70">Structured input. Calm defaults.</div>
+            <div className="mt-1 text-[15px] text-foreground/70">Structured input.</div>
           </div>
         </div>
 
@@ -600,7 +600,7 @@ export default function JournalClient() {
             <div>
               <div className="text-base font-semibold tracking-tight">Strategy Breakdown</div>
               <div className="mt-1 text-[15px] text-foreground/70">
-                Grouped results by strategy label. Calm view—designed to reduce overreaction.
+                Grouped results by strategy label.
               </div>
             </div>
 
