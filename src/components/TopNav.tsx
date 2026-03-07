@@ -125,6 +125,7 @@ export default function TopNav() {
                       <MenuItem href="/movers"       label="Movers"            sub="Top S&P 500 movers"        onClick={() => setToolsOpen(false)} />
                       <MenuItem href="/labs/kalshi"  label="Deviation Engine"  sub="Kalshi vs. vol model"      onClick={() => setToolsOpen(false)} />
                       <MenuItem href="/labs/nba"     label="NBA Watchlist"     sub="Game deviation signals"    onClick={() => setToolsOpen(false)} />
+                      <MenuItem href="/labs/ufc"     label="UFC Hype Tax"      sub="Market vs Elo probability" onClick={() => setToolsOpen(false)} />
                     </div>
                   </div>
                 )}
@@ -243,6 +244,7 @@ export default function TopNav() {
                 <MobileItem href="/movers"           label="Movers"            sub="Top S&P 500 movers"        onClick={closeAll} />
                 <MobileItem href="/labs/kalshi"      label="Deviation Engine"  sub="Kalshi vs. vol model"      onClick={closeAll} />
                 <MobileItem href="/labs/nba"         label="NBA Watchlist"     sub="Game deviation signals"    onClick={closeAll} />
+                <MobileItem href="/labs/ufc"         label="UFC Hype Tax"      sub="Market vs Elo probability" onClick={closeAll} />
 
                 <div className={`my-2 h-px ${border}`} />
 
