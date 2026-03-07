@@ -40,6 +40,19 @@ export default function LabsPage() {
               Open →
             </div>
           </Link>
+
+          <Link
+            href="/labs/ufc"
+            className="group rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-6 hover:border-[color:var(--accent)]/30 hover:bg-white/5 transition-colors"
+          >
+            <div className="text-base font-semibold text-foreground mb-2">UFC Hype Tax</div>
+            <div className="text-sm text-foreground/60 leading-relaxed">
+              Market-implied probability vs Elo-implied probability for upcoming UFC fights. Flags fighters the market overprices.
+            </div>
+            <div className="mt-4 text-xs text-[color:var(--accent)] opacity-0 group-hover:opacity-100 transition-opacity">
+              Open →
+            </div>
+          </Link>
         </div>
 
         <p className="mt-8 text-xs text-foreground/40">
