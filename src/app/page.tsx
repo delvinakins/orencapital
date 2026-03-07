@@ -95,6 +95,39 @@ const TAG_STYLES: Record<Feature["tag"], string> = {
 
 // ── Fade-in on scroll ─────────────────────────────────────
 
+// ── Climate types ────────────────────────────────────────
+
+type ClimateTone = "accent" | "neutral" | "warn";
+
+type Climate = {
+  score: number;
+  label: "Stable" | "Elevated" | "High Risk";
+  tone: ClimateTone;
+  details: string;
+  vix?: number | null;
+  spx?: number | null;
+};
+
+function fmt(x?: number | null, d = 2) {
+  return x != null && Number.isFinite(x)
+    ? x.toLocaleString(undefined, { maximumFractionDigits: d })
+    : "—";
+}
+
+const TONE_ACCENT: Record<ClimateTone, string> = {
+  accent:  "bg-[color:var(--accent)]",
+  neutral: "bg-yellow-500",
+  warn:    "bg-amber-500",
+};
+
+const TONE_TEXT: Record<ClimateTone, string> = {
+  accent:  "text-[color:var(--accent)]",
+  neutral: "text-yellow-400",
+  warn:    "text-amber-400",
+};
+
+// ── FadeIn ────────────────────────────────────────────────
+
 function FadeIn({
   children,
   delay = 0,
@@ -137,14 +170,26 @@ function FadeIn({
 
 export default function Home() {
   const [record, setRecord] = useState<{ wins: number; losses: number; total: number } | null>(null);
+  const [climate, setClimate] = useState<Climate | null>(null);
+  const [climateLoading, setClimateLoading] = useState(true);
 
   useEffect(() => {
     trackEvent("home_view", { page: "/" });
+
     // Fetch live NBA record
     fetch("/api/nba/record")
       .then((r) => r.json())
       .then((d) => { if (d?.wins != null) setRecord(d); })
       .catch(() => {});
+
+    // Fetch macro climate
+    let alive = true;
+    fetch("/api/market/climate", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((json) => { if (alive && json?.ok) setClimate(json.climate); })
+      .catch(() => {})
+      .finally(() => { if (alive) setClimateLoading(false); });
+    return () => { alive = false; };
   }, []);
 
   const recordStr = record ? `${record.wins}–${record.losses}` : "—";
@@ -200,7 +245,6 @@ export default function Home() {
             {[
               { n: "7", label: "Live tools" },
               { n: "3", label: "Data feeds" },
-              { n: "1", label: "Builder" },
             ].map((s) => (
               <div key={s.label}>
                 <div className="text-2xl font-semibold tabular-nums text-[color:var(--accent)]">
@@ -213,6 +257,40 @@ export default function Home() {
             ))}
           </div>
         </section>
+
+        {/* ── MACRO CLIMATE BAR ────────────────────────── */}
+        <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--card)] p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-xs tracking-[0.22em] text-foreground/35 uppercase">
+              Macro Risk Climate
+            </div>
+            <div className="text-xs text-foreground/35 tabular-nums">
+              {climateLoading ? "…" : `${climate?.score ?? 0} / 100`}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className={`text-sm font-semibold ${climate ? TONE_TEXT[climate.tone] : "text-foreground/40"}`}>
+              {climateLoading ? "Loading…" : (climate?.label ?? "Unavailable")}
+            </div>
+            <div className="text-xs text-foreground/35 tabular-nums">
+              {!climateLoading && climate && `VIX ${fmt(climate.vix, 2)} · SPX ${fmt(climate.spx, 0)}`}
+            </div>
+          </div>
+
+          <div className="h-1 w-full rounded-full bg-[color:var(--border)] overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-700 ${climate ? TONE_ACCENT[climate.tone] : "bg-[color:var(--border)]"}`}
+              style={{ width: `${Math.max(2, Math.min(100, climate?.score ?? 0))}%` }}
+            />
+          </div>
+
+          <div className="text-xs text-foreground/35">
+            {climateLoading
+              ? "Fetching live signal…"
+              : (climate?.details ?? "Market climate unavailable")}
+          </div>
+        </div>
 
         <div className="border-t border-[color:var(--border)]" />
 
@@ -304,9 +382,9 @@ export default function Home() {
             <FadeIn delay={0.06}>
               <div className="space-y-4 text-sm text-foreground/60 leading-relaxed">
                 <p>
-                  Oren Capital was built by a real trader. The same instincts that make betting markets
-                  interesting — edge, variance, expected value — apply directly to how
-                  you should be managing risk in your trading account.
+                  Oren Capital was built by a real trader. The same instincts that make
+                  betting markets interesting — edge, variance, expected value — apply
+                  directly to how you should be managing risk in your trading account.
                 </p>
                 <p>
                   Every model ships with a public scoreboard. The NBA Edge record is
