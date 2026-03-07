@@ -72,6 +72,31 @@ function normalizeName(name: string): string {
   return name.toLowerCase().trim().replace(/\.+$/, "");
 }
 
+// Known name mismatches between odds API and UFCStats DB names.
+// Key = lowercase odds API name, value = lowercase DB/UFCStats name.
+const NAME_ALIASES: Record<string, string> = {
+  // Chinese fighters: odds API uses Western order, UFCStats uses family-name-first
+  "weili zhang":           "zhang weili",
+  "long xiao":             "xiao long",
+  // Nickname vs full legal name
+  "joseph pyfer":          "joe pyfer",
+  "beatriz mesquita":      "bia mesquita",
+  // Duplicated single-word name ("Sumudaerji Sumudaerji") + pinyin variant
+  "sumudaerji sumudaerji": "sumudaerji",
+  "su mudaerji":           "sumudaerji",
+  // Middle name present in odds API but absent in UFCStats
+  "jesus santos aguilar":  "jesus aguilar",
+};
+
+/** Returns all name variants to try for a given odds API name. */
+function nameVariants(name: string): string[] {
+  const norm = normalizeName(name);
+  const variants = [norm, norm.endsWith(".") ? norm.slice(0, -1) : norm + "."];
+  const alias = NAME_ALIASES[norm];
+  if (alias) variants.push(alias, alias.endsWith(".") ? alias.slice(0, -1) : alias + ".");
+  return variants;
+}
+
 async function getRatingsMap(names: string[]): Promise<Map<string, FighterRow>> {
   const map = new Map<string, FighterRow>();
   if (names.length === 0) return map;
@@ -79,12 +104,10 @@ async function getRatingsMap(names: string[]): Promise<Map<string, FighterRow>> 
   const sb = supabaseOrNull();
   if (!sb) return map;
 
-  // Include trailing-period variants so "Raul Rosas Jr" also queries "raul rosas jr."
+  // Include all name variants (trailing-period fix + known aliases) for every name.
   const querySet = new Set<string>();
   for (const name of names) {
-    const n = name.toLowerCase().trim();
-    querySet.add(n);
-    querySet.add(n.endsWith(".") ? n.slice(0, -1) : n + ".");
+    for (const v of nameVariants(name)) querySet.add(v);
   }
 
   const { data, error } = await sb
@@ -143,8 +166,15 @@ async function getFights(): Promise<FightItem[]> {
   });
 
   const items: FightItem[] = fights.map((f) => {
-    const r1 = ratingsMap.get(f.fighter1.toLowerCase()) ?? ratingsMap.get(normalizeName(f.fighter1)) ?? defaultRow(f.fighter1);
-    const r2 = ratingsMap.get(f.fighter2.toLowerCase()) ?? ratingsMap.get(normalizeName(f.fighter2)) ?? defaultRow(f.fighter2);
+    const lookupFighter = (name: string) => {
+      for (const v of nameVariants(name)) {
+        const hit = ratingsMap.get(v);
+        if (hit) return hit;
+      }
+      return defaultRow(name);
+    };
+    const r1 = lookupFighter(f.fighter1);
+    const r2 = lookupFighter(f.fighter2);
 
     const elo1 = Number(r1.elo);
     const elo2 = Number(r2.elo);
