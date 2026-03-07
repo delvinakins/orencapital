@@ -6,6 +6,14 @@ import { createPortal } from "react-dom";
 // ─── Types ────────────────────────────────────────────────────────────────────
 type FighterStyle = "ko_artist" | "grappler" | "striker" | "complete" | "balanced";
 
+type FightOutcome = {
+  winner: string;
+  method: string;
+  round: number | null;
+  timeInRound: string | null;
+  ocrResult: "correct_flip" | "correct_agree" | "wrong";
+};
+
 type FightItem = {
   fightId: string;
   commenceTimeIso: string | null;
@@ -28,6 +36,7 @@ type FightItem = {
   fighter2Age: number | null;
   fighter1HypeTax: number | null;
   fighter2HypeTax: number | null;
+  outcome: FightOutcome | null;
 };
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -49,6 +58,22 @@ function formatHypeTax(v: number | null): string {
   if (v == null || !Number.isFinite(v)) return "—";
   const pct = (v * 100).toFixed(1);
   return v > 0 ? `+${pct}pp` : `${pct}pp`;
+}
+
+const METHOD_LABELS: Record<string, string> = {
+  ko: "KO", tko: "TKO", submission: "SUB",
+  decision_unanimous: "DEC", decision_split: "SDEC", decision_majority: "MDEC", default: "DEC",
+};
+
+function formatOutcome(o: FightOutcome): string {
+  const method = METHOD_LABELS[o.method] ?? o.method.toUpperCase();
+  const round  = o.round ? ` R${o.round}` : "";
+  const time   = o.timeInRound ? ` ${o.timeInRound}` : "";
+  return `${method}${round}${time}`;
+}
+
+function capitalize(s: string) {
+  return s.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function formatEventDate(iso: string | null): string {
@@ -345,14 +370,13 @@ function FightCard({ fight }: { fight: FightItem }) {
   const ocrLeanName = ocrFavF1 ? fight.fighter1 : fight.fighter2;
   const mktLeanName = f1Fav ? fight.fighter1 : fight.fighter2;
   const ocrDisagreesWithMarket = ocrLeanName !== mktLeanName;
-  const ocrLeanPct = Math.max(fight.fighter1OcrProb, fight.fighter2OcrProb);
 
   const topHypeTax =
     fight.fighter1HypeTax != null && fight.fighter2HypeTax != null
       ? Math.max(Math.abs(fight.fighter1HypeTax), Math.abs(fight.fighter2HypeTax))
       : null;
 
-  const hasSignal   = topHypeTax != null && topHypeTax >= 0.05;
+  const hasSignal    = topHypeTax != null && topHypeTax >= 0.05;
   const strongSignal = topHypeTax != null && topHypeTax >= 0.10;
 
   const ageDiff = fight.fighter1Age != null && fight.fighter2Age != null
@@ -361,7 +385,11 @@ function FightCard({ fight }: { fight: FightItem }) {
     ? Math.max(fight.fighter1Age, fight.fighter2Age) : null;
   const hasAgeWarning = ageDiff != null && ageDiff >= 5 && olderAge != null && olderAge >= 33;
 
-  const leftBarColor = strongSignal
+  const isGraded = fight.outcome != null;
+
+  const leftBarColor = isGraded
+    ? "bg-white/10"
+    : strongSignal
     ? "bg-rose-400/80"
     : hasSignal
     ? "bg-rose-400/35"
@@ -370,104 +398,133 @@ function FightCard({ fight }: { fight: FightItem }) {
   return (
     <div className={cn(
       "flex gap-3 rounded-2xl border border-white/10 bg-black/30 p-4 transition-colors hover:bg-white/[0.02]",
-      hasSignal && "bg-rose-500/[0.02]"
+      !isGraded && hasSignal && "bg-rose-500/[0.02]"
     )}>
       <div className={cn("w-1 self-stretch rounded-full flex-none", leftBarColor)} />
 
       <div className="flex-1 min-w-0">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-2 mb-1">
-          <div className="min-w-0">
-            <div className="text-base font-semibold">
-              {fight.fighter1} <span className="text-foreground/30 font-normal">vs</span> {fight.fighter2}
+        {/* Top section — grayed out once fight is graded */}
+        <div className={cn(isGraded && "opacity-50 grayscale")}>
+          {/* Header */}
+          <div className="flex items-start justify-between gap-2 mb-1">
+            <div className="min-w-0">
+              <div className="text-base font-semibold">
+                {fight.fighter1} <span className="text-foreground/30 font-normal">vs</span> {fight.fighter2}
+              </div>
+              <div className="mt-0.5 text-xs text-foreground/35">
+                {formatEventDate(fight.commenceTimeIso)}
+              </div>
             </div>
-            <div className="mt-0.5 text-xs text-foreground/35">
-              {formatEventDate(fight.commenceTimeIso)}
+
+            <div className="flex flex-col items-end gap-1.5 flex-none">
+              {hasSignal && (
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/30 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-300">
+                    HYPE GAP
+                  </span>
+                  <InfoTip content={<HypeTaxTipContent />} />
+                </div>
+              )}
+              {hasAgeWarning && (
+                <span className="inline-flex items-center rounded-full border border-amber-400/20 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-300/80">
+                  Age gap {ageDiff}y
+                </span>
+              )}
             </div>
           </div>
 
-          <div className="flex flex-col items-end gap-1.5 flex-none">
-            {hasSignal && (
-              <div className="flex items-center gap-1.5">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-400/30 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-300">
-                  HYPE GAP
-                </span>
-                <InfoTip content={<HypeTaxTipContent />} />
+          <div className="h-px bg-white/8 my-2" />
+
+          {/* Fighter rows */}
+          <FighterRow
+            name={fight.fighter1}
+            americanOdds={fight.fighter1AmericanOdds}
+            marketProb={fight.fighter1MarketProb}
+            ocrProb={fight.fighter1OcrProb}
+            elo={fight.fighter1Elo}
+            eloFights={fight.fighter1EloFights}
+            style={fight.fighter1Style}
+            age={fight.fighter1Age}
+            hypeTaxVal={fight.fighter1HypeTax}
+            isFav={f1Fav}
+          />
+          <div className="h-px bg-white/5" />
+          <FighterRow
+            name={fight.fighter2}
+            americanOdds={fight.fighter2AmericanOdds}
+            marketProb={fight.fighter2MarketProb}
+            ocrProb={fight.fighter2OcrProb}
+            elo={fight.fighter2Elo}
+            eloFights={fight.fighter2EloFights}
+            style={fight.fighter2Style}
+            age={fight.fighter2Age}
+            hypeTaxVal={fight.fighter2HypeTax}
+            isFav={!f1Fav}
+          />
+
+          {/* OCR detail boxes */}
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {([
+              { name: fight.fighter1, elo: fight.fighter1Elo, fights: fight.fighter1EloFights },
+              { name: fight.fighter2, elo: fight.fighter2Elo, fights: fight.fighter2EloFights },
+            ] as const).map(({ name, elo, fights }) => (
+              <div key={name} className="rounded-xl border border-white/8 bg-black/20 px-3 py-2.5">
+                <div className="mb-1">
+                  <span className="text-[10px] text-foreground/40 uppercase tracking-wide truncate">
+                    {name.split(" ").slice(-1)[0]}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="tabular-nums text-lg font-semibold">{Math.round(elo)}</span>
+                  <span className="text-[10px] text-foreground/30">OCR</span>
+                  {fights > 0 && (
+                    <span className="text-[10px] text-foreground/25 ml-auto">{fights}F</span>
+                  )}
+                </div>
               </div>
-            )}
-            {hasAgeWarning && (
-              <span className="inline-flex items-center rounded-full border border-amber-400/20 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-300/80">
-                Age gap {ageDiff}y
-              </span>
-            )}
+            ))}
           </div>
         </div>
 
-        <div className="h-px bg-white/8 my-2" />
-
-        {/* Fighter rows */}
-        <FighterRow
-          name={fight.fighter1}
-          americanOdds={fight.fighter1AmericanOdds}
-          marketProb={fight.fighter1MarketProb}
-          ocrProb={fight.fighter1OcrProb}
-          elo={fight.fighter1Elo}
-          eloFights={fight.fighter1EloFights}
-          style={fight.fighter1Style}
-          age={fight.fighter1Age}
-          hypeTaxVal={fight.fighter1HypeTax}
-          isFav={f1Fav}
-        />
-        <div className="h-px bg-white/5" />
-        <FighterRow
-          name={fight.fighter2}
-          americanOdds={fight.fighter2AmericanOdds}
-          marketProb={fight.fighter2MarketProb}
-          ocrProb={fight.fighter2OcrProb}
-          elo={fight.fighter2Elo}
-          eloFights={fight.fighter2EloFights}
-          style={fight.fighter2Style}
-          age={fight.fighter2Age}
-          hypeTaxVal={fight.fighter2HypeTax}
-          isFav={!f1Fav}
-        />
+        {/* Outcome banner — only shown for graded fights */}
+        {isGraded && fight.outcome && (
+          <div className="mt-2.5 flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+            <span className="text-[10px] text-foreground/35 uppercase tracking-wide flex-none">Result</span>
+            <span className="text-sm font-semibold text-foreground/75">
+              W {formatOutcome(fight.outcome)}
+            </span>
+            <span className="text-foreground/25">·</span>
+            <span className="text-sm text-foreground/55">{capitalize(fight.outcome.winner)}</span>
+          </div>
+        )}
 
         {/* OCR lean — always shown so the model's pick is immediately clear */}
         <div className="mt-2.5 flex items-center gap-2 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2">
           <span className="text-[10px] text-foreground/40 uppercase tracking-wide flex-none">OCR lean</span>
           <span className="text-sm font-semibold text-foreground/90">{ocrLeanName}</span>
           <span className="text-xs text-foreground/40 tabular-nums">{formatPct(ocrFavF1 ? fight.fighter1OcrProb : fight.fighter2OcrProb)}</span>
-          {ocrDisagreesWithMarket && hasSignal && (
-            <span className="ml-auto text-[10px] text-rose-300/70">market disagrees</span>
+          {fight.outcome ? (
+            <span className="ml-auto text-base leading-none">
+              {fight.outcome.ocrResult === "correct_flip" ? (
+                <span className="text-emerald-400" title="OCR disagreed with market and was right">✓✓</span>
+              ) : fight.outcome.ocrResult === "correct_agree" ? (
+                <span className="text-emerald-400/70" title="OCR agreed with market and was right">✓</span>
+              ) : (
+                <span className="text-rose-400/70" title="OCR missed">✗</span>
+              )}
+            </span>
+          ) : (
+            ocrDisagreesWithMarket && hasSignal && (
+              <span className="ml-auto text-[10px] text-rose-300/70">market disagrees</span>
+            )
           )}
         </div>
 
-        {/* OCR detail boxes */}
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          {([
-            { name: fight.fighter1, elo: fight.fighter1Elo, fights: fight.fighter1EloFights },
-            { name: fight.fighter2, elo: fight.fighter2Elo, fights: fight.fighter2EloFights },
-          ] as const).map(({ name, elo, fights }) => (
-            <div key={name} className="rounded-xl border border-white/8 bg-black/20 px-3 py-2.5">
-              <div className="mb-1">
-                <span className="text-[10px] text-foreground/40 uppercase tracking-wide truncate">
-                  {name.split(" ").slice(-1)[0]}
-                </span>
-              </div>
-              <div className="flex items-baseline gap-1.5">
-                <span className="tabular-nums text-lg font-semibold">{Math.round(elo)}</span>
-                <span className="text-[10px] text-foreground/30">OCR</span>
-                {fights > 0 && (
-                  <span className="text-[10px] text-foreground/25 ml-auto">{fights}F</span>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-2 text-[10px] text-foreground/25 tracking-wide">
-          Watchlist only · Not a bet signal
-        </div>
+        {!isGraded && (
+          <div className="mt-2 text-[10px] text-foreground/25 tracking-wide">
+            Watchlist only · Not a bet signal
+          </div>
+        )}
       </div>
     </div>
   );

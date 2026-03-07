@@ -23,6 +23,10 @@ type GradeRequest = {
   /** "fighter1" or "fighter2" */
   winner: "fighter1" | "fighter2";
   method: FinishMethod;
+  /** Round the fight ended (optional) */
+  round?: number | null;
+  /** Time in round the fight ended, e.g. "4:30" (optional) */
+  timeInRound?: string | null;
   /** Fighter age at time of fight (for record-keeping) */
   fighter1Age?: number | null;
   fighter2Age?: number | null;
@@ -111,7 +115,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { fighter1, fighter2, winner, method, fighter1Stats, fighter2Stats } = body;
+  const { fighter1, fighter2, winner, method, round, timeInRound, fighter1Stats, fighter2Stats } = body;
 
   if (!fighter1 || !fighter2) {
     return NextResponse.json({ ok: false, error: "fighter1 and fighter2 required" }, { status: 400 });
@@ -125,6 +129,9 @@ export async function POST(req: Request) {
 
   try {
     const sb = supabaseAdmin();
+
+    const f1Key = fighter1.toLowerCase().trim();
+    const f2Key = fighter2.toLowerCase().trim();
 
     const [f1Row, f2Row] = await Promise.all([
       getOrCreateFighter(sb, fighter1),
@@ -180,6 +187,7 @@ export async function POST(req: Request) {
       ground_ctrl_pct: loserUpdated.ground_ctrl_pct ?? null,
     } as any);
 
+    const winnerName = winnerRow.fighter_name; // already lowercase
     await Promise.all([
       sb.from("ufc_fighter_ratings")
         .update(winnerUpdated)
@@ -187,6 +195,19 @@ export async function POST(req: Request) {
       sb.from("ufc_fighter_ratings")
         .update(loserUpdated)
         .eq("fighter_name", loserRow.fighter_name),
+      // Record outcome on any matching prediction row (match by fighter name pair)
+      sb.from("ufc_predictions")
+        .update({
+          winner:        winnerName,
+          method,
+          round:         round ?? null,
+          time_in_round: timeInRound ?? null,
+          graded_at:     new Date().toISOString(),
+        })
+        .or(
+          `and(fighter1.eq.${f1Key},fighter2.eq.${f2Key}),and(fighter1.eq.${f2Key},fighter2.eq.${f1Key})`
+        )
+        .is("graded_at", null), // don't overwrite already-graded fights
     ]);
 
     return NextResponse.json({

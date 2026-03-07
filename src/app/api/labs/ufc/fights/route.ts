@@ -28,6 +28,15 @@ type FighterRow = {
   dob: string | null;
 };
 
+export type FightOutcome = {
+  winner: string;           // lowercase fighter name
+  method: string;           // 'ko' | 'tko' | 'submission' | 'decision_unanimous' | etc.
+  round: number | null;
+  timeInRound: string | null;
+  /** OCR accuracy: correct_flip = disagreed with market and won; correct_agree = same direction and won; wrong = missed */
+  ocrResult: "correct_flip" | "correct_agree" | "wrong";
+};
+
 export type FightItem = {
   fightId: string;
   commenceTimeIso: string | null;
@@ -57,6 +66,9 @@ export type FightItem = {
   // Hype gap (market - OCR, positive = market overprices)
   fighter1HypeTax: number | null;
   fighter2HypeTax: number | null;
+
+  // Outcome — only present for graded fights
+  outcome: FightOutcome | null;
 };
 
 function supabaseOrNull() {
@@ -229,8 +241,85 @@ async function getFights(): Promise<FightItem[]> {
       fighter2Age: age2,
       fighter1HypeTax: hype1,
       fighter2HypeTax: hype2,
+      outcome: null,
     };
   });
+
+  // Snapshot upcoming fights (insert-only; never overwrite existing predictions)
+  const sb = supabaseOrNull();
+  if (sb && items.length > 0) {
+    await sb.from("ufc_predictions").upsert(
+      items.map((it) => ({
+        fight_id:             it.fightId,
+        event_title:          it.eventTitle,
+        commence_time_iso:    it.commenceTimeIso,
+        fighter1:             it.fighter1.toLowerCase(),
+        fighter2:             it.fighter2.toLowerCase(),
+        fighter1_ocr_prob:    it.fighter1OcrProb,
+        fighter2_ocr_prob:    it.fighter2OcrProb,
+        fighter1_market_prob: it.fighter1MarketProb,
+        fighter2_market_prob: it.fighter2MarketProb,
+        fighter1_elo:         it.fighter1Elo,
+        fighter2_elo:         it.fighter2Elo,
+      })),
+      { onConflict: "fight_id", ignoreDuplicates: true }
+    );
+
+    // Fetch recently graded fights (past 30 days) and merge into results
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: graded } = await sb
+      .from("ufc_predictions")
+      .select("*")
+      .not("graded_at", "is", null)
+      .gte("commence_time_iso", cutoff)
+      .order("commence_time_iso", { ascending: false });
+
+    if (Array.isArray(graded) && graded.length > 0) {
+      const liveIds = new Set(items.map((i) => i.fightId));
+      for (const g of graded) {
+        if (liveIds.has(g.fight_id)) continue; // already in live list (shouldn't happen)
+        const ocrFavF1 = (g.fighter1_ocr_prob ?? 0.5) >= 0.5;
+        const mktFavF1 = (g.fighter1_market_prob ?? 0.5) >= 0.5;
+        const ocrPick  = ocrFavF1 ? g.fighter1 : g.fighter2;
+        const mktPick  = mktFavF1 ? g.fighter1 : g.fighter2;
+        const ocrCorrect = ocrPick === g.winner;
+        const ocrResult: FightOutcome["ocrResult"] = ocrCorrect
+          ? (ocrPick !== mktPick ? "correct_flip" : "correct_agree")
+          : "wrong";
+
+        items.push({
+          fightId:              g.fight_id,
+          commenceTimeIso:      g.commence_time_iso,
+          eventTitle:           g.event_title,
+          fighter1:             g.fighter1,
+          fighter2:             g.fighter2,
+          fighter1AmericanOdds: null,
+          fighter2AmericanOdds: null,
+          fighter1MarketProb:   g.fighter1_market_prob,
+          fighter2MarketProb:   g.fighter2_market_prob,
+          fighter1Elo:          g.fighter1_elo ?? DEFAULT_ELO,
+          fighter2Elo:          g.fighter2_elo ?? DEFAULT_ELO,
+          fighter1OcrProb:      g.fighter1_ocr_prob ?? 0.5,
+          fighter2OcrProb:      g.fighter2_ocr_prob ?? 0.5,
+          fighter1EloFights:    0,
+          fighter2EloFights:    0,
+          fighter1Style:        "balanced",
+          fighter2Style:        "balanced",
+          fighter1Age:          null,
+          fighter2Age:          null,
+          fighter1HypeTax:      g.fighter1_market_prob != null ? g.fighter1_market_prob - (g.fighter1_ocr_prob ?? 0.5) : null,
+          fighter2HypeTax:      g.fighter2_market_prob != null ? g.fighter2_market_prob - (g.fighter2_ocr_prob ?? 0.5) : null,
+          outcome: {
+            winner:      g.winner,
+            method:      g.method,
+            round:       g.round ?? null,
+            timeInRound: g.time_in_round ?? null,
+            ocrResult,
+          },
+        });
+      }
+    }
+  }
 
   cache = { at: Date.now(), data: items };
   return items;
