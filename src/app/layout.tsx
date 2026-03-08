@@ -19,6 +19,19 @@ const interTight = Inter_Tight({
 export const metadata: Metadata = {
   title: "Oren Capital",
   description: "Risk discipline for serious traders.",
+  metadataBase: new URL("https://orencapital.com"),
+  openGraph: {
+    title: "Oren Capital",
+    description: "Risk discipline for serious traders.",
+    url: "https://orencapital.com",
+    siteName: "Oren Capital",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Oren Capital",
+    description: "Risk discipline for serious traders.",
+  },
   icons: {
     icon: [
       { url: "/favicon.ico" },
